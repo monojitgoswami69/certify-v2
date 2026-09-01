@@ -1,16 +1,25 @@
 {
-  "name": "certify-next",
+  "name": "credify-next",
   "version": "1.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push",
+    "db:pull": "drizzle-kit introspect",
+    "db:studio": "drizzle-kit studio",
+    "db:check": "drizzle-kit check",
+    "db:drop": "drizzle-kit drop"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.1.0",
     "@react-oauth/google": "^0.13.5",
     "clsx": "^2.1.1",
+    "drizzle-orm": "^0.45.2",
     "google-auth-library": "^11.0.2",
     "googleapis": "^174.0.1",
     "jsonwebtoken": "^9.0.3",
@@ -19,6 +28,7 @@
     "lucide-react": "^1.31.0",
     "next": "^16.3.0",
     "nodemailer": "^7.0.12",
+    "qrcode": "^1.5.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "zustand": "^5.0.15"
@@ -28,8 +38,11 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^24.10.1",
     "@types/nodemailer": "^7.0.4",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.2.5",
     "@types/react-dom": "^19.2.3",
+    "dotenv": "^17.4.2",
+    "drizzle-kit": "^0.31.10",
     "postcss": "^8.5.26",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.9.3"

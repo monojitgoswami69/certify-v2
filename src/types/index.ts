@@ -1,5 +1,5 @@
 /**
- * TypeScript Interfaces & Types for Certify™ Next.js
+ * TypeScript Interfaces & Types for Credify™ Next.js
  */
 
 export type HorizontalAlign = 'left' | 'center' | 'right';
@@ -60,3 +60,11 @@ export interface EmailProgress {
     email: string;
   }>;
 }
+
+export interface QrZone {
+  id: string;
+  x: number;
+  y: number;
+  size: number;
+}
+

@@ -23,6 +23,7 @@ import {
 } from '../../lib/utils';
 import { generateCertificate } from '../../lib/certificate-engine';
 import { ensureFontsLoaded } from '../../lib/font-loader';
+import { ensureCertificateIds, buildVerifyUrlFor } from '../../lib/cert-registration';
 import type { CsvRow } from '../../types';
 
 interface FailedRecord {
@@ -65,8 +66,11 @@ const DEFAULT_LOGS: GenerateLogs = {
 export function GenerateButton() {
   const {
     templateImage,
+    templateFile,
     csvData,
     boxes,
+    qrZones,
+    eventName,
     setViewMode,
     setError,
   } = useAppStore();
@@ -77,6 +81,9 @@ export function GenerateButton() {
   const pauseRef = useRef(false);
   const abortRef = useRef(false);
   const [localPaused, setLocalPaused] = useState(false);
+  // rowIndex -> verification id, survives "Retry Failed" so retried rows are
+  // not re-registered in the database.
+  const certIdsRef = useRef<Map<number, string>>(new Map());
 
   const validBoxes = boxes.filter((b) => b.field);
   const isReady = templateImage && csvData.length > 0 && validBoxes.length > 0;
@@ -133,6 +140,34 @@ export function GenerateButton() {
         setLogs({ firstGenerated: new Date(), lastGenerated: null, totalElapsed: 0 });
       }
 
+      // QR verification mode: register every pending row BEFORE rendering so
+      // each certificate's QR encodes an id that already exists server-side.
+      const useQr = qrZones.length > 0;
+      if (useQr) {
+        try {
+          setProgress((prev) => ({
+            ...prev,
+            status: 'loading-fonts',
+            currentName: 'Registering certificates...',
+          }));
+          certIdsRef.current = await ensureCertificateIds({
+            records,
+            existingIds: certIdsRef.current,
+            getDisplayName: getFilenameBasis,
+            templateName: templateFile?.name || 'template',
+            eventName: eventName || 'General Event',
+          });
+          setProgress((prev) => ({ ...prev, status: 'generating', currentName: '' }));
+        } catch (err) {
+          setError(
+            `QR registration failed: ${err instanceof Error ? err.message : 'unknown error'}. ` +
+              'Batch aborted — no certificates were generated with unverifiable QR codes.'
+          );
+          setProgress(DEFAULT_PROGRESS);
+          return;
+        }
+      }
+
       for (let i = 0; i < records.length; i++) {
         if (abortRef.current) {
           setProgress((prev) => ({ ...prev, status: 'idle' }));
@@ -174,6 +209,7 @@ export function GenerateButton() {
         }));
 
         try {
+          const certId = certIdsRef.current.get(rowIndex);
           const result = await generateCertificate({
             templateImage,
             boxes: validBoxes,
@@ -181,6 +217,8 @@ export function GenerateButton() {
             filename: sanitizeFilename(displayName),
             includePng: true,
             includePdf: true,
+            qrZones: useQr ? qrZones : undefined,
+            verificationUrl: useQr && certId ? buildVerifyUrlFor(certId) : undefined,
           });
 
           certificates.push({
@@ -247,7 +285,7 @@ export function GenerateButton() {
 
       setRetryQueue(errors);
     },
-    [templateImage, boxes, validBoxes, setError, getFilenameBasis]
+    [templateImage, templateFile, boxes, validBoxes, qrZones, eventName, setError, getFilenameBasis]
   );
 
   const handleGenerate = useCallback(async () => {
@@ -276,6 +314,7 @@ export function GenerateButton() {
     setProgress(DEFAULT_PROGRESS);
     setLogs(DEFAULT_LOGS);
     setRetryQueue([]);
+    certIdsRef.current = new Map();
   };
 
   const handleEmailMode = () => {

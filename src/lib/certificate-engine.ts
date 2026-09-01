@@ -6,8 +6,15 @@
  */
 
 import { jsPDF } from 'jspdf';
+import QRCode from 'qrcode';
 import type { TextBox, CsvRow, HorizontalAlign, VerticalAlign } from '../types';
 import { getFontFamilyCSS } from './font-loader';
+
+export interface QrPlacement {
+  x: number;
+  y: number;
+  size: number;
+}
 
 /**
  * Async wrapper around canvas.toBlob() so image encoding can run off the
@@ -51,6 +58,11 @@ export interface GenerateParams {
   includePng?: boolean;
   includePdf?: boolean;
   includeBase64?: boolean;
+  /** QR zone positions on the template (supports multiple QRs). */
+  qrZones?: QrPlacement[];
+  qrZone?: QrPlacement;
+  /** Fully-qualified verification URL encoded into the QR (per record). */
+  verificationUrl?: string;
   /**
    * Optional reusable canvas. When provided by a long-running caller (e.g. a
    * worker pool), allocation/GC churn is avoided across thousands of records.
@@ -146,6 +158,37 @@ export function blobToBase64(blob: Blob): Promise<string> {
 }
 
 /**
+ * Renders a QR code for `url` onto the canvas at the zone's position.
+ * Returns silently if the zone or URL is missing (QR mode disabled).
+ */
+async function drawVerificationQr(
+  ctx: CanvasRenderingContext2D,
+  qrZone: QrPlacement,
+  verificationUrl: string
+): Promise<void> {
+  if (!verificationUrl) return;
+
+  const dataUrl = await QRCode.toDataURL(verificationUrl, {
+    margin: 1,
+    width: 512,
+    errorCorrectionLevel: 'M',
+    color: {
+      dark: '#000000',
+      light: '#00000000', // 100% Transparent background
+    },
+  });
+
+  const img = new Image();
+  await new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve();
+    img.onerror = () => reject(new Error('Failed to render QR code'));
+    img.src = dataUrl;
+  });
+
+  ctx.drawImage(img, qrZone.x, qrZone.y, qrZone.size, qrZone.size);
+}
+
+/**
  * Generate certificate as JPG / PNG / PDF blobs and (optionally) base64 strings.
  */
 export async function generateCertificate(
@@ -160,6 +203,9 @@ export async function generateCertificate(
     includePng,
     includePdf,
     includeBase64,
+    qrZone,
+    qrZones,
+    verificationUrl,
     canvas: provided,
   } = params;
 
@@ -173,6 +219,13 @@ export async function generateCertificate(
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(templateImage, 0, 0);
+
+  const zonesToDraw = qrZones && qrZones.length > 0 ? qrZones : qrZone ? [qrZone] : [];
+  if (zonesToDraw.length > 0 && verificationUrl) {
+    for (const zone of zonesToDraw) {
+      await drawVerificationQr(ctx, zone, verificationUrl);
+    }
+  }
 
   for (const box of boxes) {
     if (!box.field) continue;

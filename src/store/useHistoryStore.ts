@@ -1,55 +1,89 @@
 /**
- * History Store for Canvas Undo / Redo
+ * History Store for Unified Canvas Undo / Redo
+ * Snapshots both TextBox[] and QrZone[] simultaneously.
  */
 
 import { create } from 'zustand';
-import type { TextBox } from '../types';
+import type { TextBox, QrZone } from '../types';
+
+export interface CanvasSnapshot {
+  boxes: TextBox[];
+  qrZones: QrZone[];
+  // Backwards compatibility
+  qrZone?: QrZone | null;
+}
 
 interface HistoryState {
-  past: TextBox[][];
-  future: TextBox[][];
+  past: CanvasSnapshot[];
+  future: CanvasSnapshot[];
 
-  pushState: (boxes: TextBox[]) => void;
-  undo: (currentBoxes: TextBox[]) => TextBox[] | null;
-  redo: (currentBoxes: TextBox[]) => TextBox[] | null;
+  pushState: (boxes: TextBox[], qrZones?: QrZone[] | QrZone | null) => void;
+  undo: (currentBoxes: TextBox[], currentQrZones?: QrZone[] | QrZone | null) => CanvasSnapshot | null;
+  redo: (currentBoxes: TextBox[], currentQrZones?: QrZone[] | QrZone | null) => CanvasSnapshot | null;
   clearHistory: () => void;
+}
+
+function normalizeQrZones(input?: QrZone[] | QrZone | null): QrZone[] {
+  if (!input) return [];
+  if (Array.isArray(input)) return JSON.parse(JSON.stringify(input));
+  return [JSON.parse(JSON.stringify(input))];
 }
 
 export const useHistoryStore = create<HistoryState>((set, get) => ({
   past: [],
   future: [],
 
-  pushState: (boxes: TextBox[]) => {
+  pushState: (boxes: TextBox[], qrZones: QrZone[] | QrZone | null = []) => {
+    const normalized = normalizeQrZones(qrZones);
+    const snapshot: CanvasSnapshot = {
+      boxes: JSON.parse(JSON.stringify(boxes)),
+      qrZones: normalized,
+      qrZone: normalized[0] || null,
+    };
     set((state) => ({
-      past: [...state.past.slice(-20), JSON.parse(JSON.stringify(boxes))],
+      past: [...state.past.slice(-25), snapshot],
       future: [],
     }));
   },
 
-  undo: (currentBoxes: TextBox[]) => {
+  undo: (currentBoxes: TextBox[], currentQrZones: QrZone[] | QrZone | null = []) => {
     const { past, future } = get();
     if (past.length === 0) return null;
 
     const previous = past[past.length - 1];
     const newPast = past.slice(0, past.length - 1);
+    const normalized = normalizeQrZones(currentQrZones);
+
+    const currentSnapshot: CanvasSnapshot = {
+      boxes: JSON.parse(JSON.stringify(currentBoxes)),
+      qrZones: normalized,
+      qrZone: normalized[0] || null,
+    };
 
     set({
       past: newPast,
-      future: [JSON.parse(JSON.stringify(currentBoxes)), ...future],
+      future: [currentSnapshot, ...future],
     });
 
     return previous;
   },
 
-  redo: (currentBoxes: TextBox[]) => {
+  redo: (currentBoxes: TextBox[], currentQrZones: QrZone[] | QrZone | null = []) => {
     const { past, future } = get();
     if (future.length === 0) return null;
 
     const next = future[0];
     const newFuture = future.slice(1);
+    const normalized = normalizeQrZones(currentQrZones);
+
+    const currentSnapshot: CanvasSnapshot = {
+      boxes: JSON.parse(JSON.stringify(currentBoxes)),
+      qrZones: normalized,
+      qrZone: normalized[0] || null,
+    };
 
     set({
-      past: [...past, JSON.parse(JSON.stringify(currentBoxes))],
+      past: [...past, currentSnapshot],
       future: newFuture,
     });
 

@@ -7,6 +7,7 @@ import { sendEmailV2 } from '../../lib/api-client';
 import { replaceTemplateVariables, delay, downloadErrorReport, sanitizeFilename, validateEmailAddress } from '../../lib/utils';
 import { generateCertificate } from '../../lib/certificate-engine';
 import { ensureFontsLoaded } from '../../lib/font-loader';
+import { ensureCertificateIds, buildVerifyUrlFor } from '../../lib/cert-registration';
 import type { CsvRow, EmailProgress } from '../../types';
 
 interface FailedRecord {
@@ -26,11 +27,13 @@ interface EmailLogs {
 export function EmailSendButton() {
   const {
     templateImage,
+    templateFile,
     csvData,
     boxes,
     emailColumn,
     emailSettings,
     emailProgress,
+    qrZones,
     setEmailProgress,
     resetEmailProgress,
     setError,
@@ -45,6 +48,9 @@ export function EmailSendButton() {
   const [localPaused, setLocalPaused] = useState(false);
   const startTimeRef = useRef<number>(0);
   const [, setEtaTick] = useState(0);
+  // rowIndex -> verification id, survives "Retry Failed" so retried rows are
+  // not re-registered in the database.
+  const certIdsRef = useRef<Map<number, string>>(new Map());
 
   useEffect(() => {
     if (emailProgress.status !== 'sending') return;
@@ -52,7 +58,7 @@ export function EmailSendButton() {
     return () => clearInterval(id);
   }, [emailProgress.status]);
 
-  const { connectedGoogleAccount, setConnectedGoogleAccount } = useAppStore();
+  const { connectedGoogleAccount, setConnectedGoogleAccount, eventName } = useAppStore();
   const hasMailingAccount = Boolean(connectedGoogleAccount);
 
   const validBoxes = boxes.filter((b) => b.field);
@@ -114,6 +120,37 @@ export function EmailSendButton() {
 
       reconnectRef.current = false;
       setNeedsReconnect(false);
+
+      // QR verification mode: register every pending row BEFORE rendering so
+      // each certificate's QR encodes an id that already exists server-side.
+      const useQr = qrZones.length > 0;
+      if (useQr) {
+        try {
+          setEmailProgress({
+            current: 0,
+            total: records.length,
+            currentRecipient: 'Registering certificates...',
+            status: 'sending',
+            errors: [],
+            sent: [],
+          });
+          certIdsRef.current = await ensureCertificateIds({
+            records,
+            existingIds: certIdsRef.current,
+            getDisplayName: getDisplayName,
+            getEmail: (row) => (row[emailColumn] || '').trim(),
+            templateName: templateFile?.name || 'template',
+            eventName: eventName || 'General Event',
+          });
+        } catch (err) {
+          setError(
+            `QR registration failed: ${err instanceof Error ? err.message : 'unknown error'}. ` +
+              'Batch aborted — no emails were sent with unverifiable QR codes.'
+          );
+          resetEmailProgress();
+          return;
+        }
+      }
 
       // Fixed Constant Parallel Worker Pool (10 workers continuous stream)
       const concurrency = Math.min(10, records.length);
@@ -216,6 +253,7 @@ export function EmailSendButton() {
 
           try {
             if (!workerCanvas) workerCanvas = document.createElement('canvas');
+            const certId = certIdsRef.current.get(rowIndex);
             const cert = await generateCertificate({
               templateImage,
               boxes: validBoxes,
@@ -224,6 +262,8 @@ export function EmailSendButton() {
               includeJpg: attachImage,
               includePdf: emailSettings.attachPdf,
               canvas: workerCanvas,
+              qrZones: useQr ? qrZones : undefined,
+              verificationUrl: useQr && certId ? buildVerifyUrlFor(certId) : undefined,
             });
 
             const subject = replaceTemplateVariables(emailSettings.subject, row);
@@ -307,11 +347,14 @@ export function EmailSendButton() {
     },
     [
       templateImage,
+      templateFile,
       boxes,
       validBoxes,
       emailColumn,
       emailSettings,
+      qrZones,
       setEmailProgress,
+      resetEmailProgress,
       setError,
       getDisplayName,
       connectedGoogleAccount,
@@ -345,6 +388,7 @@ export function EmailSendButton() {
     setLogs({ firstSent: null, lastSent: null, totalElapsed: 0 });
     setRetryQueue([]);
     setNeedsReconnect(false);
+    certIdsRef.current = new Map();
   };
 
   const handleReconnect = () => {

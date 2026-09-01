@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Certify | Professional Certificate Manager',
+  title: 'Credify | Professional Certificate Manager',
   description: 'Design, bulk generate, export, and email custom certificates seamlessly.',
 };
 
@@ -25,7 +25,7 @@ export default function RootLayout({
           href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200"
         />
       </head>
-      <body className="antialiased bg-slate-50 text-slate-900 overflow-hidden font-sans">
+      <body className="antialiased bg-slate-50 text-slate-900 min-h-screen font-sans">
         {children}
       </body>
     </html>

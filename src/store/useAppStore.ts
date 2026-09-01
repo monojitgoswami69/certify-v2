@@ -1,5 +1,5 @@
 /**
- * Application Store for Certify™ Next.js Workspace
+ * Application Store for Credify™ Next.js Workspace
  */
 
 import { create } from 'zustand';
@@ -10,7 +10,10 @@ import type {
   EmailSettings,
   EmailProgress,
   TextBox,
+  QrZone,
 } from '../types';
+
+export type { QrZone };
 
 const DEFAULT_EMAIL_SETTINGS: EmailSettings = {
   subject: 'Your Certificate is Ready! 🎉',
@@ -36,8 +39,13 @@ const DEFAULT_EMAIL_PROGRESS: EmailProgress = {
   sent: [],
 };
 
-const generateBoxId = (): string =>
-  `box_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+function generateBoxId(): string {
+  return `box_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+}
+
+function generateQrId(): string {
+  return `qr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+}
 
 interface AppStore {
   // Template State
@@ -50,18 +58,37 @@ interface AppStore {
   // Text Boxes State
   boxes: TextBox[];
   activeBoxId: string | null;
-  displayScale: number;
   addBox: (box: Omit<TextBox, 'id' | 'field' | 'fontSize' | 'fontColor' | 'fontFamily' | 'hAlign' | 'vAlign'>) => void;
   updateBox: (id: string, updates: Partial<TextBox>) => void;
   deleteBox: (id: string) => void;
   setActiveBox: (id: string | null) => void;
-  setDisplayScale: (scale: number) => void;
   setBoxes: (boxes: TextBox[]) => void;
 
-  // CSV Data State
+  // QR Verification Zones (supports multiple QR codes)
+  qrZones: QrZone[];
+  activeQrId: string | null;
+  isPlacingQr: boolean;
+  setIsPlacingQr: (isPlacing: boolean) => void;
+  addQrZone: (x: number, y: number, size?: number) => string;
+  updateQrZone: (id: string, updates: Partial<QrZone>) => void;
+  deleteQrZone: (id: string) => void;
+  setActiveQrId: (id: string | null) => void;
+  setQrZones: (zones: QrZone[]) => void;
+  clearQrZones: () => void;
+
+  // Legacy / convenience compatibility
+  qrZone: QrZone | null;
+  qrZoneActive: boolean;
+  setQrZone: (zone: QrZone) => void;
+  setQrZoneActive: (active: boolean) => void;
+  clearQrZone: () => void;
+
+  // CSV Data & Dedicated Event Name
   csvFile: File | null;
   csvHeaders: string[];
   csvData: CsvRow[];
+  eventName: string;
+  setEventName: (name: string) => void;
   setCsvData: (file: File, headers: string[], data: CsvRow[]) => void;
   clearCsvData: () => void;
 
@@ -116,11 +143,16 @@ const initialState = {
   templateImage: null,
   templateInfo: '',
   boxes: [] as TextBox[],
-  activeBoxId: null,
-  displayScale: 1,
+  activeBoxId: null as string | null,
+  qrZones: [] as QrZone[],
+  activeQrId: null as string | null,
+  isPlacingQr: false,
+  qrZone: null as QrZone | null,
+  qrZoneActive: false,
   csvFile: null,
   csvHeaders: [] as string[],
   csvData: [] as CsvRow[],
+  eventName: '',
   emailColumn: '',
   defaultFont: '',
   defaultFontSize: 60,
@@ -150,6 +182,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
       templateInfo: info,
       boxes: [],
       activeBoxId: null,
+      qrZones: [],
+      activeQrId: null,
+      isPlacingQr: false,
+      qrZone: null,
+      qrZoneActive: false,
     }),
 
   clearTemplate: () =>
@@ -159,6 +196,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
       templateInfo: '',
       boxes: [],
       activeBoxId: null,
+      qrZones: [],
+      activeQrId: null,
+      isPlacingQr: false,
+      qrZone: null,
+      qrZoneActive: false,
     }),
 
   addBox: (boxData) => {
@@ -192,9 +234,103 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   setActiveBox: (activeBoxId) => set({ activeBoxId }),
 
-  setDisplayScale: (displayScale) => set({ displayScale }),
-
   setBoxes: (boxes) => set({ boxes }),
+
+  setIsPlacingQr: (isPlacingQr) =>
+    set({
+      isPlacingQr,
+      activeBoxId: isPlacingQr ? null : get().activeBoxId,
+      activeQrId: isPlacingQr ? null : get().activeQrId,
+      qrZoneActive: false,
+    }),
+
+  addQrZone: (x, y, size) => {
+    const { templateImage, qrZones } = get();
+    const defaultSize =
+      size ||
+      (templateImage
+        ? Math.round(Math.min(templateImage.width, templateImage.height) * 0.15)
+        : 180);
+    const id = generateQrId();
+    const newZone: QrZone = {
+      id,
+      x: Math.max(0, Math.round(x)),
+      y: Math.max(0, Math.round(y)),
+      size: defaultSize,
+    };
+    const updated = [...qrZones, newZone];
+    set({
+      qrZones: updated,
+      activeQrId: id,
+      isPlacingQr: false,
+      activeBoxId: null,
+      qrZone: newZone,
+      qrZoneActive: true,
+    });
+    return id;
+  },
+
+  updateQrZone: (id, updates) =>
+    set((state) => {
+      const updated = state.qrZones.map((zone) =>
+        zone.id === id ? { ...zone, ...updates } : zone
+      );
+      return {
+        qrZones: updated,
+        qrZone: updated.find((z) => z.id === state.activeQrId) || updated[0] || null,
+      };
+    }),
+
+  deleteQrZone: (id) =>
+    set((state) => {
+      const updated = state.qrZones.filter((zone) => zone.id !== id);
+      const nextActiveId = state.activeQrId === id ? null : state.activeQrId;
+      return {
+        qrZones: updated,
+        activeQrId: nextActiveId,
+        qrZone: updated[0] || null,
+        qrZoneActive: Boolean(nextActiveId),
+      };
+    }),
+
+  setActiveQrId: (activeQrId) =>
+    set((state) => ({
+      activeQrId,
+      qrZoneActive: Boolean(activeQrId),
+      activeBoxId: activeQrId ? null : state.activeBoxId,
+      qrZone: state.qrZones.find((z) => z.id === activeQrId) || state.qrZones[0] || null,
+    })),
+
+  setQrZones: (qrZones) =>
+    set({
+      qrZones,
+      qrZone: qrZones[0] || null,
+      qrZoneActive: qrZones.length > 0,
+    }),
+
+  clearQrZones: () =>
+    set({
+      qrZones: [],
+      activeQrId: null,
+      isPlacingQr: false,
+      qrZone: null,
+      qrZoneActive: false,
+    }),
+
+  setQrZone: (zone) => {
+    const id = zone.id || generateQrId();
+    const fullZone = { ...zone, id };
+    set({
+      qrZones: [fullZone],
+      activeQrId: id,
+      qrZone: fullZone,
+      qrZoneActive: true,
+    });
+  },
+
+  setQrZoneActive: (qrZoneActive) => set({ qrZoneActive }),
+
+  clearQrZone: () => get().clearQrZones(),
 
   setCsvData: (file, headers, data) => {
     const emailCol =
@@ -229,21 +365,29 @@ export const useAppStore = create<AppStore>((set, get) => ({
         }
       }
 
+      const defaultEventName = file.name
+        ? file.name.replace(/\.[^/.]+$/, '').replace(/[_-]+/g, ' ').trim().replace(/\b\w/g, (l) => l.toUpperCase())
+        : '';
+
       return {
         csvFile: file,
         csvHeaders: headers,
         csvData: data,
+        eventName: state.eventName || defaultEventName || 'General Event',
         emailColumn: emailCol,
         emailSettings: newEmailSettings,
       };
     });
   },
 
+  setEventName: (eventName) => set({ eventName }),
+
   clearCsvData: () =>
     set({
       csvFile: null,
       csvHeaders: [],
       csvData: [],
+      eventName: '',
       emailColumn: '',
     }),
 

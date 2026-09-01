@@ -1,7 +1,7 @@
 import jwt from 'jsonwebtoken';
 import { NextResponse } from 'next/server';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'certify_super_secret_jwt_key_2026';
+const JWT_SECRET = process.env.JWT_SECRET || 'credify_super_secret_jwt_key_2026';
 export const AUTH_USERNAME = process.env.AUTH_USERNAME || 'admin';
 export const AUTH_PASSWORD = process.env.AUTH_PASSWORD || 'admin123';
 

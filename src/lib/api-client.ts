@@ -7,6 +7,8 @@ const API_BASE = '/api';
 function getAuthHeader(): Record<string, string> {
   if (typeof window === 'undefined') return {};
   const token =
+    localStorage.getItem('credify_auth_token') ||
+    sessionStorage.getItem('credify_session_token') ||
     localStorage.getItem('certify_auth_token') ||
     sessionStorage.getItem('certify_session_token');
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -17,6 +19,38 @@ export interface GoogleAccount {
   name?: string;
   picture?: string;
   accessToken?: string;
+}
+
+export interface RegisterCertificateItem {
+  recipientName: string;
+  recipientEmail?: string;
+  rowData?: Record<string, string>;
+  templateName?: string;
+  eventName?: string;
+}
+
+/**
+ * Bulk-registers certificates on the server before QR rendering. Returns the
+ * raw verification UUIDs in input order (the DB stores only their hashes).
+ */
+export async function registerCertificates(
+  items: RegisterCertificateItem[],
+  eventName?: string
+): Promise<string[]> {
+  const response = await fetch(`${API_BASE}/certificates/register`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeader(),
+    },
+    body: JSON.stringify({ certificates: items, eventName }),
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.detail || 'Failed to register certificates');
+  }
+  return data.ids as string[];
 }
 
 export async function exchangeGoogleCode(code: string): Promise<GoogleAccount> {

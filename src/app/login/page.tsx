@@ -63,7 +63,7 @@ export default function LoginPage() {
 
             <div className="relative z-10 p-8 md:p-12 mb-4">
               <h1 className="text-3xl md:text-5xl font-bold leading-tight tracking-tight drop-shadow-sm">
-                Welcome to <span className="text-amber-300 font-black tracking-normal">Certify</span>
+                Welcome to <span className="text-amber-300 font-black tracking-normal">Credify</span>
               </h1>
               <p className="mt-6 text-white/90 text-lg font-light leading-relaxed">
                 Your one-stop destination for generating, exporting, and emailing professional certificates.

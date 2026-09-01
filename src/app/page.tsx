@@ -1,12 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { FileSpreadsheet, Eye, EyeOff, X, Image as ImageIcon } from 'lucide-react';
+import { FileSpreadsheet, Eye, EyeOff, X, Image as ImageIcon, CalendarDays } from 'lucide-react';
 import { ErrorBoundary } from '../components/ui/ErrorBoundary';
 import { StepCard } from '../components/sidebar/StepCard';
 import { TemplateUpload } from '../components/sidebar/TemplateUpload';
 import { CsvUpload } from '../components/sidebar/CsvUpload';
 import { BoxCustomizer } from '../components/sidebar/BoxCustomizer';
+import { QrZoneCard } from '../components/sidebar/QrZoneCard';
 import { CanvasEditor } from '../components/canvas/CanvasEditor';
 import { GenerateButton } from '../components/sidebar/GenerateButton';
 import { EmailSidebar } from '../components/email/EmailSidebar';
@@ -25,6 +26,8 @@ function WorkspaceContent() {
     boxes,
     csvData,
     csvFile,
+    eventName,
+    setEventName,
     viewMode,
     error,
     previewEnabled,
@@ -103,7 +106,7 @@ function WorkspaceContent() {
         {/* Fixed Header */}
         <div className="p-4 border-b border-slate-200 bg-white flex-shrink-0">
           <div className="flex items-center justify-between">
-            <h1 className="text-lg font-bold text-slate-800 tracking-tight">Certify</h1>
+            <h1 className="text-lg font-bold text-slate-800 tracking-tight">Credify</h1>
           </div>
         </div>
 
@@ -112,16 +115,19 @@ function WorkspaceContent() {
           {/* Step 1 */}
           <StepCard number={1} title="Upload Template" status={step1Status}>
             {templateImage ? (
-              <div className="flex items-center justify-between px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg cursor-default group">
-                <div className="flex items-center gap-2 min-w-0">
-                  <ImageIcon className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                  <span className="text-sm text-slate-700 truncate">
+              <div className="flex items-center justify-between px-3.5 py-2.5 bg-white border border-slate-200 shadow-sm rounded-xl cursor-default group">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="p-1.5 bg-violet-50 text-violet-600 rounded-lg flex-shrink-0 border border-violet-100">
+                    <ImageIcon className="w-4 h-4" />
+                  </div>
+                  <span className="text-sm font-semibold text-slate-800 truncate">
                     {templateFile?.name || 'Template'}
                   </span>
                 </div>
                 <button
                   onClick={clearTemplate}
-                  className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors flex-shrink-0"
+                  className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0"
+                  title="Remove template"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -134,25 +140,50 @@ function WorkspaceContent() {
           {/* Step 2 */}
           <StepCard number={2} title="Import Data" status={step2Status}>
             {csvData.length > 0 ? (
-              <div
-                className="flex items-center justify-between px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-100 transition-colors group"
-                onClick={() => setShowCsvPreview(true)}
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <FileSpreadsheet className="w-4 h-4 text-emerald-500 flex-shrink-0" />
-                  <span className="text-sm text-slate-700 truncate">
-                    {csvFile?.name || 'Data'} ({csvData.length} records)
-                  </span>
-                </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    clearCsvData();
-                  }}
-                  className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors flex-shrink-0"
+              <div className="space-y-3">
+                <div
+                  className="flex items-center justify-between px-3.5 py-2.5 bg-white border border-slate-200 shadow-sm rounded-xl cursor-pointer hover:border-emerald-300 hover:bg-emerald-50/10 transition-all group"
+                  onClick={() => setShowCsvPreview(true)}
                 >
-                  <X className="w-4 h-4" />
-                </button>
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="p-1.5 bg-emerald-50 text-emerald-600 rounded-lg flex-shrink-0 border border-emerald-100">
+                      <FileSpreadsheet className="w-4 h-4" />
+                    </div>
+                    <span className="text-sm font-semibold text-slate-800 truncate">
+                      {csvFile?.name || 'Data'} ({csvData.length} records)
+                    </span>
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      clearCsvData();
+                    }}
+                    className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0"
+                    title="Remove CSV data"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Event Name Card */}
+                <div className="p-3 bg-slate-50/80 border border-slate-200 rounded-xl space-y-2">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-slate-600 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <CalendarDays className="w-3.5 h-3.5 text-primary-600" />
+                      Event Name
+                    </span>
+                  </label>
+                  <input
+                    type="text"
+                    value={eventName}
+                    onChange={(e) => setEventName(e.target.value)}
+                    placeholder="e.g. Annual Tech Symposium 2026"
+                    className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 font-medium text-slate-800 placeholder:text-slate-400 transition-all"
+                  />
+                  <p className="text-[11px] text-slate-400 leading-tight">
+                    All certificate records and verification IDs in this batch will be saved under this event name.
+                  </p>
+                </div>
               </div>
             ) : (
               <CsvUpload />
@@ -165,6 +196,8 @@ function WorkspaceContent() {
               <p className="text-sm text-slate-500">
                 Draw rectangles on the template where text should appear.
               </p>
+
+              <QrZoneCard />
 
               <div className="flex items-center justify-between p-2 bg-slate-50 rounded-lg">
                 <span className="text-sm text-slate-600">Preview Data</span>

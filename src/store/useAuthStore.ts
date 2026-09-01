@@ -1,14 +1,14 @@
 /**
- * Authentication Store for Certify™ Next.js
+ * Authentication Store for Credify™ Next.js
  * Supports both Google OAuth SSO and Classic Credentials.
  */
 
 import { create } from 'zustand';
 
 const API_BASE = '/api';
-const TOKEN_KEY = 'certify_auth_token';
-const SESSION_TOKEN_KEY = 'certify_session_token';
-const USER_INFO_KEY = 'certify_user_info';
+const TOKEN_KEY = 'credify_auth_token';
+const SESSION_TOKEN_KEY = 'credify_session_token';
+const USER_INFO_KEY = 'credify_user_info';
 
 export interface UserProfile {
   username: string;
@@ -50,7 +50,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const token = data.token;
       const user: UserProfile = {
         username: data.username,
-        email: data.username.includes('@') ? data.username : `${data.username}@certify.local`,
+        email: data.username.includes('@') ? data.username : `${data.username}@credify.local`,
       };
 
       if (rememberMe) {
@@ -143,18 +143,21 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   initialize: async () => {
     if (typeof window === 'undefined') return;
 
-    const localToken = localStorage.getItem(TOKEN_KEY);
-    const sessionToken = sessionStorage.getItem(SESSION_TOKEN_KEY);
-    const storedToken = localToken || sessionToken;
-
-    const localUser = localStorage.getItem(USER_INFO_KEY);
-    const sessionUser = sessionStorage.getItem(USER_INFO_KEY);
-    const storedUserRaw = localUser || sessionUser;
+    const storedToken =
+      localStorage.getItem(TOKEN_KEY) ||
+      sessionStorage.getItem(SESSION_TOKEN_KEY) ||
+      localStorage.getItem('certify_auth_token') ||
+      sessionStorage.getItem('certify_session_token');
+    const userStr =
+      localStorage.getItem(USER_INFO_KEY) ||
+      sessionStorage.getItem(USER_INFO_KEY) ||
+      localStorage.getItem('certify_user_info') ||
+      sessionStorage.getItem('certify_user_info');
 
     let user: UserProfile | null = null;
-    if (storedUserRaw) {
+    if (userStr) {
       try {
-        user = JSON.parse(storedUserRaw);
+        user = JSON.parse(userStr);
       } catch {
         user = null;
       }
