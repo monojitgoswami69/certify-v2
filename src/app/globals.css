@@ -1,0 +1,133 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Outfit', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  --color-primary-50: #eef2ff;
+  --color-primary-100: #e0e7ff;
+  --color-primary-200: #c7d2fe;
+  --color-primary-300: #a5b4fc;
+  --color-primary-400: #818cf8;
+  --color-primary-500: #6366f1;
+  --color-primary-600: #4f46e5;
+  --color-primary-700: #4338ca;
+  --color-primary-800: #3730a3;
+  --color-primary-900: #312e81;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 0;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 0;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Canvas cursor */
+.cursor-crosshair {
+  cursor: crosshair;
+}
+
+/* Animations */
+@keyframes pulse-subtle {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+.animate-pulse-subtle {
+  animation: pulse-subtle 2s ease-in-out infinite;
+}
+
+/* Prose styles for email preview */
+.prose {
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  color: #334155;
+}
+
+.prose h1, .prose h2, .prose h3, .prose h4 {
+  color: #1e293b;
+  margin-bottom: 0.5em;
+}
+
+.prose p {
+  margin-bottom: 1em;
+}
+
+.prose a {
+  color: #4f46e5;
+  text-decoration: underline;
+}
+
+/* Glass Card & Login Styling */
+.login-page {
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+}
+
+.login-mountain-bg {
+  background: linear-gradient(to bottom, #dbeafe, #93c5fd);
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: -1;
+}
+
+.login-scenic-image {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.9;
+  transition: opacity 0.5s ease;
+}
+
+.login-glass-card {
+  background: rgba(255, 255, 255, 0.25);
+  backdrop-filter: blur(50px);
+  -webkit-backdrop-filter: blur(50px);
+  border: none;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.05),
+              inset 0 0 30px rgba(255, 255, 255, 0.2);
+}
+
+.login-input-glass {
+  background-color: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: #1e293b;
+  transition: all 0.2s ease;
+  box-shadow: none !important;
+}
+
+.login-input-glass:focus {
+  background-color: rgba(255, 255, 255, 0.25) !important;
+  border-color: #4F46E5 !important;
+  box-shadow: 0 0 0 1px #4F46E5 !important;
+  outline: none !important;
+}
+
+.login-input-glass::placeholder {
+  color: rgba(30, 41, 59, 0.6);
+}
