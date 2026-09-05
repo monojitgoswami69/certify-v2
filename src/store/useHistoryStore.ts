@@ -5,6 +5,7 @@
 
 import { create } from 'zustand';
 import type { TextBox, QrZone } from '../types';
+import { useAppStore } from './useAppStore';
 
 export interface CanvasSnapshot {
   boxes: TextBox[];
@@ -24,6 +25,14 @@ interface HistoryState {
 }
 
 function normalizeQrZones(input?: QrZone[] | QrZone | null): QrZone[] {
+  if (input === undefined) {
+    try {
+      const current = useAppStore.getState().qrZones;
+      return current ? JSON.parse(JSON.stringify(current)) : [];
+    } catch {
+      return [];
+    }
+  }
   if (!input) return [];
   if (Array.isArray(input)) return JSON.parse(JSON.stringify(input));
   return [JSON.parse(JSON.stringify(input))];
@@ -33,7 +42,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
   past: [],
   future: [],
 
-  pushState: (boxes: TextBox[], qrZones: QrZone[] | QrZone | null = []) => {
+  pushState: (boxes: TextBox[], qrZones?: QrZone[] | QrZone | null) => {
     const normalized = normalizeQrZones(qrZones);
     const snapshot: CanvasSnapshot = {
       boxes: JSON.parse(JSON.stringify(boxes)),
@@ -46,7 +55,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
     }));
   },
 
-  undo: (currentBoxes: TextBox[], currentQrZones: QrZone[] | QrZone | null = []) => {
+  undo: (currentBoxes: TextBox[], currentQrZones?: QrZone[] | QrZone | null) => {
     const { past, future } = get();
     if (past.length === 0) return null;
 
@@ -68,7 +77,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
     return previous;
   },
 
-  redo: (currentBoxes: TextBox[], currentQrZones: QrZone[] | QrZone | null = []) => {
+  redo: (currentBoxes: TextBox[], currentQrZones?: QrZone[] | QrZone | null) => {
     const { past, future } = get();
     if (future.length === 0) return null;
 

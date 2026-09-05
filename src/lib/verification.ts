@@ -18,8 +18,3 @@ export function hashToken(id: string): string {
 export function isValidCertificateId(id: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 }
-
-export function buildVerifyUrl(id: string): string {
-  const base = (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000').replace(/\/+$/, '');
-  return `${base}/verify/${id}`;
-}

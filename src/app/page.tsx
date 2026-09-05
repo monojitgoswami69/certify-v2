@@ -24,6 +24,7 @@ function WorkspaceContent() {
     templateImage,
     templateFile,
     boxes,
+    qrZones,
     csvData,
     csvFile,
     eventName,
@@ -73,17 +74,17 @@ function WorkspaceContent() {
     return null;
   }
 
-  const step1Complete = !!templateImage;
+  const step1Complete = Boolean(templateImage);
   const step2Complete = csvData.length > 0;
-  const step3Complete = boxes.length > 0;
+  const step3Complete = boxes.length > 0 || qrZones.length > 0;
   const validBoxes = boxes.filter((b) => b.field);
   const step4Complete = validBoxes.length > 0;
 
   const step1Status = step1Complete ? 'completed' : 'active';
   const step2Status = !step1Complete ? 'pending' : step2Complete ? 'completed' : 'active';
-  const step3Status = !step2Complete ? 'pending' : step3Complete ? 'completed' : 'active';
+  const step3Status = !step1Complete ? 'pending' : step3Complete ? 'completed' : 'active';
   const step4Status = !step3Complete ? 'pending' : step4Complete ? 'completed' : 'active';
-  const step5Status = !step4Complete ? 'pending' : 'active';
+  const step5Status = !step1Complete || !step2Complete || (!step4Complete && qrZones.length === 0) ? 'pending' : 'active';
 
   if (viewMode === 'email') {
     return (
@@ -191,10 +192,10 @@ function WorkspaceContent() {
           </StepCard>
 
           {/* Step 3 */}
-          <StepCard number={3} title="Define Text Areas" status={step3Status}>
+          <StepCard number={3} title="Text Areas & QR Codes" status={step3Status}>
             <div className="space-y-3">
-              <p className="text-sm text-slate-500">
-                Draw rectangles on the template where text should appear.
+              <p className="text-xs text-slate-500">
+                Draw rectangles for text fields, or click below to place verification QR codes.
               </p>
 
               <QrZoneCard />

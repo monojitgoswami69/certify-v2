@@ -76,13 +76,6 @@ interface AppStore {
   setQrZones: (zones: QrZone[]) => void;
   clearQrZones: () => void;
 
-  // Legacy / convenience compatibility
-  qrZone: QrZone | null;
-  qrZoneActive: boolean;
-  setQrZone: (zone: QrZone) => void;
-  setQrZoneActive: (active: boolean) => void;
-  clearQrZone: () => void;
-
   // CSV Data & Dedicated Event Name
   csvFile: File | null;
   csvHeaders: string[];
@@ -147,8 +140,6 @@ const initialState = {
   qrZones: [] as QrZone[],
   activeQrId: null as string | null,
   isPlacingQr: false,
-  qrZone: null as QrZone | null,
-  qrZoneActive: false,
   csvFile: null,
   csvHeaders: [] as string[],
   csvData: [] as CsvRow[],
@@ -185,8 +176,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
       qrZones: [],
       activeQrId: null,
       isPlacingQr: false,
-      qrZone: null,
-      qrZoneActive: false,
     }),
 
   clearTemplate: () =>
@@ -199,8 +188,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
       qrZones: [],
       activeQrId: null,
       isPlacingQr: false,
-      qrZone: null,
-      qrZoneActive: false,
     }),
 
   addBox: (boxData) => {
@@ -241,7 +228,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
       isPlacingQr,
       activeBoxId: isPlacingQr ? null : get().activeBoxId,
       activeQrId: isPlacingQr ? null : get().activeQrId,
-      qrZoneActive: false,
     }),
 
   addQrZone: (x, y, size) => {
@@ -264,73 +250,37 @@ export const useAppStore = create<AppStore>((set, get) => ({
       activeQrId: id,
       isPlacingQr: false,
       activeBoxId: null,
-      qrZone: newZone,
-      qrZoneActive: true,
     });
     return id;
   },
 
   updateQrZone: (id, updates) =>
-    set((state) => {
-      const updated = state.qrZones.map((zone) =>
+    set((state) => ({
+      qrZones: state.qrZones.map((zone) =>
         zone.id === id ? { ...zone, ...updates } : zone
-      );
-      return {
-        qrZones: updated,
-        qrZone: updated.find((z) => z.id === state.activeQrId) || updated[0] || null,
-      };
-    }),
+      ),
+    })),
 
   deleteQrZone: (id) =>
-    set((state) => {
-      const updated = state.qrZones.filter((zone) => zone.id !== id);
-      const nextActiveId = state.activeQrId === id ? null : state.activeQrId;
-      return {
-        qrZones: updated,
-        activeQrId: nextActiveId,
-        qrZone: updated[0] || null,
-        qrZoneActive: Boolean(nextActiveId),
-      };
-    }),
+    set((state) => ({
+      qrZones: state.qrZones.filter((zone) => zone.id !== id),
+      activeQrId: state.activeQrId === id ? null : state.activeQrId,
+    })),
 
   setActiveQrId: (activeQrId) =>
     set((state) => ({
       activeQrId,
-      qrZoneActive: Boolean(activeQrId),
       activeBoxId: activeQrId ? null : state.activeBoxId,
-      qrZone: state.qrZones.find((z) => z.id === activeQrId) || state.qrZones[0] || null,
     })),
 
-  setQrZones: (qrZones) =>
-    set({
-      qrZones,
-      qrZone: qrZones[0] || null,
-      qrZoneActive: qrZones.length > 0,
-    }),
+  setQrZones: (qrZones) => set({ qrZones }),
 
   clearQrZones: () =>
     set({
       qrZones: [],
       activeQrId: null,
       isPlacingQr: false,
-      qrZone: null,
-      qrZoneActive: false,
     }),
-
-  setQrZone: (zone) => {
-    const id = zone.id || generateQrId();
-    const fullZone = { ...zone, id };
-    set({
-      qrZones: [fullZone],
-      activeQrId: id,
-      qrZone: fullZone,
-      qrZoneActive: true,
-    });
-  },
-
-  setQrZoneActive: (qrZoneActive) => set({ qrZoneActive }),
-
-  clearQrZone: () => get().clearQrZones(),
 
   setCsvData: (file, headers, data) => {
     const emailCol =

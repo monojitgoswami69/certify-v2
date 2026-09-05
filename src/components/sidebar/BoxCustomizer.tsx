@@ -14,6 +14,7 @@ export function BoxCustomizer() {
     activeBoxId,
     csvHeaders,
     csvData,
+    qrZones,
     updateBox,
     deleteBox,
     setFontPreview,
@@ -57,7 +58,7 @@ export function BoxCustomizer() {
     csvData.length > 0 && activeBox.field ? csvData[0][activeBox.field] || '(empty)' : '';
 
   const handleUpdate = (updates: Partial<typeof activeBox>) => {
-    pushState(boxes);
+    pushState(boxes, qrZones);
     updateBox(activeBox.id, updates);
   };
 
@@ -103,7 +104,7 @@ export function BoxCustomizer() {
         </div>
         <button
           onClick={() => {
-            pushState(boxes);
+            pushState(boxes, qrZones);
             deleteBox(activeBox.id);
           }}
           className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"

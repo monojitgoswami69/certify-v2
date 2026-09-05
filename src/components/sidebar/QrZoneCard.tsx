@@ -2,6 +2,7 @@
 
 import { QrCode, Trash2, Plus, X } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
+import { useHistoryStore } from '../../store/useHistoryStore';
 
 /**
  * Step-3 card for adding and managing QR verification zones on the certificate.
@@ -10,6 +11,7 @@ import { useAppStore } from '../../store/useAppStore';
 export function QrZoneCard() {
   const {
     templateImage,
+    boxes,
     qrZones,
     activeQrId,
     isPlacingQr,
@@ -17,6 +19,8 @@ export function QrZoneCard() {
     setActiveQrId,
     deleteQrZone,
   } = useAppStore();
+
+  const { pushState } = useHistoryStore();
 
   if (!templateImage) return null;
 
@@ -79,6 +83,7 @@ export function QrZoneCard() {
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
+                    pushState(boxes, qrZones);
                     deleteQrZone(zone.id);
                   }}
                   className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0"
