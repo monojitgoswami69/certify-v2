@@ -62,6 +62,16 @@ export function CustomSelect({
     }
   }, [isOpen, searchable]);
 
+  const [dropUp, setDropUp] = useState(false);
+
+  useEffect(() => {
+    if (isOpen && containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      setDropUp(spaceBelow < 280 && rect.top > spaceBelow);
+    }
+  }, [isOpen]);
+
   const handleSelect = (newValue: string) => {
     onChange(newValue);
     setIsOpen(false);
@@ -69,14 +79,14 @@ export function CustomSelect({
   };
 
   return (
-    <div ref={containerRef} className={clsx('relative', className)}>
+    <div ref={containerRef} className={clsx('relative', isOpen && 'z-50', className)}>
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
         className={clsx(
           'w-full px-3 py-2 text-sm text-left bg-white border rounded-lg flex items-center justify-between gap-2 transition-colors',
-          'focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400',
-          isOpen ? 'border-primary-400 ring-2 ring-primary-500/20' : 'border-slate-200 hover:border-slate-300'
+          'focus:outline-none focus:ring-0 focus:border-slate-400',
+          isOpen ? 'border-slate-400 shadow-xs' : 'border-slate-200 hover:border-slate-300'
         )}
       >
         <div className="flex items-center gap-2 flex-1 truncate">
@@ -89,7 +99,12 @@ export function CustomSelect({
       </button>
 
       {isOpen && (
-        <div className="absolute z-[100] left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden">
+        <div
+          className={clsx(
+            'absolute z-[100] left-0 right-0 bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden',
+            dropUp ? 'bottom-full mb-1' : 'top-full mt-1'
+          )}
+        >
           {searchable && (
             <div className="p-2 border-b border-slate-100">
               <div className="relative">
@@ -100,7 +115,7 @@ export function CustomSelect({
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Search..."
-                  className="w-full pl-8 pr-8 py-1.5 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400"
+                  className="w-full pl-8 pr-8 py-1.5 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-0 focus:border-slate-400"
                 />
                 {search && (
                   <button

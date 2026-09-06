@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useRef, useEffect, useCallback, useState } from 'react';
+import { Image as ImageIcon } from 'lucide-react';
 import QRCode from 'qrcode';
 import { useAppStore } from '../../store/useAppStore';
 import { useHistoryStore } from '../../store/useHistoryStore';
@@ -685,9 +686,27 @@ export function CanvasEditor() {
 
   if (!templateImage) {
     return (
-      <div ref={containerRef} className="flex-1 flex items-center justify-center p-6 select-none">
-        <p className="text-base text-slate-400 font-medium">
+      <div
+        ref={containerRef}
+        className="flex-1 flex flex-col items-center justify-center p-6 text-center select-none"
+        style={{
+          backgroundColor: '#f1f4f9',
+          backgroundImage: `
+            linear-gradient(to right, rgba(100, 116, 139, 0.08) 1px, transparent 1px),
+            linear-gradient(to bottom, rgba(100, 116, 139, 0.08) 1px, transparent 1px)
+          `,
+          backgroundSize: '16px 16px',
+          backgroundAttachment: 'fixed',
+        }}
+      >
+        <div className="w-14 h-14 rounded-2xl bg-slate-200/80 border border-slate-300/80 flex items-center justify-center text-slate-500 mb-3 shadow-2xs">
+          <ImageIcon className="w-7 h-7 text-slate-500 stroke-[1.75]" />
+        </div>
+        <h3 className="text-base sm:text-lg font-semibold text-slate-700 mb-1">
           Upload a template to get started
+        </h3>
+        <p className="text-sm text-slate-500 max-w-sm leading-relaxed">
+          Select a certificate template image on the left sidebar to begin placing text fields and verification QR codes.
         </p>
       </div>
     );
@@ -701,12 +720,12 @@ export function CanvasEditor() {
         isSpacePressed ? (dragMode === 'pan' ? 'cursor-grabbing' : 'cursor-grab') : ''
       }`}
       style={{
-        backgroundColor: '#e6ebf2',
+        backgroundColor: '#f1f4f9',
         backgroundImage: `
-          linear-gradient(to right, rgba(100, 116, 139, 0.2) 1px, transparent 1px),
-          linear-gradient(to bottom, rgba(100, 116, 139, 0.2) 1px, transparent 1px)
+          linear-gradient(to right, rgba(100, 116, 139, 0.08) 1px, transparent 1px),
+          linear-gradient(to bottom, rgba(100, 116, 139, 0.08) 1px, transparent 1px)
         `,
-        backgroundSize: '14px 14px',
+        backgroundSize: '16px 16px',
         backgroundAttachment: 'fixed',
       }}
     >
@@ -746,11 +765,13 @@ export function CanvasEditor() {
         setIsZoomMenuOpen={setIsZoomMenuOpen}
         zoomMenuRef={zoomMenuRef}
         onResetLayout={() => {
-          reset();
+          setBoxes([]);
+          setQrZones([]);
+          setActiveBox(null);
+          setActiveQrId(null);
+          handleResetFit();
           clearHistory();
         }}
-        activeBox={activeBox}
-        activeQr={activeQr}
       />
     </div>
   );

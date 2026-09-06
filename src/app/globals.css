@@ -41,6 +41,24 @@ body {
   background: #94a3b8;
 }
 
+/* Global focus ring killer: eliminate all default and utility focus rings across all inputs */
+input:focus,
+input:focus-visible,
+select:focus,
+select:focus-visible,
+textarea:focus,
+textarea:focus-visible,
+button:focus,
+button:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+  --tw-ring-shadow: 0 0 #0000 !important;
+  --tw-ring-offset-shadow: 0 0 #0000 !important;
+  --tw-ring-color: transparent !important;
+  --tw-ring-offset-color: transparent !important;
+  --tw-ring-offset-width: 0px !important;
+}
+
 /* Canvas cursor */
 .cursor-crosshair {
   cursor: crosshair;

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import {
   X,
   LayoutTemplate,
@@ -42,6 +43,12 @@ export function TemplateLibraryModal({ isOpen, onClose, onLoaded }: TemplateLibr
   const { setTemplate, setBoxes, setQrZones, setDefaultFont, setDefaultFontSize, setDefaultFontColor } = useAppStore();
   const { token } = useAuthStore();
 
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingId, setLoadingId] = useState<string | null>(null);
@@ -81,7 +88,7 @@ export function TemplateLibraryModal({ isOpen, onClose, onLoaded }: TemplateLibr
     }
   }, [isOpen, fetchTemplates]);
 
-  if (!isOpen) return null;
+  if (!isOpen || !mounted) return null;
 
   // Load a selected template into the workspace
   const handleLoadTemplate = async (templateId: string) => {
@@ -180,8 +187,8 @@ export function TemplateLibraryModal({ isOpen, onClose, onLoaded }: TemplateLibr
     t.name.toLowerCase().includes(searchQuery.trim().toLowerCase())
   );
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 animate-in fade-in duration-150">
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 animate-in fade-in duration-150">
       <div
         className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-150"
         onClick={(e) => e.stopPropagation()}
@@ -214,7 +221,7 @@ export function TemplateLibraryModal({ isOpen, onClose, onLoaded }: TemplateLibr
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search saved templates by name..."
-              className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 transition-all"
+              className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-0 focus:border-slate-400 transition-all"
             />
           </div>
           <button
@@ -316,6 +323,7 @@ export function TemplateLibraryModal({ isOpen, onClose, onLoaded }: TemplateLibr
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

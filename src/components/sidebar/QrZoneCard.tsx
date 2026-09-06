@@ -31,14 +31,14 @@ export function QrZoneCard() {
     <div className="space-y-2">
       {/* Add QR Button / Active Placement Status */}
       {isPlacingQr ? (
-        <div className="flex items-center gap-2">
-          <div className="flex-1 flex items-center gap-2 px-3 py-2 bg-violet-50 border border-violet-300 rounded-lg text-xs font-semibold text-violet-700 animate-pulse">
-            <QrCode className="w-4 h-4 text-violet-600 flex-shrink-0" />
+        <div className="w-full h-10 flex items-center justify-between px-3 bg-violet-50 border border-violet-300 rounded-lg text-xs font-semibold text-violet-700">
+          <div className="flex items-center gap-2 min-w-0">
+            <QrCode className="w-4 h-4 text-violet-600 flex-shrink-0 animate-pulse" />
             <span className="truncate">Click on certificate to place QR</span>
           </div>
           <button
             onClick={() => setIsPlacingQr(false)}
-            className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg border border-slate-200 transition-colors"
+            className="p-1 text-violet-400 hover:text-violet-700 hover:bg-violet-100/80 rounded-md transition-colors flex-shrink-0 cursor-pointer"
             title="Cancel placement"
           >
             <X className="w-4 h-4" />
@@ -48,7 +48,7 @@ export function QrZoneCard() {
         <button
           onClick={() => isCsvUploaded && setIsPlacingQr(true)}
           disabled={!isCsvUploaded}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2 border border-dashed border-violet-300 bg-violet-50/50 text-violet-700 rounded-lg text-sm font-medium hover:bg-violet-100/70 hover:border-violet-400 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-violet-50/50 disabled:hover:border-violet-300 transition-all active:scale-[0.99]"
+          className="w-full h-10 flex items-center justify-center gap-2 px-3 border border-dashed border-violet-300 bg-violet-50/50 text-violet-700 rounded-lg text-sm font-medium hover:bg-violet-100/70 hover:border-violet-400 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-violet-50/50 disabled:hover:border-violet-300 transition-all active:scale-[0.99] cursor-pointer"
           title={!isCsvUploaded ? 'Upload a CSV file first in Step 2 to add QR codes' : 'Add QR Code'}
         >
           <Plus className="w-4 h-4" />
@@ -72,15 +72,11 @@ export function QrZoneCard() {
                 onClick={() => setActiveQrId(zone.id)}
               >
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <div
-                    className={`p-1.5 rounded-lg flex-shrink-0 border ${
-                      isActive
-                        ? 'bg-violet-100 text-violet-700 border-violet-200'
-                        : 'bg-slate-50 text-slate-600 border-slate-100'
+                  <QrCode
+                    className={`w-4 h-4 flex-shrink-0 ${
+                      isActive ? 'text-violet-600' : 'text-slate-500'
                     }`}
-                  >
-                    <QrCode className="w-4 h-4" />
-                  </div>
+                  />
                   <span className="text-xs font-semibold truncate text-slate-800">
                     QR Code {qrZones.length > 1 ? index + 1 : ''} ({Math.round(zone.size)}×{Math.round(zone.size)} px)
                   </span>

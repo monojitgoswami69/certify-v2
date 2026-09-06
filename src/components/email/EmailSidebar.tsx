@@ -175,10 +175,10 @@ function EmailSidebarContent() {
   return (
     <aside
       style={{ width: `${sidebarWidth}px` }}
-      className="relative bg-white border-r-4 border-slate-300 flex-shrink-0 flex flex-col h-full"
+      className="relative bg-white border-r border-slate-500/80 flex-shrink-0 flex flex-col h-full"
     >
       <ResizeHandle />
-      <div className="p-4 border-b border-slate-200 bg-white flex-shrink-0">
+      <div className="p-4 border-b border-slate-200 bg-slate-100 flex-shrink-0">
         <div className="flex items-center gap-3">
           <button
             onClick={resetToDownload}
@@ -306,7 +306,7 @@ function EmailSidebarContent() {
             onClick={(e) => recordSelection('subject', e.currentTarget)}
             onKeyUp={(e) => recordSelection('subject', e.currentTarget)}
             onSelect={(e) => recordSelection('subject', e.currentTarget)}
-            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400"
+            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-0 focus:border-slate-400"
             placeholder="Your Certificate is Ready!"
           />
         </div>
@@ -327,7 +327,7 @@ function EmailSidebarContent() {
             onKeyUp={(e) => recordSelection('bodyPlain', e.currentTarget)}
             onSelect={(e) => recordSelection('bodyPlain', e.currentTarget)}
             rows={10}
-            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 font-mono resize-y"
+            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-0 focus:border-slate-400 font-mono resize-y"
             placeholder="Hi {{name}},&#10;&#10;Congratulations!..."
           />
         </div>
@@ -348,7 +348,7 @@ function EmailSidebarContent() {
             onKeyUp={(e) => recordSelection('bodyHtml', e.currentTarget)}
             onSelect={(e) => recordSelection('bodyHtml', e.currentTarget)}
             rows={8}
-            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 font-mono text-xs resize-y"
+            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-0 focus:border-slate-400 font-mono text-xs resize-y"
             placeholder="<div>Hi {{name}},</div>..."
           />
           <p className="text-xs text-slate-400 mt-1">Leave empty to use plain text only</p>

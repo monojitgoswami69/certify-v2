@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback } from 'react';
 import JSZip from 'jszip';
 import { useAppStore } from '../../store/useAppStore';
+import { useAuthStore } from '../../store/useAuthStore';
 import {
   downloadBlob,
   delay,
@@ -12,6 +13,7 @@ import {
 import { generateCertificate } from '../../lib/certificate-engine';
 import { ensureFontsLoaded } from '../../lib/font-loader';
 import { ensureCertificateIds, buildVerifyUrlFor } from '../../lib/cert-registration';
+import { autoSaveCurrentTemplate } from '../../lib/template-autosave';
 import type { CsvRow, CertificateGenerationRecord, ExportFormats } from '../../types';
 
 export interface FailedRecord {
@@ -68,10 +70,15 @@ export function useCertificateBatchGenerator() {
     qrZones,
     eventName,
     emailColumn,
+    defaultFont,
+    defaultFontSize,
+    defaultFontColor,
     exportFormats,
     setExportFormats,
     setError,
   } = useAppStore();
+
+  const { token } = useAuthStore();
 
   const [progress, setProgress] = useState<GenerateProgress>(DEFAULT_PROGRESS);
   const [logs, setLogs] = useState<GenerateLogs>(DEFAULT_LOGS);
@@ -374,6 +381,21 @@ export function useCertificateBatchGenerator() {
       });
 
       setRetryQueue(errors);
+
+      // Auto-save template & layout configuration to database when generation finishes
+      if (allSuccessfulCerts.length > 0) {
+        autoSaveCurrentTemplate({
+          templateImage,
+          templateFile,
+          eventName,
+          boxes,
+          qrZones,
+          defaultFont,
+          defaultFontSize,
+          defaultFontColor,
+          token,
+        }).catch((err) => console.warn('[AutoSave Template Error]:', err));
+      }
     },
     [
       templateImage,
@@ -383,6 +405,10 @@ export function useCertificateBatchGenerator() {
       qrZones,
       eventName,
       emailColumn,
+      defaultFont,
+      defaultFontSize,
+      defaultFontColor,
+      token,
       exportFormats,
       setError,
       getFilenameBasis,

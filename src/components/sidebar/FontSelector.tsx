@@ -84,10 +84,19 @@ export function FontSelector({ value, onChange, onPreview, className = '' }: Fon
   const [availableFonts, setAvailableFonts] = useState<Font[]>(getAllGoogleFonts());
   const [isLoadingList, setIsLoadingList] = useState(true);
   const [scrollTop, setScrollTop] = useState(0);
+  const [dropUp, setDropUp] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (isOpen && containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      setDropUp(spaceBelow < 290 && rect.top > spaceBelow);
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     let cancelled = false;
@@ -163,7 +172,7 @@ export function FontSelector({ value, onChange, onPreview, className = '' }: Fon
   };
 
   return (
-    <div ref={containerRef} className={`relative ${className}`}>
+    <div ref={containerRef} className={`relative ${isOpen ? 'z-50' : ''} ${className}`}>
       <div className="flex items-center justify-between mb-1.5">
         <label className="text-xs font-medium text-slate-500">Font</label>
         <span className="text-xs text-slate-400">
@@ -174,7 +183,7 @@ export function FontSelector({ value, onChange, onPreview, className = '' }: Fon
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full px-3 py-2 text-sm text-left bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 flex items-center justify-between gap-2 hover:border-slate-300 transition-colors"
+        className="w-full px-3 py-2 text-sm text-left bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-0 focus:border-slate-400 flex items-center justify-between gap-2 hover:border-slate-300 transition-colors"
       >
         <span className="flex-1 truncate" style={{ fontFamily: value ? `"${value}", system-ui` : 'inherit' }}>
           {value || 'Select font...'}
@@ -184,7 +193,9 @@ export function FontSelector({ value, onChange, onPreview, className = '' }: Fon
 
       {isOpen && (
         <div
-          className="absolute z-[100] left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden"
+          className={`absolute z-[100] left-0 right-0 ${
+            dropUp ? 'bottom-full mb-1' : 'top-full mt-1'
+          } bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden`}
           onMouseLeave={() => onPreview?.(null)}
         >
           <div className="p-2 border-b border-slate-100">
@@ -196,7 +207,7 @@ export function FontSelector({ value, onChange, onPreview, className = '' }: Fon
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search fonts..."
-                className="w-full pl-8 pr-8 py-1.5 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400"
+                className="w-full pl-8 pr-8 py-1.5 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-0 focus:border-slate-400"
               />
               {search && (
                 <button
@@ -225,7 +236,12 @@ export function FontSelector({ value, onChange, onPreview, className = '' }: Fon
             ))}
           </div>
 
-          <div ref={listRef} className="overflow-y-auto" style={{ height: listHeight }} onScroll={handleScroll}>
+          <div
+            ref={listRef}
+            className="overflow-y-auto"
+            style={{ height: Math.min(listHeight, Math.max(ITEM_HEIGHT, totalHeight)) }}
+            onScroll={handleScroll}
+          >
             {filteredFonts.length === 0 ? (
               <div className="p-4 text-center text-sm text-slate-500">No fonts found</div>
             ) : (

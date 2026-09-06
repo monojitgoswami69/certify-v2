@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Save, Check, AlertCircle, LayoutTemplate } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import { useAuthStore } from '../../store/useAuthStore';
@@ -14,6 +15,11 @@ interface SaveTemplateModalProps {
 export function SaveTemplateModal({ isOpen, onClose, onSaved }: SaveTemplateModalProps) {
   const { templateImage, templateFile, boxes, qrZones, defaultFont, defaultFontSize, defaultFontColor } = useAppStore();
   const { token } = useAuthStore();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const [templateName, setTemplateName] = useState(
     templateFile?.name ? templateFile.name.replace(/\.[^/.]+$/, '') : 'Certificate Template'
@@ -22,7 +28,7 @@ export function SaveTemplateModal({ isOpen, onClose, onSaved }: SaveTemplateModa
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
-  if (!isOpen) return null;
+  if (!isOpen || !mounted) return null;
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -95,8 +101,8 @@ export function SaveTemplateModal({ isOpen, onClose, onSaved }: SaveTemplateModa
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 animate-in fade-in duration-150">
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 animate-in fade-in duration-150">
       <div
         className="bg-white rounded-2xl border border-slate-200 shadow-xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-150"
         onClick={(e) => e.stopPropagation()}
@@ -169,7 +175,7 @@ export function SaveTemplateModal({ isOpen, onClose, onSaved }: SaveTemplateModa
               value={templateName}
               onChange={(e) => setTemplateName(e.target.value)}
               placeholder="e.g. Annual Tech Summit Merit Certificate"
-              className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 transition-all font-medium"
+              className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-0 focus:border-slate-400 transition-all font-medium"
               required
               autoFocus
             />
@@ -198,6 +204,7 @@ export function SaveTemplateModal({ isOpen, onClose, onSaved }: SaveTemplateModa
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

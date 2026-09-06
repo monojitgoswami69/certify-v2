@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   X,
   CheckCircle2,
@@ -33,8 +34,13 @@ export function EmailDeliveryModal({
   onRetryFailed,
   isSending = false,
 }: EmailDeliveryModalProps) {
+  const [mounted, setMounted] = useState(false);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | EmailDeliveryStatus>('all');
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const stats = useMemo(() => {
     let sent = 0;
@@ -81,7 +87,7 @@ export function EmailDeliveryModal({
     });
   }, [records, search, statusFilter]);
 
-  if (!isOpen) return null;
+  if (!isOpen || !mounted) return null;
 
   const handleDownloadFull = () => {
     downloadFullDeliveryReport(records, eventName);
@@ -109,8 +115,8 @@ export function EmailDeliveryModal({
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-900/40 animate-in fade-in duration-200">
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6 bg-slate-900/50 animate-in fade-in duration-200">
       <div
         className="relative bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
@@ -191,7 +197,7 @@ export function EmailDeliveryModal({
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search recipient, email, error..."
-                className="w-full pl-9 pr-8 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                className="w-full pl-9 pr-8 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:bg-white focus:outline-none focus:ring-0 focus:border-slate-400"
               />
               {search && (
                 <button
@@ -396,6 +402,7 @@ export function EmailDeliveryModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

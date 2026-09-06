@@ -43,15 +43,15 @@ export function ResizeHandle() {
   return (
     <div
       onMouseDown={startResizing}
-      className="absolute top-0 -right-[2px] translate-x-1/2 w-4 h-full cursor-col-resize z-40 group flex items-center justify-center select-none"
+      className="absolute top-0 -right-[6px] w-3 h-full cursor-col-resize z-20 group flex items-center justify-center select-none"
       title="Drag to resize sidebar"
     >
-      {/* Visual border highlight overlay along the full height of the 4px border */}
+      {/* Visual border highlight line along full height */}
       <div
-        className={`absolute inset-y-0 w-1 transition-colors duration-150 ${
+        className={`h-full w-[3px] transition-colors duration-150 ${
           isDragging
-            ? 'bg-primary-600'
-            : 'group-hover:bg-primary-400/80 bg-transparent'
+            ? 'bg-[#727dd8]'
+            : 'group-hover:bg-[#727dd8] bg-transparent'
         }`}
       />
     </div>

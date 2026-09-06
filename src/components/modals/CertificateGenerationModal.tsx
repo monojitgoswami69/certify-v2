@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   X,
   CheckCircle2,
@@ -38,8 +39,13 @@ export function CertificateGenerationModal({
   zipBlob = null,
   exportFormats,
 }: CertificateGenerationModalProps) {
+  const [mounted, setMounted] = useState(false);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | CertificateGenerationStatus>('all');
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const stats = useMemo(() => {
     let generated = 0;
@@ -84,7 +90,7 @@ export function CertificateGenerationModal({
     });
   }, [records, search, statusFilter]);
 
-  if (!isOpen) return null;
+  if (!isOpen || !mounted) return null;
 
   const handleDownloadFull = () => {
     downloadFullGenerationReport(records, eventName);
@@ -108,8 +114,8 @@ export function CertificateGenerationModal({
     downloadBlob(zipBlob, `certificates_${safeEvent}${dateStr}.zip`);
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 animate-in fade-in duration-200">
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/50 animate-in fade-in duration-200">
       <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
         {/* Modal Header */}
         <div className="p-5 border-b border-slate-200 flex items-center justify-between bg-slate-50/50">
@@ -229,7 +235,7 @@ export function CertificateGenerationModal({
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search recipient, ID, error..."
-              className="w-full pl-9 pr-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+              className="w-full pl-9 pr-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-0 focus:border-slate-400"
             />
           </div>
         </div>
@@ -405,6 +411,7 @@ export function CertificateGenerationModal({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useAppStore } from '../../store/useAppStore';
+import { useAuthStore } from '../../store/useAuthStore';
 import { sendEmailV2 } from '../../lib/api-client';
 import {
   replaceTemplateVariables,
@@ -14,6 +15,7 @@ import {
 import { generateCertificate } from '../../lib/certificate-engine';
 import { ensureFontsLoaded } from '../../lib/font-loader';
 import { ensureCertificateIds, buildVerifyUrlFor } from '../../lib/cert-registration';
+import { autoSaveCurrentTemplate } from '../../lib/template-autosave';
 import type { CsvRow, EmailProgress, EmailDeliveryRecord } from '../../types';
 
 export interface FailedRecord {
@@ -46,7 +48,12 @@ export function useEmailBatchRunner() {
     connectedGoogleAccount,
     setConnectedGoogleAccount,
     eventName,
+    defaultFont,
+    defaultFontSize,
+    defaultFontColor,
   } = useAppStore();
+
+  const { token } = useAuthStore();
 
   const [logs, setLogs] = useState<EmailLogs>({ firstSent: null, lastSent: null, totalElapsed: 0 });
   const [retryQueue, setRetryQueue] = useState<FailedRecord[]>([]);
@@ -432,6 +439,21 @@ export function useEmailBatchRunner() {
       });
 
       setRetryQueue(errors);
+
+      // Auto-save template & layout configuration to database when emails are sent
+      if (sent.length > 0) {
+        autoSaveCurrentTemplate({
+          templateImage,
+          templateFile,
+          eventName,
+          boxes,
+          qrZones,
+          defaultFont,
+          defaultFontSize,
+          defaultFontColor,
+          token,
+        }).catch((err) => console.warn('[AutoSave Template Error]:', err));
+      }
     },
     [
       templateImage,
@@ -447,6 +469,10 @@ export function useEmailBatchRunner() {
       getDisplayName,
       connectedGoogleAccount,
       eventName,
+      defaultFont,
+      defaultFontSize,
+      defaultFontColor,
+      token,
     ]
   );
 

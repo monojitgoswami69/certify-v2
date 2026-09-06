@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { desc } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import { db } from '../../../lib/db';
 import { templates } from '../../../db/schema';
 import { getAuthUserFromRequest, unauthorizedResponse } from '../../../lib/server-auth';
@@ -72,26 +72,51 @@ export async function POST(request: Request) {
       );
     }
 
-    const [inserted] = await db
-      .insert(templates)
-      .values({
-        name: name.trim(),
-        imageData,
-        width: typeof width === 'number' ? width : null,
-        height: typeof height === 'number' ? height : null,
-        layoutConfig: layoutConfig || { boxes: [], qrZones: [] },
-      })
-      .returning();
+    // Check if a template with this exact name already exists to update it
+    const existing = await db
+      .select({ id: templates.id })
+      .from(templates)
+      .where(eq(templates.name, name.trim()))
+      .limit(1);
+
+    let savedTemplate;
+    if (existing.length > 0) {
+      const [updated] = await db
+        .update(templates)
+        .set({
+          imageData,
+          width: typeof width === 'number' ? width : null,
+          height: typeof height === 'number' ? height : null,
+          layoutConfig: layoutConfig || { boxes: [], qrZones: [] },
+          updatedAt: new Date(),
+        })
+        .where(eq(templates.id, existing[0].id))
+        .returning();
+      savedTemplate = updated;
+    } else {
+      const [inserted] = await db
+        .insert(templates)
+        .values({
+          name: name.trim(),
+          imageData,
+          width: typeof width === 'number' ? width : null,
+          height: typeof height === 'number' ? height : null,
+          layoutConfig: layoutConfig || { boxes: [], qrZones: [] },
+        })
+        .returning();
+      savedTemplate = inserted;
+    }
 
     return NextResponse.json({
       success: true,
       template: {
-        id: inserted.id,
-        name: inserted.name,
-        width: inserted.width,
-        height: inserted.height,
-        layoutConfig: inserted.layoutConfig,
-        createdAt: inserted.createdAt,
+        id: savedTemplate.id,
+        name: savedTemplate.name,
+        width: savedTemplate.width,
+        height: savedTemplate.height,
+        layoutConfig: savedTemplate.layoutConfig,
+        createdAt: savedTemplate.createdAt,
+        updatedAt: savedTemplate.updatedAt,
       },
     });
   } catch (error) {

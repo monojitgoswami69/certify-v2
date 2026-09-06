@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Trash2, AlignLeft, AlignCenter, AlignRight } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import { useHistoryStore } from '../../store/useHistoryStore';
@@ -24,18 +24,42 @@ export function BoxCustomizer() {
 
   const activeBox = boxes.find((b) => b.id === activeBoxId);
 
+  const focusedInputRef = useRef<string | null>(null);
+
   const [fontSizeInput, setFontSizeInput] = useState<string>(
     activeBox ? String(activeBox.fontSize) : '60'
   );
+  const [xInput, setXInput] = useState<string>(
+    activeBox ? String(Math.round(activeBox.x)) : '0'
+  );
+  const [yInput, setYInput] = useState<string>(
+    activeBox ? String(Math.round(activeBox.y)) : '0'
+  );
+  const [wInput, setWInput] = useState<string>(
+    activeBox ? String(Math.round(activeBox.w)) : '100'
+  );
+  const [hInput, setHInput] = useState<string>(
+    activeBox ? String(Math.round(activeBox.h)) : '50'
+  );
 
-  if (
-    activeBox &&
-    String(activeBox.fontSize) !== fontSizeInput &&
-    typeof document !== 'undefined' &&
-    document.activeElement?.tagName !== 'INPUT'
-  ) {
-    setFontSizeInput(String(activeBox.fontSize));
-  }
+  useEffect(() => {
+    if (!activeBox) return;
+    if (focusedInputRef.current !== 'fontSize') {
+      setFontSizeInput(String(activeBox.fontSize));
+    }
+    if (focusedInputRef.current !== 'x') {
+      setXInput(String(Math.round(activeBox.x)));
+    }
+    if (focusedInputRef.current !== 'y') {
+      setYInput(String(Math.round(activeBox.y)));
+    }
+    if (focusedInputRef.current !== 'w') {
+      setWInput(String(Math.round(activeBox.w)));
+    }
+    if (focusedInputRef.current !== 'h') {
+      setHInput(String(Math.round(activeBox.h)));
+    }
+  }, [activeBox?.fontSize, activeBox?.x, activeBox?.y, activeBox?.w, activeBox?.h, activeBox?.id]);
 
   if (!activeBox) {
     if (boxes.length === 0) {
@@ -71,6 +95,7 @@ export function BoxCustomizer() {
   };
 
   const handleFontSizeBlur = () => {
+    focusedInputRef.current = null;
     const num = parseInt(fontSizeInput);
     if (isNaN(num) || num < 10) {
       setFontSizeInput('10');
@@ -78,6 +103,90 @@ export function BoxCustomizer() {
     } else if (num > 200) {
       setFontSizeInput('200');
       handleUpdate({ fontSize: 200 });
+    }
+  };
+
+  const handleXChange = (value: string) => {
+    setXInput(value);
+    const num = parseInt(value);
+    if (!isNaN(num)) {
+      handleUpdate({ x: num });
+    }
+  };
+
+  const handleXBlur = () => {
+    focusedInputRef.current = null;
+    const num = parseInt(xInput);
+    if (isNaN(num)) {
+      const fallback = Math.round(activeBox.x);
+      setXInput(String(fallback));
+      handleUpdate({ x: fallback });
+    } else {
+      setXInput(String(num));
+      handleUpdate({ x: num });
+    }
+  };
+
+  const handleYChange = (value: string) => {
+    setYInput(value);
+    const num = parseInt(value);
+    if (!isNaN(num)) {
+      handleUpdate({ y: num });
+    }
+  };
+
+  const handleYBlur = () => {
+    focusedInputRef.current = null;
+    const num = parseInt(yInput);
+    if (isNaN(num)) {
+      const fallback = Math.round(activeBox.y);
+      setYInput(String(fallback));
+      handleUpdate({ y: fallback });
+    } else {
+      setYInput(String(num));
+      handleUpdate({ y: num });
+    }
+  };
+
+  const handleWChange = (value: string) => {
+    setWInput(value);
+    const num = parseInt(value);
+    if (!isNaN(num) && num >= 10) {
+      handleUpdate({ w: num });
+    }
+  };
+
+  const handleWBlur = () => {
+    focusedInputRef.current = null;
+    const num = parseInt(wInput);
+    if (isNaN(num) || num < 10) {
+      const fallback = Math.max(10, Math.round(activeBox.w));
+      setWInput(String(fallback));
+      handleUpdate({ w: fallback });
+    } else {
+      setWInput(String(num));
+      handleUpdate({ w: num });
+    }
+  };
+
+  const handleHChange = (value: string) => {
+    setHInput(value);
+    const num = parseInt(value);
+    if (!isNaN(num) && num >= 10) {
+      handleUpdate({ h: num });
+    }
+  };
+
+  const handleHBlur = () => {
+    focusedInputRef.current = null;
+    const num = parseInt(hInput);
+    if (isNaN(num) || num < 10) {
+      const fallback = Math.max(10, Math.round(activeBox.h));
+      setHInput(String(fallback));
+      handleUpdate({ h: fallback });
+    } else {
+      setHInput(String(num));
+      handleUpdate({ h: num });
     }
   };
 
@@ -157,9 +266,12 @@ export function BoxCustomizer() {
             min={10}
             max={200}
             value={fontSizeInput}
+            onFocus={() => {
+              focusedInputRef.current = 'fontSize';
+            }}
             onChange={(e) => handleFontSizeChange(e.target.value)}
             onBlur={handleFontSizeBlur}
-            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400"
+            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-0 focus:border-slate-400"
           />
         </div>
         <div>
@@ -218,24 +330,86 @@ export function BoxCustomizer() {
         </div>
       </div>
 
-      <div className="p-2 bg-slate-50 rounded-lg">
-        <p className="text-xs text-slate-400 mb-1">Position & Bounds</p>
-        <div className="grid grid-cols-4 gap-2 text-xs">
-          <div>
-            <span className="text-slate-400">X:</span>{' '}
-            <span className="font-mono text-slate-600">{Math.round(activeBox.x)}</span>
+      {/* Position & Bounds */}
+      <div className="space-y-2 pt-2 border-t border-slate-100">
+        <div className="flex items-center justify-between">
+          <label className="text-xs font-semibold text-slate-700">Position & Bounds</label>
+          <span className="text-[10px] font-mono text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">px</span>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          {/* X */}
+          <div className="relative flex items-center">
+            <span className="absolute left-2.5 text-xs font-bold text-slate-400 select-none pointer-events-none">
+              X
+            </span>
+            <input
+              type="number"
+              value={xInput}
+              onChange={(e) => handleXChange(e.target.value)}
+              onFocus={() => {
+                focusedInputRef.current = 'x';
+              }}
+              onBlur={handleXBlur}
+              className="w-full pl-7 pr-2 py-1.5 text-xs font-mono font-medium text-slate-800 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-0 focus:border-slate-400 hover:border-slate-300 transition-colors"
+              title="X position (px)"
+            />
           </div>
-          <div>
-            <span className="text-slate-400">Y:</span>{' '}
-            <span className="font-mono text-slate-600">{Math.round(activeBox.y)}</span>
+
+          {/* Y */}
+          <div className="relative flex items-center">
+            <span className="absolute left-2.5 text-xs font-bold text-slate-400 select-none pointer-events-none">
+              Y
+            </span>
+            <input
+              type="number"
+              value={yInput}
+              onChange={(e) => handleYChange(e.target.value)}
+              onFocus={() => {
+                focusedInputRef.current = 'y';
+              }}
+              onBlur={handleYBlur}
+              className="w-full pl-7 pr-2 py-1.5 text-xs font-mono font-medium text-slate-800 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-0 focus:border-slate-400 hover:border-slate-300 transition-colors"
+              title="Y position (px)"
+            />
           </div>
-          <div>
-            <span className="text-slate-400">W:</span>{' '}
-            <span className="font-mono text-slate-600">{Math.round(activeBox.w)}</span>
+
+          {/* W */}
+          <div className="relative flex items-center">
+            <span className="absolute left-2.5 text-xs font-bold text-slate-400 select-none pointer-events-none">
+              W
+            </span>
+            <input
+              type="number"
+              min={10}
+              value={wInput}
+              onChange={(e) => handleWChange(e.target.value)}
+              onFocus={() => {
+                focusedInputRef.current = 'w';
+              }}
+              onBlur={handleWBlur}
+              className="w-full pl-7 pr-2 py-1.5 text-xs font-mono font-medium text-slate-800 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-0 focus:border-slate-400 hover:border-slate-300 transition-colors"
+              title="Width (px)"
+            />
           </div>
-          <div>
-            <span className="text-slate-400">H:</span>{' '}
-            <span className="font-mono text-slate-600">{Math.round(activeBox.h)}</span>
+
+          {/* H */}
+          <div className="relative flex items-center">
+            <span className="absolute left-2.5 text-xs font-bold text-slate-400 select-none pointer-events-none">
+              H
+            </span>
+            <input
+              type="number"
+              min={10}
+              value={hInput}
+              onChange={(e) => handleHChange(e.target.value)}
+              onFocus={() => {
+                focusedInputRef.current = 'h';
+              }}
+              onBlur={handleHBlur}
+              className="w-full pl-7 pr-2 py-1.5 text-xs font-mono font-medium text-slate-800 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-0 focus:border-slate-400 hover:border-slate-300 transition-colors"
+              title="Height (px)"
+            />
           </div>
         </div>
       </div>
