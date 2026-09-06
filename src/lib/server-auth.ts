@@ -20,8 +20,9 @@ export interface JwtPayload {
   exp: number;
 }
 
-export function createJwtToken(username: string): string {
-  return jwt.sign({ username }, JWT_SECRET, { expiresIn: '7d' });
+export function createJwtToken(username: string, rememberMe = true): string {
+  const expiresIn = rememberMe ? '30d' : '24h';
+  return jwt.sign({ username }, JWT_SECRET, { expiresIn });
 }
 
 export function verifyJwtToken(token: string): JwtPayload | null {

@@ -43,6 +43,17 @@ export interface EmailSettings {
   attachPng?: boolean;
 }
 
+export type EmailDeliveryStatus = 'pending' | 'sending' | 'sent' | 'failed' | 'skipped';
+
+export interface EmailDeliveryRecord {
+  rowIndex: number;
+  name: string;
+  email: string;
+  status: EmailDeliveryStatus;
+  timestamp?: string;
+  error?: string;
+}
+
 export interface EmailProgress {
   current: number;
   total: number;
@@ -53,12 +64,15 @@ export interface EmailProgress {
     name: string;
     email: string;
     error: string;
+    failedAt?: string;
   }>;
   sent: Array<{
     rowIndex: number;
     name: string;
     email: string;
+    sentAt?: string;
   }>;
+  records?: EmailDeliveryRecord[];
 }
 
 export interface QrZone {
@@ -66,5 +80,25 @@ export interface QrZone {
   x: number;
   y: number;
   size: number;
+}
+
+export type CertificateGenerationStatus = 'pending' | 'generating' | 'generated' | 'failed';
+
+export interface CertificateGenerationRecord {
+  rowIndex: number;
+  name: string;
+  filename: string;
+  status: CertificateGenerationStatus;
+  formats: string[];
+  certId?: string;
+  verificationUrl?: string;
+  timestamp?: string;
+  error?: string;
+}
+
+export interface ExportFormats {
+  png: boolean;
+  jpg: boolean;
+  pdf: boolean;
 }
 

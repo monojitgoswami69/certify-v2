@@ -11,6 +11,7 @@ import type {
   EmailProgress,
   TextBox,
   QrZone,
+  ExportFormats,
 } from '../types';
 
 export type { QrZone };
@@ -37,6 +38,7 @@ const DEFAULT_EMAIL_PROGRESS: EmailProgress = {
   status: 'idle',
   errors: [],
   sent: [],
+  records: [],
 };
 
 function generateBoxId(): string {
@@ -126,6 +128,10 @@ interface AppStore {
   connectedGoogleAccount: { email: string; name?: string; accessToken?: string } | null;
   setConnectedGoogleAccount: (account: { email: string; name?: string; accessToken?: string } | null) => void;
 
+  // Direct Certificate Export Formats
+  exportFormats: ExportFormats;
+  setExportFormats: (formats: Partial<ExportFormats>) => void;
+
   // Global Reset Actions
   reset: () => void;
   resetToDownload: () => void;
@@ -154,6 +160,11 @@ const initialState = {
   sidebarWidth: 420,
   error: null,
   fonts: [] as Font[],
+  exportFormats: {
+    png: true,
+    jpg: false,
+    pdf: true,
+  } as ExportFormats,
   emailSettings: DEFAULT_EMAIL_SETTINGS,
   emailProgress: DEFAULT_EMAIL_PROGRESS,
   connectedGoogleAccount: null,
@@ -375,6 +386,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
     })),
 
   resetEmailProgress: () => set({ emailProgress: DEFAULT_EMAIL_PROGRESS }),
+
+  setExportFormats: (formats) =>
+    set((state) => ({
+      exportFormats: { ...state.exportFormats, ...formats },
+    })),
 
   reset: () => set(initialState),
 

@@ -1,7 +1,7 @@
 'use client';
 
-import { useCallback } from 'react';
-import { Upload, Sparkles } from 'lucide-react';
+import { useCallback, useEffect } from 'react';
+import { Upload } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 
 function createSampleTemplate(): Promise<{ file: File; img: HTMLImageElement; info: string }> {
@@ -121,31 +121,32 @@ export function TemplateUpload() {
     setTemplate(file, img, info);
   }, [setTemplate]);
 
-  return (
-    <div className="space-y-2">
-      <label
-        className="flex flex-col items-center justify-center gap-3 p-6 border-2 border-dashed border-slate-300 rounded-xl cursor-pointer hover:border-violet-400 hover:bg-violet-50/30 transition-colors"
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={handleDrop}
-      >
-        <input type="file" accept="image/*" className="hidden" onChange={handleChange} />
-        <Upload className="w-8 h-8 text-slate-400" />
-        <div className="text-center">
-          <p className="text-sm text-slate-600">
-            Drag & drop or <span className="text-violet-600 font-medium">browse</span>
-          </p>
-          <p className="text-xs text-slate-400 mt-1">Supports JPG, PNG, WebP</p>
-        </div>
-      </label>
+  // Expose as an internal function on window for programmatic testing
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      (window as unknown as { __loadSampleTemplate?: () => Promise<void> }).__loadSampleTemplate = handleUseSample;
+    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        delete (window as unknown as { __loadSampleTemplate?: () => Promise<void> }).__loadSampleTemplate;
+      }
+    };
+  }, [handleUseSample]);
 
-      <button
-        type="button"
-        onClick={handleUseSample}
-        className="w-full flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-medium text-slate-600 hover:text-violet-700 hover:bg-violet-50/70 border border-slate-200 rounded-lg transition-colors"
-      >
-        <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-        <span>Try with Sample Certificate</span>
-      </button>
-    </div>
+  return (
+    <label
+      className="flex flex-col items-center justify-center gap-3 p-6 border-2 border-dashed border-slate-300 rounded-xl cursor-pointer hover:border-primary-400 hover:bg-primary-50/20 transition-colors"
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={handleDrop}
+    >
+      <input type="file" accept="image/*" className="hidden" onChange={handleChange} />
+      <Upload className="w-8 h-8 text-slate-400" />
+      <div className="text-center">
+        <p className="text-sm text-slate-600">
+          Drag & drop or <span className="text-primary-600 font-medium">browse</span>
+        </p>
+        <p className="text-xs text-slate-400 mt-1">Supports JPG, PNG, WebP</p>
+      </div>
+    </label>
   );
 }

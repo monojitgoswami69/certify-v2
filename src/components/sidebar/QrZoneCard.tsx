@@ -15,6 +15,7 @@ export function QrZoneCard() {
     qrZones,
     activeQrId,
     isPlacingQr,
+    csvData,
     setIsPlacingQr,
     setActiveQrId,
     deleteQrZone,
@@ -23,6 +24,8 @@ export function QrZoneCard() {
   const { pushState } = useHistoryStore();
 
   if (!templateImage) return null;
+
+  const isCsvUploaded = csvData.length > 0;
 
   return (
     <div className="space-y-2">
@@ -43,8 +46,10 @@ export function QrZoneCard() {
         </div>
       ) : (
         <button
-          onClick={() => setIsPlacingQr(true)}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2 border border-dashed border-violet-300 bg-violet-50/50 text-violet-700 rounded-lg text-sm font-medium hover:bg-violet-100/70 hover:border-violet-400 transition-all active:scale-[0.99]"
+          onClick={() => isCsvUploaded && setIsPlacingQr(true)}
+          disabled={!isCsvUploaded}
+          className="w-full flex items-center justify-center gap-2 px-3 py-2 border border-dashed border-violet-300 bg-violet-50/50 text-violet-700 rounded-lg text-sm font-medium hover:bg-violet-100/70 hover:border-violet-400 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-violet-50/50 disabled:hover:border-violet-300 transition-all active:scale-[0.99]"
+          title={!isCsvUploaded ? 'Upload a CSV file first in Step 2 to add QR codes' : 'Add QR Code'}
         >
           <Plus className="w-4 h-4" />
           <span>Add QR Code</span>

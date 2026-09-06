@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { db } from '../../../../lib/db';
-import { certificates, scanEvents } from '../../../../db/schema';
+import { certificates } from '../../../../db/schema';
 import { hashToken, isValidCertificateId } from '../../../../lib/verification';
 import { checkRateLimit, getClientIp } from '../../../../lib/rate-limit';
 
@@ -9,6 +9,7 @@ import { checkRateLimit, getClientIp } from '../../../../lib/rate-limit';
  * Public certificate verification endpoint backing the /verify/[id] page.
  * Malformed and unknown ids share the same neutral not_found response so the
  * endpoint cannot be used to enumerate issued certificates.
+ * Operates purely read-only (zero scan tracking writes).
  */
 export async function GET(
   request: Request,
@@ -53,22 +54,6 @@ export async function GET(
     if (!cert) {
       return NextResponse.json({ status: 'not_found' });
     }
-
-    // Log the scan server-side (single Neon transaction via db.batch) — the
-    // counters/write happen even if the visitor's browser never runs JS.
-    const ip = getClientIp(request).slice(0, 45);
-    const userAgent = (request.headers.get('user-agent') || '').slice(0, 300);
-
-    await db.batch([
-      db.insert(scanEvents).values({ certificateId: cert.id, ip, userAgent }),
-      db
-        .update(certificates)
-        .set({
-          scanCount: sql`${certificates.scanCount} + 1`,
-          lastScannedAt: sql`now()`,
-        })
-        .where(eq(certificates.id, cert.id)),
-    ]);
 
     return NextResponse.json({
       status: cert.status === 'revoked' ? 'revoked' : 'valid',

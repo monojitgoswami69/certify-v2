@@ -23,12 +23,9 @@ export const certificates = pgTable(
     recordFingerprint: text('record_fingerprint'),
     recipientName: text('recipient_name').notNull(),
     recipientEmail: text('recipient_email'),
-    rowData: jsonb('row_data'),
     templateName: text('template_name'),
     status: text('status').notNull().default('issued'), // 'issued' | 'revoked'
     issuedAt: timestamp('issued_at', { withTimezone: true }).notNull().defaultNow(),
-    scanCount: integer('scan_count').notNull().default(0),
-    lastScannedAt: timestamp('last_scanned_at', { withTimezone: true }),
   },
   (table) => [
     uniqueIndex('certificates_token_hash_idx').on(table.tokenHash),
@@ -37,19 +34,27 @@ export const certificates = pgTable(
   ]
 );
 
-export const scanEvents = pgTable(
-  'scan_events',
+/**
+ * Reusable certificate templates stored directly in PostgreSQL.
+ * Holds the background graphic (imageData) and full canvas layout configuration
+ * (text boxes, QR zones, font styles, alignments).
+ */
+export const templates = pgTable(
+  'templates',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    certificateId: uuid('certificate_id')
-      .notNull()
-      .references(() => certificates.id, { onDelete: 'cascade' }),
-    scannedAt: timestamp('scanned_at', { withTimezone: true }).notNull().defaultNow(),
-    ip: text('ip'),
-    userAgent: text('user_agent'),
+    name: text('name').notNull(),
+    imageData: text('image_data').notNull(),
+    width: integer('width'),
+    height: integer('height'),
+    layoutConfig: jsonb('layout_config').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index('scan_events_certificate_id_idx').on(table.certificateId)]
+  (table) => [
+    index('templates_name_idx').on(table.name),
+  ]
 );
 
 export type CertificateRow = typeof certificates.$inferSelect;
-export type ScanEventRow = typeof scanEvents.$inferSelect;
+export type TemplateRow = typeof templates.$inferSelect;

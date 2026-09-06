@@ -175,7 +175,7 @@ function EmailSidebarContent() {
   return (
     <aside
       style={{ width: `${sidebarWidth}px` }}
-      className="relative bg-white border-r border-slate-200 flex-shrink-0 flex flex-col h-full overflow-hidden"
+      className="relative bg-white border-r-4 border-slate-300 flex-shrink-0 flex flex-col h-full"
     >
       <ResizeHandle />
       <div className="p-4 border-b border-slate-200 bg-white flex-shrink-0">

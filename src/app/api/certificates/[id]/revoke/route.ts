@@ -1,13 +1,12 @@
 import { NextResponse } from 'next/server';
-import { eq } from 'drizzle-orm';
+import { eq, or } from 'drizzle-orm';
 import { db } from '../../../../../lib/db';
 import { certificates } from '../../../../../db/schema';
 import { getAuthUserFromRequest, unauthorizedResponse } from '../../../../../lib/server-auth';
 import { hashToken, isValidCertificateId } from '../../../../../lib/verification';
 
 /**
- * Revokes (or re-instates) a certificate by its public verification id.
- * JWT-protected; intended for admin/scripted use until a management UI exists.
+ * Revokes (or re-instates) a certificate by its public verification id or UUID.
  */
 export async function POST(
   request: Request,
@@ -35,7 +34,7 @@ export async function POST(
     const [updated] = await db
       .update(certificates)
       .set({ status: reinstated ? 'issued' : 'revoked' })
-      .where(eq(certificates.tokenHash, hashToken(id)))
+      .where(or(eq(certificates.tokenHash, hashToken(id)), eq(certificates.id, id)))
       .returning({ id: certificates.id, status: certificates.status });
 
     if (!updated) {

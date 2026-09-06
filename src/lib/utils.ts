@@ -2,6 +2,8 @@
  * Utility functions for download, template substitution, email validation, and error reporting
  */
 
+import type { EmailDeliveryRecord, CertificateGenerationRecord } from '../types';
+
 export function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -145,5 +147,80 @@ export function downloadErrorReport(errors: ErrorRecord[], type: 'email' | 'gene
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   const dateStr = new Date().toISOString().split('T')[0];
   const filename = `failed_${type === 'email' ? 'emails' : 'certificates'}_${dateStr}.csv`;
+  downloadBlob(blob, filename);
+}
+
+export function generateFullDeliveryReportCsv(
+  records: EmailDeliveryRecord[],
+  eventName?: string
+): string {
+  const headers = ['Row', 'Recipient Name', 'Email Address', 'Delivery Status', 'Timestamp', 'Diagnostics / Reason', 'Event'];
+  const rows = records.map((rec) => [
+    rec.rowIndex.toString(),
+    `"${(rec.name || '').replace(/"/g, '""')}"`,
+    `"${(rec.email || '').replace(/"/g, '""')}"`,
+    `"${rec.status.toUpperCase()}"`,
+    `"${rec.timestamp || ''}"`,
+    `"${(rec.error || (rec.status === 'sent' ? 'Successfully Delivered' : '')).replace(/"/g, '""')}"`,
+    `"${(eventName || '').replace(/"/g, '""')}"`,
+  ]);
+
+  return [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+}
+
+export function downloadFullDeliveryReport(
+  records: EmailDeliveryRecord[],
+  eventName?: string
+): void {
+  const csvContent = generateFullDeliveryReportCsv(records, eventName);
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const dateStr = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const safeEvent = eventName ? `${sanitizeFilename(eventName)}_` : '';
+  const filename = `delivery_report_${safeEvent}${dateStr}.csv`;
+  downloadBlob(blob, filename);
+}
+
+export function generateFullGenerationReportCsv(
+  records: CertificateGenerationRecord[],
+  eventName?: string
+): string {
+  const headers = [
+    'Row',
+    'Recipient Name',
+    'Filename',
+    'Generation Status',
+    'Formats',
+    'Certificate ID',
+    'Verification URL',
+    'Timestamp',
+    'Diagnostics / Error',
+    'Event',
+  ];
+
+  const rows = records.map((rec) => [
+    rec.rowIndex.toString(),
+    `"${(rec.name || '').replace(/"/g, '""')}"`,
+    `"${(rec.filename || '').replace(/"/g, '""')}"`,
+    `"${rec.status.toUpperCase()}"`,
+    `"${(rec.formats || []).join('+')}"`,
+    `"${(rec.certId || '').replace(/"/g, '""')}"`,
+    `"${(rec.verificationUrl || '').replace(/"/g, '""')}"`,
+    `"${rec.timestamp || ''}"`,
+    `"${(rec.error || (rec.status === 'generated' ? 'Successfully Generated' : '')).replace(/"/g, '""')}"`,
+    `"${(eventName || '').replace(/"/g, '""')}"`,
+  ]);
+
+  return [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+}
+
+export function downloadFullGenerationReport(
+  records: CertificateGenerationRecord[],
+  eventName?: string
+): void {
+  const csvContent = generateFullGenerationReportCsv(records, eventName);
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const dateStr = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const safeEvent = eventName ? `${sanitizeFilename(eventName)}_` : '';
+  const filename = `generation_report_${safeEvent}${dateStr}.csv`;
   downloadBlob(blob, filename);
 }

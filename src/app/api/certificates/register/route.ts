@@ -19,8 +19,7 @@ interface RegisterItem {
 function computeRecordFingerprint(
   eventName: string,
   recipientName: string,
-  recipientEmail: string | null,
-  rowData: Record<string, string> | null
+  recipientEmail: string | null
 ): string {
   const normEvent = eventName.trim().toLowerCase();
   const normEmail = (recipientEmail || '').trim().toLowerCase();
@@ -31,15 +30,8 @@ function computeRecordFingerprint(
     return createHash('sha256').update(`event:${normEvent}|email:${normEmail}`).digest('hex');
   }
 
-  // If no email, hash eventName + recipientName + deterministic rowData
-  let rowStr = '';
-  if (rowData && typeof rowData === 'object') {
-    rowStr = Object.entries(rowData)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([k, v]) => `${k}:${v}`)
-      .join('|');
-  }
-  return createHash('sha256').update(`event:${normEvent}|name:${normName}|data:${rowStr}`).digest('hex');
+  // If no email, hash eventName + recipientName
+  return createHash('sha256').update(`event:${normEvent}|name:${normName}`).digest('hex');
 }
 
 export async function POST(request: Request) {
@@ -94,21 +86,36 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
-    const email =
+    let email =
       typeof item.recipientEmail === 'string' && item.recipientEmail.includes('@')
         ? item.recipientEmail.trim()
         : null;
+
+    const rowData = (item.rowData ?? null) as Record<string, string> | null;
+
+    // Fallback: extract email from rowData if not explicitly provided
+    if (!email && rowData && typeof rowData === 'object') {
+      for (const [key, val] of Object.entries(rowData)) {
+        if (
+          typeof val === 'string' &&
+          val.includes('@') &&
+          /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val.trim())
+        ) {
+          email = val.trim();
+          break;
+        }
+      }
+    }
 
     const itemEventName =
       typeof item.eventName === 'string' && item.eventName.trim()
         ? item.eventName.trim()
         : batchEventName;
 
-    const rowData = (item.rowData ?? null) as Record<string, string> | null;
     const templateName =
       typeof item.templateName === 'string' ? item.templateName.slice(0, 200) : null;
 
-    const fingerprint = computeRecordFingerprint(itemEventName, name, email, rowData);
+    const fingerprint = computeRecordFingerprint(itemEventName, name, email);
     fingerprintSet.add(fingerprint);
 
     parsedItems.push({
@@ -117,7 +124,6 @@ export async function POST(request: Request) {
       email,
       eventName: itemEventName,
       templateName,
-      rowData,
       fingerprint,
     });
   }
@@ -164,7 +170,6 @@ export async function POST(request: Request) {
           recordFingerprint: item.fingerprint,
           recipientName: item.name,
           recipientEmail: item.email,
-          rowData: item.rowData,
           templateName: item.templateName,
           status: 'issued' as const,
         });

@@ -9,6 +9,7 @@ const API_BASE = '/api';
 const TOKEN_KEY = 'credify_auth_token';
 const SESSION_TOKEN_KEY = 'credify_session_token';
 const USER_INFO_KEY = 'credify_user_info';
+const REMEMBERED_USER_KEY = 'credify_remembered_username';
 
 export interface UserProfile {
   username: string;
@@ -41,7 +42,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const response = await fetch(`${API_BASE}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username, password, rememberMe }),
       });
 
       if (!response.ok) return false;
@@ -56,11 +57,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (rememberMe) {
         localStorage.setItem(TOKEN_KEY, token);
         localStorage.setItem(USER_INFO_KEY, JSON.stringify(user));
+        localStorage.setItem(REMEMBERED_USER_KEY, data.username);
         sessionStorage.removeItem(SESSION_TOKEN_KEY);
+        sessionStorage.removeItem(USER_INFO_KEY);
       } else {
         sessionStorage.setItem(SESSION_TOKEN_KEY, token);
         sessionStorage.setItem(USER_INFO_KEY, JSON.stringify(user));
         localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(USER_INFO_KEY);
+        localStorage.removeItem(REMEMBERED_USER_KEY);
       }
 
       set({ isAuthenticated: true, token, user, isLoading: false });
@@ -93,10 +98,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         localStorage.setItem(TOKEN_KEY, token);
         localStorage.setItem(USER_INFO_KEY, JSON.stringify(user));
         sessionStorage.removeItem(SESSION_TOKEN_KEY);
+        sessionStorage.removeItem(USER_INFO_KEY);
       } else {
         sessionStorage.setItem(SESSION_TOKEN_KEY, token);
         sessionStorage.setItem(USER_INFO_KEY, JSON.stringify(user));
         localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(USER_INFO_KEY);
       }
 
       set({ isAuthenticated: true, token, user, isLoading: false });
@@ -109,8 +116,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   logout: () => {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_INFO_KEY);
+    localStorage.removeItem('certify_auth_token');
+    localStorage.removeItem('certify_user_info');
     sessionStorage.removeItem(SESSION_TOKEN_KEY);
     sessionStorage.removeItem(USER_INFO_KEY);
+    sessionStorage.removeItem('certify_session_token');
+    sessionStorage.removeItem('certify_user_info');
+    // Note: REMEMBERED_USER_KEY is kept so returning users have their username prefilled
     set({ isAuthenticated: false, token: null, user: null, isLoading: false });
   },
 

@@ -1,16 +1,18 @@
 'use client';
 
-import React, { useCallback, useRef } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 
 export function ResizeHandle() {
   const { setSidebarWidth } = useAppStore();
+  const [isDragging, setIsDragging] = useState(false);
   const isResizingRef = useRef(false);
 
   const startResizing = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
       isResizingRef.current = true;
+      setIsDragging(true);
       document.body.style.userSelect = 'none';
       document.body.style.cursor = 'col-resize';
 
@@ -25,6 +27,7 @@ export function ResizeHandle() {
 
       const onMouseUp = () => {
         isResizingRef.current = false;
+        setIsDragging(false);
         document.body.style.userSelect = '';
         document.body.style.cursor = '';
         window.removeEventListener('mousemove', onMouseMove);
@@ -40,10 +43,17 @@ export function ResizeHandle() {
   return (
     <div
       onMouseDown={startResizing}
-      className="absolute top-0 right-0 w-2 h-full cursor-col-resize hover:bg-primary-500/20 active:bg-primary-500/40 transition-colors z-30 group flex items-center justify-center -mr-1"
+      className="absolute top-0 -right-[2px] translate-x-1/2 w-4 h-full cursor-col-resize z-40 group flex items-center justify-center select-none"
       title="Drag to resize sidebar"
     >
-      <div className="w-1 h-8 rounded-full bg-slate-300 group-hover:bg-primary-500 transition-colors" />
+      {/* Visual border highlight overlay along the full height of the 4px border */}
+      <div
+        className={`absolute inset-y-0 w-1 transition-colors duration-150 ${
+          isDragging
+            ? 'bg-primary-600'
+            : 'group-hover:bg-primary-400/80 bg-transparent'
+        }`}
+      />
     </div>
   );
 }

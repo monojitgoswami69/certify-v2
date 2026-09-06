@@ -1,9 +1,0 @@
-Name,Email,Course,Event,Date,Certificate_ID,Grade,Role,Organization
-"Alex Johnson","alex.johnson@example.com","Full Stack Web Development","Global Tech Summit 2026","March 15, 2026","CERT-2026-001","Distinction","Attendee","Acme Corporation"
-"Sophia Chen","sophia.chen@example.com","Data Science & AI Bootcamp","AI Innovators Hackathon","March 15, 2026","CERT-2026-002","Honors","Winner - 1st Place","Nexus Labs"
-"Marcus Aurelius Vance","marcus.vance@example.com","Cloud Architecture Mastery","CloudCon Annual 2026","March 15, 2026","CERT-2026-003","Merit","Speaker","Horizon Systems"
-"Elena Rodriguez","elena.rodriguez@example.com","Cybersecurity Defense Essentials","CyberSec Expo 2026","March 15, 2026","CERT-2026-004","Distinction","Participant","Vanguard Security"
-"Priya Sharma","priya.sharma@example.com","UI/UX Product Design Masterclass","DesignSprint 2026","March 15, 2026","CERT-2026-005","Excellence","Attendee","PixelCraft Studio"
-"David Kim","david.kim@example.com","Machine Learning Ops (MLOps)","AI Innovators Hackathon","March 15, 2026","CERT-2026-006","Honors","Runner Up","Quantum Dynamics"
-"Amara Okafor","amara.okafor@example.com","Modern DevOps & Kubernetes","DevOps Days 2026","March 15, 2026","CERT-2026-007","Merit","Participant","NovaTech Global"
-"Liam O'Connor","liam.oconnor@example.com","Blockchain & Smart Contracts","Web3 Builders Summit","March 15, 2026","CERT-2026-008","Distinction","Attendee","Apex Digital"

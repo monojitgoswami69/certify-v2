@@ -1,0 +1,208 @@
+import { NextResponse } from 'next/server';
+import { desc, eq } from 'drizzle-orm';
+import { db } from '../../../lib/db';
+import { certificates } from '../../../db/schema';
+import { getAuthUserFromRequest, unauthorizedResponse } from '../../../lib/server-auth';
+
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
+export interface DashboardParticipant {
+  id: string;
+  recipientName: string;
+  recipientEmail: string | null;
+  status: string; // 'issued' | 'revoked'
+  issuedAt: string;
+  templateName: string | null;
+}
+
+export interface DashboardEventSummary {
+  eventName: string;
+  certificateCount: number;
+  activeCount: number;
+  revokedCount: number;
+  firstIssuedAt: string;
+  lastIssuedAt: string;
+  templateName: string | null;
+}
+
+export interface DashboardStats {
+  totalEvents: number;
+  totalCertificates: number;
+  activeCertificates: number;
+  revokedCertificates: number;
+}
+
+export async function GET(request: Request) {
+  const username = getAuthUserFromRequest(request);
+  if (!username) {
+    return unauthorizedResponse('Invalid or expired session');
+  }
+
+  if (!process.env.DATABASE_URL) {
+    return NextResponse.json(
+      { detail: 'Database is not configured (DATABASE_URL missing)' },
+      { status: 503 }
+    );
+  }
+
+  const { searchParams } = new URL(request.url);
+  const requestedEvent = searchParams.get('event');
+
+  try {
+    // -------------------------------------------------------------
+    // Detailed View Mode: Fetch participants & CSV fields for an event
+    // -------------------------------------------------------------
+    if (requestedEvent) {
+      const decodedEventName = decodeURIComponent(requestedEvent).trim();
+      const rows = await db
+        .select({
+          id: certificates.id,
+          eventName: certificates.eventName,
+          recipientName: certificates.recipientName,
+          recipientEmail: certificates.recipientEmail,
+          status: certificates.status,
+          issuedAt: certificates.issuedAt,
+          templateName: certificates.templateName,
+        })
+        .from(certificates)
+        .where(eq(certificates.eventName, decodedEventName))
+        .orderBy(desc(certificates.issuedAt));
+
+      let activeCount = 0;
+      let revokedCount = 0;
+      let firstIssuedAt = rows[0]?.issuedAt ? rows[0].issuedAt.toISOString() : new Date().toISOString();
+      let lastIssuedAt = rows[0]?.issuedAt ? rows[0].issuedAt.toISOString() : new Date().toISOString();
+      let templateName: string | null = null;
+
+      const participants: DashboardParticipant[] = rows.map((r) => {
+        const isActive = r.status === 'issued';
+        if (isActive) activeCount++;
+        else revokedCount++;
+
+        const isoDate = r.issuedAt.toISOString();
+        if (new Date(isoDate) < new Date(firstIssuedAt)) firstIssuedAt = isoDate;
+        if (new Date(isoDate) > new Date(lastIssuedAt)) lastIssuedAt = isoDate;
+        if (!templateName && r.templateName) templateName = r.templateName;
+
+        return {
+          id: r.id,
+          recipientName: r.recipientName,
+          recipientEmail: r.recipientEmail,
+          status: r.status,
+          issuedAt: isoDate,
+          templateName: r.templateName,
+        };
+      });
+
+      const eventSummary: DashboardEventSummary = {
+        eventName: decodedEventName,
+        certificateCount: rows.length,
+        activeCount,
+        revokedCount,
+        firstIssuedAt,
+        lastIssuedAt,
+        templateName,
+      };
+
+      return NextResponse.json(
+        {
+          event: eventSummary,
+          participants,
+        },
+        {
+          headers: {
+            'Cache-Control': 'no-store, max-age=0, must-revalidate',
+          },
+        }
+      );
+    }
+
+    // -------------------------------------------------------------
+    // Overview Mode: Fetch overall stats and registered events list
+    // -------------------------------------------------------------
+    const rows = await db
+      .select({
+        id: certificates.id,
+        eventName: certificates.eventName,
+        templateName: certificates.templateName,
+        status: certificates.status,
+        issuedAt: certificates.issuedAt,
+      })
+      .from(certificates)
+      .orderBy(desc(certificates.issuedAt));
+
+    let activeCertificates = 0;
+    let revokedCertificates = 0;
+
+    const eventMap = new Map<string, DashboardEventSummary>();
+
+    for (const row of rows) {
+      const eventName = (row.eventName || 'General Event').trim();
+      const isActive = row.status === 'issued';
+      const isRevoked = row.status === 'revoked';
+
+      if (isActive) activeCertificates++;
+      if (isRevoked) revokedCertificates++;
+
+      const isoIssuedAt = row.issuedAt.toISOString();
+
+      let eventSummary = eventMap.get(eventName);
+      if (!eventSummary) {
+        eventSummary = {
+          eventName,
+          certificateCount: 0,
+          activeCount: 0,
+          revokedCount: 0,
+          firstIssuedAt: isoIssuedAt,
+          lastIssuedAt: isoIssuedAt,
+          templateName: row.templateName || null,
+        };
+        eventMap.set(eventName, eventSummary);
+      }
+
+      eventSummary.certificateCount++;
+      if (isActive) eventSummary.activeCount++;
+      if (isRevoked) eventSummary.revokedCount++;
+
+      if (new Date(isoIssuedAt) < new Date(eventSummary.firstIssuedAt)) {
+        eventSummary.firstIssuedAt = isoIssuedAt;
+      }
+      if (new Date(isoIssuedAt) > new Date(eventSummary.lastIssuedAt)) {
+        eventSummary.lastIssuedAt = isoIssuedAt;
+      }
+      if (!eventSummary.templateName && row.templateName) {
+        eventSummary.templateName = row.templateName;
+      }
+    }
+
+    const events = Array.from(eventMap.values()).sort(
+      (a, b) => new Date(b.lastIssuedAt).getTime() - new Date(a.lastIssuedAt).getTime()
+    );
+
+    const stats: DashboardStats = {
+      totalEvents: events.length,
+      totalCertificates: rows.length,
+      activeCertificates,
+      revokedCertificates,
+    };
+
+    return NextResponse.json(
+      {
+        stats,
+        events,
+      },
+      {
+        headers: {
+          'Cache-Control': 'no-store, max-age=0, must-revalidate',
+        },
+      }
+    );
+  } catch (error) {
+    console.error('[Dashboard API Error]:', error);
+    return NextResponse.json(
+      { detail: 'Failed to fetch dashboard data' },
+      { status: 500 }
+    );
+  }
+}
