@@ -174,6 +174,13 @@ export function useEmailBatchRunner() {
           sent: [],
           records: Array.from(deliveryRecordsRef.current.values()),
         });
+        const activeFields = Array.from(
+          new Set([
+            ...validBoxes.map((b) => b.field),
+            ...(emailColumn ? [emailColumn] : []),
+          ])
+        ).filter(Boolean);
+
         certIdsRef.current = await ensureCertificateIds({
           records,
           existingIds: certIdsRef.current,
@@ -182,6 +189,7 @@ export function useEmailBatchRunner() {
           templateName: templateFile?.name || 'template',
           eventName: eventName || 'General Event',
           isStatic: !useQr,
+          activeFields,
         });
       } catch (err) {
         if (useQr) {

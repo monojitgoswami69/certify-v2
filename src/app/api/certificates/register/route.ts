@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createHash } from 'crypto';
-import { inArray } from 'drizzle-orm';
+import { inArray, eq } from 'drizzle-orm';
 import { getAuthUserFromRequest, unauthorizedResponse } from '../../../../lib/server-auth';
 import { db } from '../../../../lib/db';
 import { certificates } from '../../../../db/schema';
@@ -129,6 +129,7 @@ export async function POST(request: Request) {
       templateName,
       fingerprint,
       isStatic,
+      rowData,
     });
   }
 
@@ -141,15 +142,20 @@ export async function POST(request: Request) {
             .select({
               id: certificates.id,
               recordFingerprint: certificates.recordFingerprint,
+              rowData: certificates.rowData,
             })
             .from(certificates)
             .where(inArray(certificates.recordFingerprint, fingerprintsArray))
         : [];
 
     const existingMap = new Map<string, string>();
+    const existingWithoutRowData = new Map<string, string>();
     for (const cert of existingCerts) {
       if (cert.recordFingerprint) {
         existingMap.set(cert.recordFingerprint, cert.id);
+        if (!cert.rowData) {
+          existingWithoutRowData.set(cert.recordFingerprint, cert.id);
+        }
       }
     }
 
@@ -160,7 +166,17 @@ export async function POST(request: Request) {
     for (const item of parsedItems) {
       if (existingMap.has(item.fingerprint)) {
         // Idempotent hit: Reuse existing certificate ID without inserting duplicate row
-        resultIds[item.index] = existingMap.get(item.fingerprint)!;
+        const existingId = existingMap.get(item.fingerprint)!;
+        resultIds[item.index] = existingId;
+
+        // If existing record was missing rowData, update it with current rowData
+        if (existingWithoutRowData.has(item.fingerprint) && item.rowData) {
+          await db
+            .update(certificates)
+            .set({ rowData: item.rowData })
+            .where(eq(certificates.id, existingId));
+          existingWithoutRowData.delete(item.fingerprint);
+        }
       } else {
         // New record: Generate unique certificate ID
         const newId = generateCertificateId();
@@ -176,6 +192,7 @@ export async function POST(request: Request) {
           recipientEmail: item.email,
           templateName: item.templateName,
           status: item.isStatic ? 'static' : 'issued',
+          rowData: item.rowData,
         });
       }
     }

@@ -18,6 +18,7 @@ import { ResizeHandle } from '../../components/ui/ResizeHandle';
 import { useAppStore } from '../../store/useAppStore';
 import { useAuthStore } from '../../store/useAuthStore';
 import { initializeGoogleFonts } from '../../lib/font-loader';
+import { sanitizeFilename, buildVirtualCsvFile } from '../../lib/utils';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 function WorkspaceContent() {
@@ -63,77 +64,106 @@ function WorkspaceContent() {
     });
   }, [setFonts]);
 
-  // Pre-load template & layout if templateId query param is supplied (e.g. from dashboard or direct link)
+  // Pre-load template, layout, and CSV dataset if event or templateId query param is supplied
   useEffect(() => {
-    if (!templateIdParam || !isAuthenticated) return;
-    if (templateImage) {
-      if (eventParam && !eventName) {
-        setEventName(eventParam);
-      }
-      return;
-    }
+    if ((!eventParam && !templateIdParam) || !isAuthenticated) return;
 
     let isCancelled = false;
-    const loadTemplateFromQuery = async () => {
-      const activeToken =
-        token ||
-        (typeof window !== 'undefined'
-          ? localStorage.getItem('credify_auth_token') || sessionStorage.getItem('credify_session_token')
-          : null);
-      if (!activeToken) return;
+    const activeToken =
+      token ||
+      (typeof window !== 'undefined'
+        ? localStorage.getItem('credify_auth_token') || sessionStorage.getItem('credify_session_token')
+        : null);
+    if (!activeToken) return;
 
+    const loadWorkspaceFromQuery = async () => {
       try {
-        const res = await fetch(`/api/templates/${templateIdParam}`, {
-          headers: { Authorization: `Bearer ${activeToken}` },
-        });
-        if (!res.ok) return;
+        let tpl: { id?: string; name: string; imageData: string; layoutConfig?: any } | null = null;
 
-        const data = await res.json();
-        const tpl = data.template;
-        if (!tpl?.imageData || isCancelled) return;
+        // 1. If event is specified, query dashboard event details (includes participants & template)
+        if (eventParam) {
+          const res = await fetch(`/api/dashboard?event=${encodeURIComponent(eventParam)}`, {
+            headers: { Authorization: `Bearer ${activeToken}` },
+          });
 
-        const blobRes = await fetch(tpl.imageData);
-        const blob = await blobRes.blob();
-        const filename = `${tpl.name.toLowerCase().replace(/[^a-z0-9_-]/g, '_')}.png`;
-        const file = new File([blob], filename, { type: 'image/png' });
+          if (res.ok) {
+            const data = await res.json();
+            if (isCancelled) return;
 
-        const img = new Image();
-        img.onload = () => {
-          if (isCancelled) return;
-          const info = `${file.name} (${img.width}×${img.height})`;
-          const store = useAppStore.getState();
-          store.setTemplate(file, img, info);
-          if (tpl.layoutConfig?.boxes && Array.isArray(tpl.layoutConfig.boxes)) {
-            store.setBoxes(tpl.layoutConfig.boxes);
+            // Auto-populate CSV data from event participants if not already set
+            if (
+              data.participants &&
+              data.participants.length > 0 &&
+              useAppStore.getState().csvData.length === 0
+            ) {
+              const { file: csvFile, headers, rows } = buildVirtualCsvFile(eventParam, data.participants);
+              useAppStore.getState().setCsvData(csvFile, headers, rows);
+            }
+
+            if (data.template) {
+              tpl = data.template;
+            }
+
+            useAppStore.getState().setEventName(eventParam);
           }
-          if (tpl.layoutConfig?.qrZones && Array.isArray(tpl.layoutConfig.qrZones)) {
-            store.setQrZones(tpl.layoutConfig.qrZones);
+        }
+
+        // 2. If template was not resolved via event, fallback to templateId query
+        if (!tpl && templateIdParam) {
+          const tplRes = await fetch(`/api/templates/${templateIdParam}`, {
+            headers: { Authorization: `Bearer ${activeToken}` },
+          });
+          if (tplRes.ok) {
+            const tplData = await tplRes.json();
+            tpl = tplData.template;
           }
-          if (tpl.layoutConfig?.defaultFont) {
-            store.setDefaultFont(tpl.layoutConfig.defaultFont);
-          }
-          if (tpl.layoutConfig?.defaultFontSize) {
-            store.setDefaultFontSize(tpl.layoutConfig.defaultFontSize);
-          }
-          if (tpl.layoutConfig?.defaultFontColor) {
-            store.setDefaultFontColor(tpl.layoutConfig.defaultFontColor);
-          }
-          if (eventParam) {
-            store.setEventName(eventParam);
-          }
-        };
-        img.src = tpl.imageData;
+        }
+
+        // 3. Apply template graphic and layout configuration if not already loaded
+        if (tpl?.imageData && !useAppStore.getState().templateImage && !isCancelled) {
+          const blobRes = await fetch(tpl.imageData);
+          const blob = await blobRes.blob();
+          const tplFilename = `${sanitizeFilename(eventParam || tpl.name)}.png`;
+          const file = new File([blob], tplFilename, { type: 'image/png' });
+
+          const img = new Image();
+          img.onload = () => {
+            if (isCancelled) return;
+            const info = `${file.name} (${img.width}×${img.height})`;
+            const store = useAppStore.getState();
+            store.setTemplate(file, img, info);
+            if (tpl.layoutConfig?.boxes && Array.isArray(tpl.layoutConfig.boxes)) {
+              store.setBoxes(tpl.layoutConfig.boxes);
+            }
+            if (tpl.layoutConfig?.qrZones && Array.isArray(tpl.layoutConfig.qrZones)) {
+              store.setQrZones(tpl.layoutConfig.qrZones);
+            }
+            if (tpl.layoutConfig?.defaultFont) {
+              store.setDefaultFont(tpl.layoutConfig.defaultFont);
+            }
+            if (tpl.layoutConfig?.defaultFontSize) {
+              store.setDefaultFontSize(tpl.layoutConfig.defaultFontSize);
+            }
+            if (tpl.layoutConfig?.defaultFontColor) {
+              store.setDefaultFontColor(tpl.layoutConfig.defaultFontColor);
+            }
+            if (eventParam) {
+              store.setEventName(eventParam);
+            }
+          };
+          img.src = tpl.imageData;
+        }
       } catch (err) {
-        console.warn('[Auto-load template from query error]:', err);
+        console.warn('[Auto-load workspace from query error]:', err);
       }
     };
 
-    loadTemplateFromQuery();
+    loadWorkspaceFromQuery();
 
     return () => {
       isCancelled = true;
     };
-  }, [templateIdParam, eventParam, isAuthenticated, token, templateImage, eventName, setEventName]);
+  }, [templateIdParam, eventParam, isAuthenticated, token]);
 
   if (isLoading) {
     return (
@@ -259,7 +289,7 @@ function WorkspaceContent() {
           <StepCard number={3} title="Text Areas & QR Codes" status={step3Status}>
             <div className="space-y-3">
               <p className="text-xs text-slate-500 leading-relaxed">
-                Click and drag on the certificate to draw text fields. QR verification is optional — if no QR is placed, certificates are generated without online verification.
+                Click and drag on the certificate to draw text fields.
               </p>
 
               <QrZoneCard />

@@ -224,3 +224,51 @@ export function downloadFullGenerationReport(
   const filename = `generation_report_${safeEvent}${dateStr}.csv`;
   downloadBlob(blob, filename);
 }
+
+/**
+ * Reconstructs a virtual CSV File object and row records from participant data.
+ * Used when auto-populating Studio from a saved event batch.
+ */
+export function buildVirtualCsvFile(
+  eventName: string,
+  participants: Array<{
+    recipientName: string;
+    recipientEmail?: string | null;
+    rowData?: Record<string, string> | null;
+  }>
+): { file: File; headers: string[]; rows: Array<Record<string, string>> } {
+  const headersSet = new Set<string>();
+  const rows: Array<Record<string, string>> = [];
+
+  for (const p of participants) {
+    let row: Record<string, string> = {};
+    if (p.rowData && typeof p.rowData === 'object' && Object.keys(p.rowData).length > 0) {
+      row = { ...p.rowData };
+    } else {
+      row = {
+        'Full Name': p.recipientName,
+        ...(p.recipientEmail ? { Email: p.recipientEmail } : {}),
+      };
+    }
+    Object.keys(row).forEach((k) => headersSet.add(k));
+    rows.push(row);
+  }
+
+  if (headersSet.size === 0) {
+    headersSet.add('Full Name');
+  }
+
+  const headers = Array.from(headersSet);
+  const csvLines = [
+    headers.map((h) => `"${h.replace(/"/g, '""')}"`).join(','),
+    ...rows.map((r) =>
+      headers.map((h) => `"${(r[h] ?? '').toString().replace(/"/g, '""')}"`).join(',')
+    ),
+  ];
+  const csvContent = csvLines.join('\n');
+  const csvBlob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const filename = `${sanitizeFilename(eventName || 'event')}.csv`;
+  const file = new File([csvBlob], filename, { type: 'text/csv' });
+
+  return { file, headers, rows };
+}

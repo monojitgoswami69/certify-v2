@@ -11,9 +11,10 @@ export interface DashboardParticipant {
   id: string;
   recipientName: string;
   recipientEmail: string | null;
-  status: string; // 'issued' | 'revoked'
+  status: string; // 'issued' | 'revoked' | 'static'
   issuedAt: string;
   templateName: string | null;
+  rowData?: Record<string, string> | null;
 }
 
 export interface DashboardEventSummary {
@@ -64,6 +65,7 @@ export async function GET(request: Request) {
           status: certificates.status,
           issuedAt: certificates.issuedAt,
           templateName: certificates.templateName,
+          rowData: certificates.rowData,
         })
         .from(certificates)
         .where(eq(certificates.eventName, decodedEventName))
@@ -73,7 +75,8 @@ export async function GET(request: Request) {
       let revokedCount = 0;
       let firstIssuedAt = rows[0]?.issuedAt ? rows[0].issuedAt.toISOString() : new Date().toISOString();
       let lastIssuedAt = rows[0]?.issuedAt ? rows[0].issuedAt.toISOString() : new Date().toISOString();
-      let templateName: string | null = null;
+      const eventTemplateName: string | null =
+        rows.find((r) => r.templateName)?.templateName || null;
 
       const participants: DashboardParticipant[] = rows.map((r) => {
         const isActive = r.status === 'issued' || r.status === 'static';
@@ -84,7 +87,6 @@ export async function GET(request: Request) {
         const isoDate = r.issuedAt.toISOString();
         if (new Date(isoDate) < new Date(firstIssuedAt)) firstIssuedAt = isoDate;
         if (new Date(isoDate) > new Date(lastIssuedAt)) lastIssuedAt = isoDate;
-        if (!templateName && r.templateName) templateName = r.templateName;
 
         return {
           id: r.id,
@@ -93,6 +95,7 @@ export async function GET(request: Request) {
           status: r.status,
           issuedAt: isoDate,
           templateName: r.templateName,
+          rowData: (r.rowData as Record<string, string> | null) || null,
         };
       });
 
@@ -103,13 +106,48 @@ export async function GET(request: Request) {
         revokedCount,
         firstIssuedAt,
         lastIssuedAt,
-        templateName,
+        templateName: eventTemplateName,
       };
+
+      // Find the associated canvas template if available
+      let matchedTemplate = null;
+      try {
+        const allTemplates = await db
+          .select({
+            id: templates.id,
+            name: templates.name,
+            imageData: templates.imageData,
+            width: templates.width,
+            height: templates.height,
+            layoutConfig: templates.layoutConfig,
+          })
+          .from(templates);
+
+        if (allTemplates.length > 0) {
+          const tplBase = eventTemplateName
+            ? eventTemplateName.replace(/\.[^/.]+$/, '').trim().toLowerCase()
+            : '';
+          const evBase = decodedEventName.trim().toLowerCase();
+
+          matchedTemplate =
+            allTemplates.find((t) => t.name.trim().toLowerCase() === evBase) ||
+            allTemplates.find((t) => tplBase && t.name.trim().toLowerCase() === tplBase) ||
+            allTemplates.find(
+              (t) =>
+                (evBase && t.name.toLowerCase().includes(evBase)) ||
+                (tplBase && t.name.toLowerCase().includes(tplBase))
+            ) ||
+            (allTemplates.length === 1 ? allTemplates[0] : null);
+        }
+      } catch (err) {
+        console.warn('[Dashboard] Could not fetch template for event:', err);
+      }
 
       return NextResponse.json(
         {
           event: eventSummary,
           participants,
+          template: matchedTemplate,
         },
         {
           headers: {

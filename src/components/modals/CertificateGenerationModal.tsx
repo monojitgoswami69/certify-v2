@@ -47,6 +47,14 @@ export function CertificateGenerationModal({
     setMounted(true);
   }, []);
 
+  const activeFormatsText = useMemo(() => {
+    const list: string[] = [];
+    if (exportFormats?.png) list.push('PNG');
+    if (exportFormats?.jpg) list.push('JPG');
+    if (exportFormats?.pdf) list.push('PDF');
+    return list.length > 0 ? list.join(', ') : '—';
+  }, [exportFormats]);
+
   const stats = useMemo(() => {
     let generated = 0;
     let failed = 0;
@@ -161,22 +169,14 @@ export function CertificateGenerationModal({
           </div>
           <div className="p-3 bg-blue-50 rounded-xl border border-blue-200/60">
             <div className="text-xs font-semibold text-blue-700 flex items-center gap-1.5 mb-1">
-              <Clock className="w-3.5 h-3.5 text-blue-600" />
+              <Archive className="w-3.5 h-3.5 text-blue-600" />
               Active Formats
             </div>
-            <div className="flex items-center gap-1.5 mt-1.5">
-              {exportFormats?.png && (
-                <span className="px-2 py-0.5 text-xs font-bold rounded bg-blue-100 text-blue-800">PNG</span>
-              )}
-              {exportFormats?.jpg && (
-                <span className="px-2 py-0.5 text-xs font-bold rounded bg-amber-100 text-amber-800">JPG</span>
-              )}
-              {exportFormats?.pdf && (
-                <span className="px-2 py-0.5 text-xs font-bold rounded bg-purple-100 text-purple-800">PDF</span>
-              )}
-              {!exportFormats?.png && !exportFormats?.jpg && !exportFormats?.pdf && (
-                <span className="text-xs font-medium text-slate-500">None</span>
-              )}
+            <div
+              className="text-2xl font-bold text-blue-700 tracking-tight truncate"
+              title={activeFormatsText}
+            >
+              {activeFormatsText}
             </div>
           </div>
         </div>

@@ -153,7 +153,7 @@ export function GenerateButton() {
           <button
             onClick={handleGenerate}
             disabled={!isReady || !hasAnyFormat}
-            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-primary-600 to-indigo-600 text-white rounded-lg font-medium hover:from-primary-700 hover:to-indigo-700 disabled:from-slate-300 disabled:to-slate-400 disabled:cursor-not-allowed transition-all shadow-lg shadow-primary-500/25 cursor-pointer"
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-primary-600 to-indigo-600 text-white rounded-lg font-medium hover:from-primary-700 hover:to-indigo-700 disabled:from-slate-200 disabled:to-slate-200 disabled:text-slate-400 disabled:shadow-none disabled:cursor-not-allowed transition-all shadow-lg shadow-primary-500/25 cursor-pointer"
           >
             <Download className="w-5 h-5" />
             <span>Generate {csvData.length} Certificates (ZIP)</span>

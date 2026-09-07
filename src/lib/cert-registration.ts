@@ -27,21 +27,43 @@ export async function ensureCertificateIds(params: {
   templateName: string;
   eventName?: string;
   isStatic?: boolean;
+  activeFields?: string[];
 }): Promise<Map<number, string>> {
-  const { records, existingIds, getDisplayName, getEmail, templateName, eventName, isStatic } = params;
+  const {
+    records,
+    existingIds,
+    getDisplayName,
+    getEmail,
+    templateName,
+    eventName,
+    isStatic,
+    activeFields,
+  } = params;
 
   const pending = records.filter(({ rowIndex }) => !existingIds.has(rowIndex));
   if (pending.length === 0) return existingIds;
 
+  const activeFieldSet =
+    activeFields && activeFields.length > 0 ? new Set(activeFields) : null;
+
   const ids = await registerCertificates(
-    pending.map(({ row }) => ({
-      recipientName: getDisplayName(row) || 'Certificate Holder',
-      recipientEmail: getEmail ? getEmail(row) : undefined,
-      rowData: row,
-      templateName,
-      eventName,
-      isStatic,
-    })),
+    pending.map(({ row }) => {
+      // If activeFields specified, only persist fields displayed on the certificate
+      const rowData = activeFieldSet
+        ? Object.fromEntries(
+            Object.entries(row).filter(([key]) => activeFieldSet.has(key))
+          )
+        : row;
+
+      return {
+        recipientName: getDisplayName(row) || 'Certificate Holder',
+        recipientEmail: getEmail ? getEmail(row) : undefined,
+        rowData,
+        templateName,
+        eventName,
+        isStatic,
+      };
+    }),
     eventName,
     isStatic
   );

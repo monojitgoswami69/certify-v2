@@ -234,6 +234,13 @@ export function useCertificateBatchGenerator() {
           status: 'loading-fonts',
           currentName: useQr ? 'Registering certificates...' : 'Saving batch records...',
         }));
+        const activeFields = Array.from(
+          new Set([
+            ...validBoxes.map((b) => b.field),
+            ...(emailColumn ? [emailColumn] : []),
+          ])
+        ).filter(Boolean);
+
         certIdsRef.current = await ensureCertificateIds({
           records,
           existingIds: certIdsRef.current,
@@ -242,6 +249,7 @@ export function useCertificateBatchGenerator() {
           templateName: templateFile?.name || 'template',
           eventName: eventName || 'General Event',
           isStatic: !useQr,
+          activeFields,
         });
         setProgress((prev) => ({ ...prev, status: 'generating', currentName: '' }));
       } catch (err) {

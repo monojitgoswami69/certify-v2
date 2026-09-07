@@ -24,7 +24,7 @@ import {
 } from 'lucide-react';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useAppStore } from '../../store/useAppStore';
-import { downloadBlob, sanitizeFilename } from '../../lib/utils';
+import { downloadBlob, sanitizeFilename, buildVirtualCsvFile } from '../../lib/utils';
 import type { DashboardEventSummary, DashboardParticipant } from '../api/dashboard/route';
 
 function getStoredToken(): string | null {
@@ -419,10 +419,10 @@ function DashboardContent() {
         throw new Error('Template graphic data is missing');
       }
 
-      // Convert Base64 data URL to Image and File
+      // Convert Base64 data URL to Image and File named after event
       const blobRes = await fetch(tpl.imageData);
       const blob = await blobRes.blob();
-      const filename = `${tpl.name.toLowerCase().replace(/[^a-z0-9_-]/g, '_')}.png`;
+      const filename = `${sanitizeFilename(evName || tpl.name)}.png`;
       const file = new File([blob], filename, { type: 'image/png' });
 
       await new Promise<void>((resolve, reject) => {
@@ -449,13 +449,20 @@ function DashboardContent() {
           if (evName) {
             store.setEventName(evName);
           }
+
+          // Auto-populate CSV data from stored event participants
+          if (participants && participants.length > 0) {
+            const { file: csvFile, headers, rows } = buildVirtualCsvFile(evName, participants);
+            store.setCsvData(csvFile, headers, rows);
+          }
+
           resolve();
         };
         img.onerror = () => reject(new Error('Failed to decode template graphic'));
         img.src = tpl.imageData;
       });
 
-      router.push(`/editor?templateId=${match.id}&event=${encodeURIComponent(evName)}`);
+      router.push(`/editor?event=${encodeURIComponent(evName)}${match?.id ? `&templateId=${match.id}` : ''}`);
     } catch (err) {
       console.error('[Open in Studio Error]:', err);
       alert(err instanceof Error ? err.message : 'Error opening event in Studio');

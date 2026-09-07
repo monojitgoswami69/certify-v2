@@ -161,9 +161,9 @@ const initialState = {
   error: null,
   fonts: [] as Font[],
   exportFormats: {
-    png: true,
+    png: false,
     jpg: false,
-    pdf: true,
+    pdf: false,
   } as ExportFormats,
   emailSettings: DEFAULT_EMAIL_SETTINGS,
   emailProgress: DEFAULT_EMAIL_PROGRESS,

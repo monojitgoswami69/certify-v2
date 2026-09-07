@@ -24,7 +24,8 @@ export const certificates = pgTable(
     recipientName: text('recipient_name').notNull(),
     recipientEmail: text('recipient_email'),
     templateName: text('template_name'),
-    status: text('status').notNull().default('issued'), // 'issued' | 'revoked'
+    status: text('status').notNull().default('issued'), // 'issued' | 'revoked' | 'static'
+    rowData: jsonb('row_data'),
     issuedAt: timestamp('issued_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
