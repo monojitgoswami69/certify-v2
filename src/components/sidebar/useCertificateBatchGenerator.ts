@@ -12,7 +12,7 @@ import {
   streamToFile,
 } from '../../lib/utils';
 import { generateCertificate } from '../../lib/certificate-engine';
-import { ensureFontsLoaded } from '../../lib/font-loader';
+import { ensureFontsLoaded, loadFontsForWorker, type WorkerFontData } from '../../lib/font-loader';
 import { ensureCertificateIds, buildVerifyUrlFor } from '../../lib/cert-registration';
 import { autoSaveCurrentTemplate } from '../../lib/template-autosave';
 import {
@@ -256,7 +256,7 @@ export function useCertificateBatchGenerator() {
         );
       }
 
-      // Step 1: Preload web fonts
+      // Step 1: Preload web fonts for both DOM and Web Workers
       setProgress({
         current: 0,
         total: records.length,
@@ -267,7 +267,18 @@ export function useCertificateBatchGenerator() {
       });
 
       const uniqueFonts = new Set(boxes.map((b) => b.fontFamily).filter(Boolean));
-      await ensureFontsLoaded(uniqueFonts);
+      if (defaultFont) uniqueFonts.add(defaultFont);
+
+      let workerFonts: WorkerFontData[] = [];
+      try {
+        const [loadedWorkerFonts] = await Promise.all([
+          loadFontsForWorker(uniqueFonts),
+          ensureFontsLoaded(uniqueFonts),
+        ]);
+        workerFonts = loadedWorkerFonts;
+      } catch (fontErr) {
+        console.warn('[Batch Generator] Font preloading error:', fontErr);
+      }
 
       if (!isRetry) {
         setLogs({ firstGenerated: new Date(), lastGenerated: null, totalElapsed: 0 });
@@ -366,7 +377,8 @@ export function useCertificateBatchGenerator() {
             templateImage.naturalHeight || templateImage.height,
             validBoxes,
             qrZones,
-            activeFormatsList
+            activeFormatsList,
+            workerFonts
           );
 
           progressScheduler.schedule({

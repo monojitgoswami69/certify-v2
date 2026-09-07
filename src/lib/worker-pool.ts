@@ -7,8 +7,9 @@
 
 import type { TextBox, CsvRow } from '../types';
 import type { QrPlacement, OutputFormat, BatchResultItem } from './certificate-worker';
+import type { WorkerFontData } from './font-loader';
 
-export type { OutputFormat, BatchResultItem };
+export type { OutputFormat, BatchResultItem, WorkerFontData };
 
 export interface WorkerTask {
   id: number;
@@ -44,6 +45,7 @@ export class CertificateWorkerPool {
    * Initialize the worker pool.
    *
    * Transfers the template Blob reference — each worker decodes it once into an ImageBitmap.
+   * Font binary buffers are cloned independently for each worker so they can register FontFaces.
    */
   async initialize(
     templateFile: Blob,
@@ -52,6 +54,7 @@ export class CertificateWorkerPool {
     boxes: TextBox[],
     qrZones: QrPlacement[],
     formats: OutputFormat[],
+    fonts?: WorkerFontData[],
     maxWorkers?: number
   ): Promise<number> {
     const workerCount = maxWorkers ?? CertificateWorkerPool.getOptimalWorkerCount();
@@ -107,6 +110,14 @@ export class CertificateWorkerPool {
         qrZones,
         formats,
         jpegQuality: 0.92,
+        fonts: fonts
+          ? fonts.map((f) => ({
+              family: f.family,
+              buffer: f.buffer.slice(0),
+              weight: f.weight,
+              style: f.style,
+            }))
+          : undefined,
       });
     }
 

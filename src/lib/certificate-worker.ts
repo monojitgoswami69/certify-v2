@@ -46,6 +46,13 @@ export interface BatchItem {
   verificationUrl?: string;
 }
 
+export interface WorkerFontData {
+  family: string;
+  buffer: ArrayBuffer;
+  weight?: string;
+  style?: string;
+}
+
 export interface InitMessage {
   type: 'init';
   templateBlob: Blob;
@@ -55,6 +62,7 @@ export interface InitMessage {
   qrZones?: QrPlacement[];
   formats: OutputFormat[];
   jpegQuality?: number;
+  fonts?: WorkerFontData[];
 }
 
 export interface GenerateBatchMessage {
@@ -384,6 +392,32 @@ self.onmessage = async (event: MessageEvent<InitMessage | GenerateBatchMessage>)
 
   if (message.type === 'init') {
     try {
+      fontSizeCache.clear();
+
+      // 1. Load custom web fonts into worker's FontFaceSet
+      if (message.fonts && message.fonts.length > 0 && typeof FontFace !== 'undefined') {
+        const fontSet = (self as unknown as { fonts?: FontFaceSet }).fonts;
+        if (fontSet) {
+          for (const fontData of message.fonts) {
+            try {
+              const fontFace = new FontFace(fontData.family, fontData.buffer, {
+                weight: fontData.weight || '400',
+                style: fontData.style || 'normal',
+              });
+              await fontFace.load();
+              fontSet.add(fontFace);
+            } catch (fontErr) {
+              console.warn(`[Worker] Failed to load font ${fontData.family}:`, fontErr);
+            }
+          }
+          try {
+            await fontSet.ready;
+          } catch {
+            // ignore
+          }
+        }
+      }
+
       cachedTemplateBitmap = await createImageBitmap(message.templateBlob);
       cachedTemplateWidth = message.templateWidth;
       cachedTemplateHeight = message.templateHeight;
@@ -410,7 +444,8 @@ self.onmessage = async (event: MessageEvent<InitMessage | GenerateBatchMessage>)
             textX = box.x + box.w / 2;
           }
 
-          const fontBase = `"${box.fontFamily}", system-ui, -apple-system, sans-serif`;
+          const cleanFamily = box.fontFamily?.replace(/['"]/g, '').trim() || 'system-ui';
+          const fontBase = `"${cleanFamily}", system-ui, -apple-system, sans-serif`;
           return { box, fontBase, textX, textAlign };
         });
 
