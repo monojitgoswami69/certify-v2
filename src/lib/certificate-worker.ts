@@ -404,21 +404,30 @@ self.onmessage = async (event: MessageEvent<InitMessage | GenerateBatchMessage>)
                 weight: fontData.weight || '400',
                 style: fontData.style || 'normal',
               });
-              await fontFace.load();
-              fontSet.add(fontFace);
+              // Explicitly load the individual font with a 3s timeout guard.
+              // CRITICAL: NEVER await `fontSet.ready` in Web Workers — in Chromium and WebKit,
+              // `fontSet.ready` tracks document layout tasks which do not exist in WorkerGlobalScope,
+              // causing `await fontSet.ready` to hang indefinitely!
+              const loadedFace = await Promise.race([
+                fontFace.load(),
+                new Promise<never>((_, reject) =>
+                  setTimeout(() => reject(new Error('Font decode timeout')), 3000)
+                ),
+              ]);
+              fontSet.add(loadedFace);
             } catch (fontErr) {
               console.warn(`[Worker] Failed to load font ${fontData.family}:`, fontErr);
             }
           }
-          try {
-            await fontSet.ready;
-          } catch {
-            // ignore
-          }
         }
       }
 
-      cachedTemplateBitmap = await createImageBitmap(message.templateBlob);
+      cachedTemplateBitmap = await Promise.race([
+        createImageBitmap(message.templateBlob),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Template decode timeout')), 15000)
+        ),
+      ]);
       cachedTemplateWidth = message.templateWidth;
       cachedTemplateHeight = message.templateHeight;
       cachedFormats = message.formats;
