@@ -272,3 +272,48 @@ export function buildVirtualCsvFile(
 
   return { file, headers, rows };
 }
+
+/**
+ * Feature detection for File System Access API (Chromium-based browsers).
+ */
+export function hasFileSystemAccess(): boolean {
+  return typeof window !== 'undefined' && 'showSaveFilePicker' in window;
+}
+
+/**
+ * Pipes a ReadableStream directly to disk via the File System Access API.
+ * Eliminates keeping giant ZIP blobs in memory.
+ */
+export async function streamToFile(
+  stream: ReadableStream<Uint8Array>,
+  filename: string
+): Promise<boolean> {
+  type SaveFilePicker = (opts: {
+    suggestedName: string;
+    types?: { description?: string; accept: Record<string, string[]> }[];
+  }) => Promise<{
+    createWritable: () => Promise<WritableStream<Uint8Array> & { close: () => Promise<void> }>;
+  }>;
+
+  const picker = (window as unknown as { showSaveFilePicker: SaveFilePicker }).showSaveFilePicker;
+  let handle;
+  try {
+    handle = await picker({
+      suggestedName: filename,
+      types: [
+        {
+          description: 'ZIP archive',
+          accept: { 'application/zip': ['.zip'] },
+        },
+      ],
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') return false;
+    throw err;
+  }
+
+  const writable = await handle.createWritable();
+  await stream.pipeTo(writable);
+  return true;
+}
+

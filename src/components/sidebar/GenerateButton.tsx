@@ -12,6 +12,7 @@ import {
   RefreshCw,
   Clock,
   FileSpreadsheet,
+  Cpu,
 } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import { useCertificateBatchGenerator } from './useCertificateBatchGenerator';
@@ -243,9 +244,18 @@ export function GenerateButton() {
             <span>View Live Generation Audit ({generationRecords.length})</span>
           </button>
 
-          <div className="flex items-center justify-center gap-2 text-sm text-slate-500">
-            <Loader2 className="w-4 h-4 animate-spin text-primary-600" />
-            <span>Processing certificates in background...</span>
+          <div className="flex items-center justify-center gap-1.5 text-xs text-slate-500 font-medium">
+            {progress.workerCount ? (
+              <>
+                <Cpu className="w-3.5 h-3.5 text-primary-600 animate-pulse" />
+                <span>Running across {progress.workerCount} parallel workers</span>
+              </>
+            ) : (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-primary-600" />
+                <span>Processing certificates in background...</span>
+              </>
+            )}
           </div>
         </div>
       )}
