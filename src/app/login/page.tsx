@@ -83,7 +83,7 @@ export default function LoginPage() {
 
   if (isCheckingSession && (authLoading || isAuthenticated)) {
     return (
-      <div className="login-page min-h-screen flex items-center justify-center p-4 md:p-8 transition-colors duration-300">
+      <div className="login-page relative isolate min-h-screen flex items-center justify-center p-4 md:p-8 transition-colors duration-300">
         <div className="login-mountain-bg">
           <Image
             src="/login_background.webp"
@@ -97,7 +97,7 @@ export default function LoginPage() {
             className="login-scenic-image mix-blend-overlay"
           />
         </div>
-        <div className="login-glass-card rounded-[24px] px-8 py-6 flex items-center gap-3 shadow-xl">
+        <div className="login-glass-card relative z-10 rounded-[24px] px-8 py-6 flex items-center gap-3 shadow-xl">
           <Image
             src="/credify-logo.png"
             alt="Credify Logo"
@@ -113,7 +113,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="login-page min-h-screen flex items-center justify-center p-4 md:p-8 transition-colors duration-300">
+    <div className="login-page relative isolate min-h-screen flex items-center justify-center p-4 md:p-8 transition-colors duration-300">
       <div className="login-mountain-bg">
         <Image
           src="/login_background.webp"
@@ -128,7 +128,7 @@ export default function LoginPage() {
         />
       </div>
 
-      <div className="w-full max-w-5xl login-glass-card rounded-[32px] flex flex-col md:flex-row overflow-hidden min-h-[600px] transition-all duration-300">
+      <div className="w-full max-w-5xl login-glass-card relative z-10 rounded-[32px] flex flex-col md:flex-row overflow-hidden min-h-[600px] transition-all duration-300">
         <div className="md:w-[45%] p-3 md:p-4 flex flex-col">
           <div className="relative rounded-[24px] w-full h-full flex flex-col justify-end text-white overflow-hidden shadow-xl bg-slate-900">
             <Image

@@ -51,7 +51,7 @@ export async function GET(
       .where(eq(certificates.tokenHash, tokenHash))
       .limit(1);
 
-    if (!cert) {
+    if (!cert || cert.status === 'static') {
       return NextResponse.json({ status: 'not_found' });
     }
 

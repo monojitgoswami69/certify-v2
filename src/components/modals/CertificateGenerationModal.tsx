@@ -291,17 +291,24 @@ export function CertificateGenerationModal({
                         </div>
                       </td>
                       <td className="py-2.5 px-3 font-mono">
-                        {r.certId ? (
+                        {r.verificationUrl ? (
                           <a
-                            href={r.verificationUrl || `/verify/${r.certId}`}
+                            href={r.verificationUrl}
                             target="_blank"
                             rel="noreferrer"
                             className="inline-flex items-center gap-1 text-primary-600 hover:text-primary-800 hover:underline font-semibold"
                             title="Open verification page"
                           >
-                            <span>{r.certId.slice(0, 8)}...</span>
+                            <span>{r.certId ? r.certId.slice(0, 8) : ''}...</span>
                             <ExternalLink className="w-3 h-3" />
                           </a>
+                        ) : r.certId ? (
+                          <span
+                            className="text-slate-500 font-mono text-[11px]"
+                            title={`Static Certificate ID: ${r.certId}`}
+                          >
+                            {r.certId.slice(0, 8)}... (Static)
+                          </span>
                         ) : (
                           <span className="text-slate-400">N/A</span>
                         )}

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { FileSpreadsheet, X, Image as ImageIcon, CalendarDays } from 'lucide-react';
 import { ErrorBoundary } from '../../components/ui/ErrorBoundary';
 import { SidebarHeader } from '../../components/sidebar/SidebarHeader';
@@ -18,7 +18,7 @@ import { ResizeHandle } from '../../components/ui/ResizeHandle';
 import { useAppStore } from '../../store/useAppStore';
 import { useAuthStore } from '../../store/useAuthStore';
 import { initializeGoogleFonts } from '../../lib/font-loader';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 
 function WorkspaceContent() {
   const {
@@ -40,8 +40,11 @@ function WorkspaceContent() {
     clearCsvData,
   } = useAppStore();
 
-  const { isAuthenticated, isLoading, initialize } = useAuthStore();
+  const { isAuthenticated, isLoading, initialize, token } = useAuthStore();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const templateIdParam = searchParams.get('templateId');
+  const eventParam = searchParams.get('event');
   const [showCsvPreview, setShowCsvPreview] = useState(false);
 
   useEffect(() => {
@@ -59,6 +62,78 @@ function WorkspaceContent() {
       setFonts(fonts);
     });
   }, [setFonts]);
+
+  // Pre-load template & layout if templateId query param is supplied (e.g. from dashboard or direct link)
+  useEffect(() => {
+    if (!templateIdParam || !isAuthenticated) return;
+    if (templateImage) {
+      if (eventParam && !eventName) {
+        setEventName(eventParam);
+      }
+      return;
+    }
+
+    let isCancelled = false;
+    const loadTemplateFromQuery = async () => {
+      const activeToken =
+        token ||
+        (typeof window !== 'undefined'
+          ? localStorage.getItem('credify_auth_token') || sessionStorage.getItem('credify_session_token')
+          : null);
+      if (!activeToken) return;
+
+      try {
+        const res = await fetch(`/api/templates/${templateIdParam}`, {
+          headers: { Authorization: `Bearer ${activeToken}` },
+        });
+        if (!res.ok) return;
+
+        const data = await res.json();
+        const tpl = data.template;
+        if (!tpl?.imageData || isCancelled) return;
+
+        const blobRes = await fetch(tpl.imageData);
+        const blob = await blobRes.blob();
+        const filename = `${tpl.name.toLowerCase().replace(/[^a-z0-9_-]/g, '_')}.png`;
+        const file = new File([blob], filename, { type: 'image/png' });
+
+        const img = new Image();
+        img.onload = () => {
+          if (isCancelled) return;
+          const info = `${file.name} (${img.width}×${img.height})`;
+          const store = useAppStore.getState();
+          store.setTemplate(file, img, info);
+          if (tpl.layoutConfig?.boxes && Array.isArray(tpl.layoutConfig.boxes)) {
+            store.setBoxes(tpl.layoutConfig.boxes);
+          }
+          if (tpl.layoutConfig?.qrZones && Array.isArray(tpl.layoutConfig.qrZones)) {
+            store.setQrZones(tpl.layoutConfig.qrZones);
+          }
+          if (tpl.layoutConfig?.defaultFont) {
+            store.setDefaultFont(tpl.layoutConfig.defaultFont);
+          }
+          if (tpl.layoutConfig?.defaultFontSize) {
+            store.setDefaultFontSize(tpl.layoutConfig.defaultFontSize);
+          }
+          if (tpl.layoutConfig?.defaultFontColor) {
+            store.setDefaultFontColor(tpl.layoutConfig.defaultFontColor);
+          }
+          if (eventParam) {
+            store.setEventName(eventParam);
+          }
+        };
+        img.src = tpl.imageData;
+      } catch (err) {
+        console.warn('[Auto-load template from query error]:', err);
+      }
+    };
+
+    loadTemplateFromQuery();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [templateIdParam, eventParam, isAuthenticated, token, templateImage, eventName, setEventName]);
 
   if (isLoading) {
     return (
@@ -83,8 +158,8 @@ function WorkspaceContent() {
 
   const step1Status = step1Complete ? 'completed' : 'active';
   const step2Status = !step1Complete ? 'pending' : step2Complete ? 'completed' : 'active';
-  const step3Status = !step1Complete || !step2Complete ? 'pending' : step3Complete ? 'completed' : 'active';
-  const step4Status = !step1Complete || !step2Complete || !step3Complete ? 'pending' : step4Complete ? 'completed' : 'active';
+  const step3Status = !step1Complete ? 'pending' : step3Complete ? 'completed' : 'active';
+  const step4Status = !step1Complete || boxes.length === 0 ? 'pending' : step4Complete ? 'completed' : 'active';
   const step5Status = !step1Complete || !step2Complete || (!step4Complete && qrZones.length === 0) ? 'pending' : 'active';
 
   if (viewMode === 'email') {
@@ -184,7 +259,7 @@ function WorkspaceContent() {
           <StepCard number={3} title="Text Areas & QR Codes" status={step3Status}>
             <div className="space-y-3">
               <p className="text-xs text-slate-500 leading-relaxed">
-                Draw rectangles on the certificate for text fields, or click below to place verification QR codes.
+                Click and drag on the certificate to draw text fields. QR verification is optional — if no QR is placed, certificates are generated without online verification.
               </p>
 
               <QrZoneCard />
@@ -239,7 +314,18 @@ function WorkspaceContent() {
 export default function CertificateStudioPage() {
   return (
     <ErrorBoundary>
-      <WorkspaceContent />
+      <Suspense
+        fallback={
+          <div className="min-h-screen flex items-center justify-center bg-slate-50">
+            <div className="flex flex-col items-center gap-4">
+              <div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin"></div>
+              <p className="text-slate-500 text-sm font-medium">Initializing workspace...</p>
+            </div>
+          </div>
+        }
+      >
+        <WorkspaceContent />
+      </Suspense>
     </ErrorBoundary>
   );
 }

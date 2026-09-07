@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, useMemo, useCallback, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Image from 'next/image';
 import {
   Award,
@@ -18,6 +18,7 @@ import {
   ChevronLeft,
   Palette,
   AlertCircle,
+  Trash2,
   ChevronDown,
   ChevronUp,
 } from 'lucide-react';
@@ -36,8 +37,10 @@ function getStoredToken(): string | null {
   );
 }
 
-export default function DashboardPage() {
+function DashboardContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const eventParam = searchParams.get('event');
   const { isAuthenticated, isLoading: authLoading, token, logout, initialize } = useAuthStore();
 
   // Events summary list state
@@ -63,6 +66,9 @@ export default function DashboardPage() {
 
   // Revoking state for row-level spinners
   const [updatingCertId, setUpdatingCertId] = useState<string | null>(null);
+
+  // Deleting event state
+  const [deletingEventName, setDeletingEventName] = useState<string | null>(null);
 
   // 1. Mount Effect: Initialize Auth
   useEffect(() => {
@@ -164,12 +170,21 @@ export default function DashboardPage() {
     [token, events, logout, router]
   );
 
+  // Auto-open event detailed report if ?event= query parameter is present in URL
+  useEffect(() => {
+    if (!eventParam || !isAuthenticated) return;
+    if (selectedEventName !== eventParam) {
+      fetchEventDetails(eventParam);
+    }
+  }, [eventParam, isAuthenticated, selectedEventName, fetchEventDetails]);
+
   // Return from detailed view to events list
   const handleBackToEventsList = () => {
     setSelectedEventName(null);
     setDetailedEventSummary(null);
     setParticipants([]);
     setDetailsError(null);
+    router.push('/dashboard', { scroll: false });
   };
 
   // Revoke or Reinstate Certificate
@@ -241,6 +256,51 @@ export default function DashboardPage() {
     }
   };
 
+  // Delete Event and All Associated Certificates & Templates
+  const handleDeleteEvent = async (eventName: string) => {
+    const activeToken = token || getStoredToken();
+    if (!activeToken) return;
+
+    const eventSummary = events.find((e) => e.eventName === eventName) || detailedEventSummary;
+    const certCount = eventSummary ? eventSummary.certificateCount : participants.length;
+
+    const confirmed = window.confirm(
+      `Are you sure you want to permanently delete event "${eventName}" and all ${certCount} connected certificate record(s)?\n\nThis action cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setDeletingEventName(eventName);
+
+    try {
+      const res = await fetch(`/api/dashboard?event=${encodeURIComponent(eventName)}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${activeToken}`,
+        },
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || 'Failed to delete event');
+      }
+
+      // If viewing this event in detailed view, return to events list
+      if (selectedEventName === eventName) {
+        setSelectedEventName(null);
+        setDetailedEventSummary(null);
+        setParticipants([]);
+        router.push('/dashboard', { scroll: false });
+      }
+
+      // Remove from local events list
+      setEvents((prev) => prev.filter((e) => e.eventName !== eventName));
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to delete event');
+    } finally {
+      setDeletingEventName(null);
+    }
+  };
+
   // Export Event CSV
   const handleExportEventCsv = () => {
     if (!detailedEventSummary || participants.length === 0) return;
@@ -279,18 +339,19 @@ export default function DashboardPage() {
   // Open Event Template in Studio to Add New Records
   const [loadingStudio, setLoadingStudio] = useState(false);
   const handleOpenEventInStudio = async () => {
-    if (!detailedEventSummary) return;
+    const evName = (detailedEventSummary?.eventName || selectedEventName || '').trim();
+    if (!evName) return;
     setLoadingStudio(true);
 
     try {
-      const token = getStoredToken();
-      if (!token) {
-        router.push('/editor');
+      const activeToken = token || getStoredToken();
+      if (!activeToken) {
+        router.push('/login');
         return;
       }
 
       const res = await fetch('/api/templates', {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${activeToken}` },
       });
 
       if (!res.ok) {
@@ -300,48 +361,104 @@ export default function DashboardPage() {
 
       const data = await res.json();
       const templatesList = data.templates || [];
-      const match = detailedEventSummary.templateName
-        ? templatesList.find(
-            (t: { name: string }) =>
-              t.name.toLowerCase() === detailedEventSummary.templateName?.toLowerCase()
-          )
+
+      const evNameLower = evName.toLowerCase();
+      const tplName = (detailedEventSummary?.templateName || '').trim();
+      const tplNameLower = tplName.toLowerCase();
+      const tplBaseNameLower = tplName.replace(/\.[^/.]+$/, '').trim().toLowerCase();
+
+      // Priority 1: Match by exact event name (how autoSaveCurrentTemplate saves it)
+      let match = evNameLower
+        ? templatesList.find((t: { name: string }) => (t.name || '').trim().toLowerCase() === evNameLower)
         : null;
 
-      if (match) {
-        const detailRes = await fetch(`/api/templates/${match.id}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-
-        if (detailRes.ok) {
-          const detailData = await detailRes.json();
-          const tpl = detailData.template;
-          if (tpl?.imageData) {
-            const blobRes = await fetch(tpl.imageData);
-            const blob = await blobRes.blob();
-            const filename = `${tpl.name.toLowerCase().replace(/[^a-z0-9_-]/g, '_')}.png`;
-            const file = new File([blob], filename, { type: 'image/png' });
-
-            await new Promise<void>((resolve) => {
-              const img = new window.Image();
-              img.onload = () => {
-                const info = `${file.name} (${img.width}×${img.height})`;
-                useAppStore.getState().setTemplate(file, img, info);
-                if (tpl.layoutConfig?.boxes) {
-                  useAppStore.getState().setBoxes(tpl.layoutConfig.boxes);
-                }
-                if (tpl.layoutConfig?.qrZones) {
-                  useAppStore.getState().setQrZones(tpl.layoutConfig.qrZones);
-                }
-                resolve();
-              };
-              img.src = tpl.imageData;
-            });
-          }
-        }
+      // Priority 2: Match by exact template filename (e.g. sample-template.png)
+      if (!match && tplNameLower) {
+        match = templatesList.find((t: { name: string }) => (t.name || '').trim().toLowerCase() === tplNameLower);
       }
 
-      router.push('/editor');
-    } catch {
+      // Priority 3: Match by template base name (e.g. sample-template)
+      if (!match && tplBaseNameLower) {
+        match = templatesList.find((t: { name: string }) => (t.name || '').trim().toLowerCase() === tplBaseNameLower);
+      }
+
+      // Priority 4: Substring / fuzzy match
+      if (!match) {
+        match = templatesList.find((t: { name: string }) => {
+          const tn = (t.name || '').trim().toLowerCase();
+          return (
+            (evNameLower && (tn.includes(evNameLower) || evNameLower.includes(tn))) ||
+            (tplBaseNameLower && (tn.includes(tplBaseNameLower) || tplBaseNameLower.includes(tn)))
+          );
+        });
+      }
+
+      // Priority 5: If there's only 1 saved template in the entire account, use it
+      if (!match && templatesList.length === 1) {
+        match = templatesList[0];
+      }
+
+      if (!match) {
+        alert(`No saved canvas template layout found for event "${evName}". Opening Studio...`);
+        router.push('/editor');
+        return;
+      }
+
+      // Fetch the full template detail with imageData
+      const detailRes = await fetch(`/api/templates/${match.id}`, {
+        headers: { Authorization: `Bearer ${activeToken}` },
+      });
+
+      if (!detailRes.ok) {
+        throw new Error('Failed to fetch template details');
+      }
+
+      const detailData = await detailRes.json();
+      const tpl = detailData.template;
+      if (!tpl?.imageData) {
+        throw new Error('Template graphic data is missing');
+      }
+
+      // Convert Base64 data URL to Image and File
+      const blobRes = await fetch(tpl.imageData);
+      const blob = await blobRes.blob();
+      const filename = `${tpl.name.toLowerCase().replace(/[^a-z0-9_-]/g, '_')}.png`;
+      const file = new File([blob], filename, { type: 'image/png' });
+
+      await new Promise<void>((resolve, reject) => {
+        const img = new window.Image();
+        img.onload = () => {
+          const info = `${file.name} (${img.width}×${img.height})`;
+          const store = useAppStore.getState();
+          store.setTemplate(file, img, info);
+          if (tpl.layoutConfig?.boxes && Array.isArray(tpl.layoutConfig.boxes)) {
+            store.setBoxes(tpl.layoutConfig.boxes);
+          }
+          if (tpl.layoutConfig?.qrZones && Array.isArray(tpl.layoutConfig.qrZones)) {
+            store.setQrZones(tpl.layoutConfig.qrZones);
+          }
+          if (tpl.layoutConfig?.defaultFont) {
+            store.setDefaultFont(tpl.layoutConfig.defaultFont);
+          }
+          if (tpl.layoutConfig?.defaultFontSize) {
+            store.setDefaultFontSize(tpl.layoutConfig.defaultFontSize);
+          }
+          if (tpl.layoutConfig?.defaultFontColor) {
+            store.setDefaultFontColor(tpl.layoutConfig.defaultFontColor);
+          }
+          if (evName) {
+            store.setEventName(evName);
+          }
+          resolve();
+        };
+        img.onerror = () => reject(new Error('Failed to decode template graphic'));
+        img.src = tpl.imageData;
+      });
+
+      router.push(`/editor?templateId=${match.id}&event=${encodeURIComponent(evName)}`);
+    } catch (err) {
+      console.error('[Open in Studio Error]:', err);
+      alert(err instanceof Error ? err.message : 'Error opening event in Studio');
       router.push('/editor');
     } finally {
       setLoadingStudio(false);
@@ -386,7 +503,10 @@ export default function DashboardPage() {
     const q = participantSearchQuery.trim().toLowerCase();
 
     return participants.filter((p) => {
-      if (participantStatusFilter !== 'all' && p.status !== participantStatusFilter) {
+      if (participantStatusFilter === 'issued' && p.status !== 'issued' && p.status !== 'static') {
+        return false;
+      }
+      if (participantStatusFilter === 'revoked' && p.status !== 'revoked') {
         return false;
       }
       if (!q) return true;
@@ -516,6 +636,16 @@ export default function DashboardPage() {
                   <ExternalLink className="w-3.5 h-3.5" />
                   <span>{loadingStudio ? 'Opening...' : 'Open in Studio'}</span>
                 </button>
+
+                <button
+                  onClick={() => selectedEventName && handleDeleteEvent(selectedEventName)}
+                  disabled={deletingEventName === selectedEventName}
+                  className="flex items-center gap-1.5 px-3 py-1.5 sm:py-2 bg-white hover:bg-red-50 text-red-600 hover:text-red-700 border border-red-200 hover:border-red-300 rounded-lg text-xs sm:text-sm font-semibold transition-all cursor-pointer shadow-2xs hover:shadow-xs active:scale-[0.98] disabled:opacity-50"
+                  title={`Permanently delete event "${selectedEventName}" and all its certificates`}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>{deletingEventName === selectedEventName ? 'Deleting...' : 'Delete Event'}</span>
+                </button>
               </div>
             </div>
 
@@ -607,6 +737,7 @@ export default function DashboardPage() {
                     <tbody className="divide-y divide-[#EFE5D0] font-normal text-slate-800">
                       {filteredParticipants.map((cert, index) => {
                         const isRevoked = cert.status === 'revoked';
+                        const isStatic = cert.status === 'static';
                         const isUpdating = updatingCertId === cert.id;
 
                         return (
@@ -624,16 +755,25 @@ export default function DashboardPage() {
                               {cert.recipientEmail || '—'}
                             </td>
                             <td className="py-2 px-3 text-right font-mono text-xs">
-                              <a
-                                href={`/verify/${cert.id}`}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-flex items-center gap-1 text-primary-600 hover:text-primary-800 hover:underline font-semibold"
-                                title={`Open verification page (${cert.id})`}
-                              >
-                                <span>{cert.id.slice(0, 8)}...</span>
-                                <ExternalLink className="w-3 h-3" />
-                              </a>
+                              {isStatic ? (
+                                <span
+                                  className="text-stone-500 font-mono text-xs"
+                                  title={`Static Certificate ID: ${cert.id}`}
+                                >
+                                  {cert.id.slice(0, 8)}...
+                                </span>
+                              ) : (
+                                <a
+                                  href={`/verify/${cert.id}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-center gap-1 text-primary-600 hover:text-primary-800 hover:underline font-semibold"
+                                  title={`Open verification page (${cert.id})`}
+                                >
+                                  <span>{cert.id.slice(0, 8)}...</span>
+                                  <ExternalLink className="w-3 h-3" />
+                                </a>
+                              )}
                             </td>
                             <td className="py-2 px-3 text-right text-stone-700 font-medium whitespace-nowrap text-xs">
                               {new Date(cert.issuedAt).toLocaleDateString([], {
@@ -647,6 +787,10 @@ export default function DashboardPage() {
                                 <span className="text-xs font-semibold text-red-700">
                                   Revoked
                                 </span>
+                              ) : isStatic ? (
+                                <span className="text-xs font-semibold text-stone-600">
+                                  Static
+                                </span>
                               ) : (
                                 <span className="text-xs font-semibold text-emerald-700">
                                   Active
@@ -654,20 +798,28 @@ export default function DashboardPage() {
                               )}
                             </td>
                             <td className="py-2 px-3 text-right whitespace-nowrap">
-                              {/* Revoke / Reinstate Action */}
-                              <button
-                                onClick={() => handleToggleRevoke(cert)}
-                                disabled={isUpdating}
-                                className={`inline-flex items-center gap-1 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50 ${
-                                  isRevoked
-                                    ? 'text-emerald-700 hover:text-emerald-800 hover:underline'
-                                    : 'text-red-600 hover:text-red-700 hover:underline'
-                                }`}
-                                title={isRevoked ? 'Reinstate certificate' : 'Revoke certificate'}
-                              >
-                                {isUpdating && <RefreshCw className="w-3 h-3 animate-spin" />}
-                                <span>{isRevoked ? 'Reinstate' : 'Revoke'}</span>
-                              </button>
+                              {isStatic ? (
+                                <span
+                                  className="text-stone-400 text-xs font-medium"
+                                  title="Static records cannot be revoked or reinstated"
+                                >
+                                  —
+                                </span>
+                              ) : (
+                                <button
+                                  onClick={() => handleToggleRevoke(cert)}
+                                  disabled={isUpdating}
+                                  className={`inline-flex items-center gap-1 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50 ${
+                                    isRevoked
+                                      ? 'text-emerald-700 hover:text-emerald-800 hover:underline'
+                                      : 'text-red-600 hover:text-red-700 hover:underline'
+                                  }`}
+                                  title={isRevoked ? 'Reinstate certificate' : 'Revoke certificate'}
+                                >
+                                  {isUpdating && <RefreshCw className="w-3 h-3 animate-spin" />}
+                                  <span>{isRevoked ? 'Reinstate' : 'Revoke'}</span>
+                                </button>
+                              )}
                             </td>
                           </tr>
                         );
@@ -793,7 +945,10 @@ export default function DashboardPage() {
                   {filteredEvents.map((event) => (
                     <div
                       key={event.eventName}
-                      onClick={() => fetchEventDetails(event.eventName)}
+                      onClick={() => {
+                        fetchEventDetails(event.eventName);
+                        router.push(`/dashboard?event=${encodeURIComponent(event.eventName)}`, { scroll: false });
+                      }}
                       className="group px-3.5 py-2 sm:py-2.5 hover:bg-slate-100/80 transition-colors cursor-pointer dashboard-events-grid gap-1.5 md:gap-0"
                     >
                       {/* Column 1: Event Name & Template */}
@@ -849,9 +1004,23 @@ export default function DashboardPage() {
                         </div>
                       </div>
 
-                      {/* Column 6: Arrow at the end (>) */}
-                      <div className="hidden md:flex justify-end items-center pr-1 text-stone-400 group-hover:text-stone-700 group-hover:translate-x-0.5 transition-all">
-                        <ChevronRight className="w-3.5 h-3.5" />
+                      {/* Column 6: Delete Button & Arrow */}
+                      <div className="flex md:contents items-center justify-end">
+                        <div className="flex justify-end items-center gap-1 pr-1">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteEvent(event.eventName);
+                            }}
+                            disabled={deletingEventName === event.eventName}
+                            className="p-1.5 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                            title={`Delete event "${event.eventName}" and all its certificates`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                          <ChevronRight className="hidden md:block w-3.5 h-3.5 text-stone-400 group-hover:text-stone-700 group-hover:translate-x-0.5 transition-all" />
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -862,5 +1031,22 @@ export default function DashboardPage() {
         )}
       </main>
     </div>
+  );
+}
+
+export default function DashboardPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-[#FBFAF5]" style={{ backgroundColor: '#FBFAF5' }}>
+          <div className="flex flex-col items-center gap-3 text-center">
+            <div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin"></div>
+            <p className="text-slate-600 text-xs font-medium">Loading dashboard...</p>
+          </div>
+        </div>
+      }
+    >
+      <DashboardContent />
+    </Suspense>
   );
 }

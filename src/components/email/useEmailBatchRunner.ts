@@ -161,34 +161,38 @@ export function useEmailBatchRunner() {
       reconnectRef.current = false;
       setNeedsReconnect(false);
 
-      // QR verification mode: register every pending row BEFORE rendering
+      // Register batch records in database. If useQr is true, verification IDs are created;
+      // if false, static records are stored to indicate the batch is present in DB without verify links.
       const useQr = qrZones.length > 0;
-      if (useQr) {
-        try {
-          setEmailProgress({
-            current: 0,
-            total: records.length,
-            currentRecipient: 'Registering certificates...',
-            status: 'sending',
-            errors: [],
-            sent: [],
-            records: Array.from(deliveryRecordsRef.current.values()),
-          });
-          certIdsRef.current = await ensureCertificateIds({
-            records,
-            existingIds: certIdsRef.current,
-            getDisplayName: getDisplayName,
-            getEmail: (row) => (row[emailColumn] || '').trim(),
-            templateName: templateFile?.name || 'template',
-            eventName: eventName || 'General Event',
-          });
-        } catch (err) {
+      try {
+        setEmailProgress({
+          current: 0,
+          total: records.length,
+          currentRecipient: useQr ? 'Registering certificates...' : 'Saving batch records...',
+          status: 'sending',
+          errors: [],
+          sent: [],
+          records: Array.from(deliveryRecordsRef.current.values()),
+        });
+        certIdsRef.current = await ensureCertificateIds({
+          records,
+          existingIds: certIdsRef.current,
+          getDisplayName: getDisplayName,
+          getEmail: (row) => (row[emailColumn] || '').trim(),
+          templateName: templateFile?.name || 'template',
+          eventName: eventName || 'General Event',
+          isStatic: !useQr,
+        });
+      } catch (err) {
+        if (useQr) {
           setError(
             `QR registration failed: ${err instanceof Error ? err.message : 'unknown error'}. ` +
               'Batch aborted — no emails were sent with unverifiable QR codes.'
           );
           resetEmailProgress();
           return;
+        } else {
+          console.warn('[Email Runner] Database registration warning:', err);
         }
       }
 

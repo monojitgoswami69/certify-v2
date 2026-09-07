@@ -26,8 +26,9 @@ export async function ensureCertificateIds(params: {
   getEmail?: (row: CsvRow) => string;
   templateName: string;
   eventName?: string;
+  isStatic?: boolean;
 }): Promise<Map<number, string>> {
-  const { records, existingIds, getDisplayName, getEmail, templateName, eventName } = params;
+  const { records, existingIds, getDisplayName, getEmail, templateName, eventName, isStatic } = params;
 
   const pending = records.filter(({ rowIndex }) => !existingIds.has(rowIndex));
   if (pending.length === 0) return existingIds;
@@ -39,8 +40,10 @@ export async function ensureCertificateIds(params: {
       rowData: row,
       templateName,
       eventName,
+      isStatic,
     })),
-    eventName
+    eventName,
+    isStatic
   );
 
   const merged = new Map(existingIds);

@@ -14,6 +14,7 @@ interface RegisterItem {
   rowData?: unknown;
   templateName?: unknown;
   eventName?: unknown;
+  isStatic?: unknown;
 }
 
 function computeRecordFingerprint(
@@ -47,7 +48,7 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: { certificates?: RegisterItem[]; eventName?: string };
+  let body: { certificates?: RegisterItem[]; eventName?: string; isStatic?: boolean };
   try {
     body = await request.json();
   } catch {
@@ -118,6 +119,8 @@ export async function POST(request: Request) {
     const fingerprint = computeRecordFingerprint(itemEventName, name, email);
     fingerprintSet.add(fingerprint);
 
+    const isStatic = Boolean(item.isStatic ?? body.isStatic);
+
     parsedItems.push({
       index: i,
       name,
@@ -125,6 +128,7 @@ export async function POST(request: Request) {
       eventName: itemEventName,
       templateName,
       fingerprint,
+      isStatic,
     });
   }
 
@@ -171,7 +175,7 @@ export async function POST(request: Request) {
           recipientName: item.name,
           recipientEmail: item.email,
           templateName: item.templateName,
-          status: 'issued' as const,
+          status: item.isStatic ? 'static' : 'issued',
         });
       }
     }

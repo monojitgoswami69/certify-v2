@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
-import { desc, eq } from 'drizzle-orm';
+import { desc, eq, or, isNull } from 'drizzle-orm';
 import { db } from '../../../lib/db';
-import { certificates } from '../../../db/schema';
+import { certificates, templates } from '../../../db/schema';
 import { getAuthUserFromRequest, unauthorizedResponse } from '../../../lib/server-auth';
 
 export const dynamic = 'force-dynamic';
@@ -76,9 +76,10 @@ export async function GET(request: Request) {
       let templateName: string | null = null;
 
       const participants: DashboardParticipant[] = rows.map((r) => {
-        const isActive = r.status === 'issued';
+        const isActive = r.status === 'issued' || r.status === 'static';
+        const isRevoked = r.status === 'revoked';
         if (isActive) activeCount++;
-        else revokedCount++;
+        else if (isRevoked) revokedCount++;
 
         const isoDate = r.issuedAt.toISOString();
         if (new Date(isoDate) < new Date(firstIssuedAt)) firstIssuedAt = isoDate;
@@ -139,7 +140,7 @@ export async function GET(request: Request) {
 
     for (const row of rows) {
       const eventName = (row.eventName || 'General Event').trim();
-      const isActive = row.status === 'issued';
+      const isActive = row.status === 'issued' || row.status === 'static';
       const isRevoked = row.status === 'revoked';
 
       if (isActive) activeCertificates++;
@@ -206,3 +207,60 @@ export async function GET(request: Request) {
     );
   }
 }
+
+export async function DELETE(request: Request) {
+  const username = getAuthUserFromRequest(request);
+  if (!username) {
+    return unauthorizedResponse('Invalid or expired session');
+  }
+
+  if (!process.env.DATABASE_URL) {
+    return NextResponse.json(
+      { detail: 'Database is not configured (DATABASE_URL missing)' },
+      { status: 503 }
+    );
+  }
+
+  const { searchParams } = new URL(request.url);
+  const requestedEvent = searchParams.get('event');
+  if (!requestedEvent) {
+    return NextResponse.json({ detail: 'event query parameter is required' }, { status: 400 });
+  }
+
+  const decodedEventName = decodeURIComponent(requestedEvent).trim();
+
+  try {
+    const eventCondition =
+      decodedEventName === 'Unnamed Event'
+        ? or(
+            eq(certificates.eventName, 'Unnamed Event'),
+            isNull(certificates.eventName),
+            eq(certificates.eventName, '')
+          )
+        : eq(certificates.eventName, decodedEventName);
+
+    // 1. Delete all certificates associated with this event
+    const deletedCerts = await db
+      .delete(certificates)
+      .where(eventCondition)
+      .returning({ id: certificates.id });
+
+    // 2. Also delete any saved/auto-saved template matching this event name
+    await db
+      .delete(templates)
+      .where(eq(templates.name, decodedEventName));
+
+    return NextResponse.json({
+      success: true,
+      eventName: decodedEventName,
+      deletedCount: deletedCerts.length,
+    });
+  } catch (error) {
+    console.error('[Dashboard Event DELETE error]:', error);
+    return NextResponse.json(
+      { detail: error instanceof Error ? error.message : 'Failed to delete event and certificates' },
+      { status: 500 }
+    );
+  }
+}
+

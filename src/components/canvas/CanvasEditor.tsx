@@ -147,7 +147,7 @@ export function CanvasEditor() {
     onRedo: handleRedo,
     onDeleteActive: handleDeleteActive,
     onArrowNudge: handleArrowNudge,
-    isDrawingEnabled: csvData.length > 0,
+    isDrawingEnabled: Boolean(templateImage),
     onEscape: () => {
       setActiveBox(null);
       setActiveQrId(null);
@@ -323,11 +323,6 @@ export function CanvasEditor() {
       if (imgX < 0 || imgX > templateImage.width || imgY < 0 || imgY > templateImage.height) {
         setActiveBox(null);
         setActiveQrId(null);
-        return;
-      }
-
-      // Do not allow drawing text boxes or placing QR codes until CSV is uploaded
-      if (csvData.length === 0) {
         return;
       }
 
@@ -560,13 +555,7 @@ export function CanvasEditor() {
       setActiveGuides([]);
       document.body.style.cursor = '';
       if (canvasRef.current) {
-        canvasRef.current.style.cursor = isSpacePressed
-          ? 'grab'
-          : csvData.length === 0
-          ? 'default'
-          : isPlacingQr
-          ? 'crosshair'
-          : 'crosshair';
+        canvasRef.current.style.cursor = isSpacePressed ? 'grab' : 'crosshair';
       }
     };
 
@@ -606,12 +595,6 @@ export function CanvasEditor() {
 
       if (isSpacePressed) {
         if (canvasRef.current) canvasRef.current.style.cursor = 'grab';
-        return;
-      }
-
-      // If CSV has not been uploaded, keep cursor default and deactivate drawing
-      if (csvData.length === 0) {
-        if (canvasRef.current) canvasRef.current.style.cursor = 'default';
         return;
       }
 

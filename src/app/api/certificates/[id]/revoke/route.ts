@@ -31,15 +31,28 @@ export async function POST(
   }
 
   try {
+    const [cert] = await db
+      .select({ id: certificates.id, status: certificates.status })
+      .from(certificates)
+      .where(or(eq(certificates.tokenHash, hashToken(id)), eq(certificates.id, id)))
+      .limit(1);
+
+    if (!cert) {
+      return NextResponse.json({ detail: 'Certificate not found' }, { status: 404 });
+    }
+
+    if (cert.status === 'static') {
+      return NextResponse.json(
+        { detail: 'Static certificates cannot be revoked or reinstated' },
+        { status: 400 }
+      );
+    }
+
     const [updated] = await db
       .update(certificates)
       .set({ status: reinstated ? 'issued' : 'revoked' })
-      .where(or(eq(certificates.tokenHash, hashToken(id)), eq(certificates.id, id)))
+      .where(eq(certificates.id, cert.id))
       .returning({ id: certificates.id, status: certificates.status });
-
-    if (!updated) {
-      return NextResponse.json({ detail: 'Certificate not found' }, { status: 404 });
-    }
 
     return NextResponse.json({
       id,

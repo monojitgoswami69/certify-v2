@@ -210,7 +210,7 @@ export function useCanvasZoomPan({
       window.removeEventListener('blur', handleBlur);
       document.removeEventListener('visibilitychange', handleBlur);
     };
-  }, [canvasRef]);
+  }, [canvasRef, isDrawingEnabled]);
 
   // Keyboard shortcut listeners
   useEffect(() => {
@@ -304,7 +304,7 @@ export function useCanvasZoomPan({
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [zoom, canvasRef, handleResetFit, handleZoomChange, onUndo, onRedo, onDeleteActive, onEscape, onArrowNudge]);
+  }, [zoom, canvasRef, handleResetFit, handleZoomChange, onUndo, onRedo, onDeleteActive, onEscape, onArrowNudge, isDrawingEnabled]);
 
   return {
     zoom,

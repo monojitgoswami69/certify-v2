@@ -225,31 +225,35 @@ export function useCertificateBatchGenerator() {
         setLogs({ firstGenerated: new Date(), lastGenerated: null, totalElapsed: 0 });
       }
 
-      // Pre-register verification IDs for any records that haven't been registered yet
+      // Register batch records in database. If useQr is true, verification IDs are created;
+      // if false, static records are stored to indicate the batch is present in DB without verify links.
       const useQr = qrZones.length > 0;
-      if (useQr) {
-        try {
-          setProgress((prev) => ({
-            ...prev,
-            status: 'loading-fonts',
-            currentName: 'Registering certificates...',
-          }));
-          certIdsRef.current = await ensureCertificateIds({
-            records,
-            existingIds: certIdsRef.current,
-            getDisplayName: getFilenameBasis,
-            getEmail: (row) => (emailColumn ? (row[emailColumn] || '').trim() : ''),
-            templateName: templateFile?.name || 'template',
-            eventName: eventName || 'General Event',
-          });
-          setProgress((prev) => ({ ...prev, status: 'generating', currentName: '' }));
-        } catch (err) {
+      try {
+        setProgress((prev) => ({
+          ...prev,
+          status: 'loading-fonts',
+          currentName: useQr ? 'Registering certificates...' : 'Saving batch records...',
+        }));
+        certIdsRef.current = await ensureCertificateIds({
+          records,
+          existingIds: certIdsRef.current,
+          getDisplayName: getFilenameBasis,
+          getEmail: (row) => (emailColumn ? (row[emailColumn] || '').trim() : ''),
+          templateName: templateFile?.name || 'template',
+          eventName: eventName || 'General Event',
+          isStatic: !useQr,
+        });
+        setProgress((prev) => ({ ...prev, status: 'generating', currentName: '' }));
+      } catch (err) {
+        if (useQr) {
           setError(
             `QR registration failed: ${err instanceof Error ? err.message : 'unknown error'}. ` +
               'Batch aborted — no certificates were generated with unverifiable QR codes.'
           );
           setProgress(DEFAULT_PROGRESS);
           return;
+        } else {
+          console.warn('[Batch Generator] Database registration warning:', err);
         }
       }
 

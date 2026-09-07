@@ -27,6 +27,7 @@ export interface RegisterCertificateItem {
   rowData?: Record<string, string>;
   templateName?: string;
   eventName?: string;
+  isStatic?: boolean;
 }
 
 /**
@@ -35,7 +36,8 @@ export interface RegisterCertificateItem {
  */
 export async function registerCertificates(
   items: RegisterCertificateItem[],
-  eventName?: string
+  eventName?: string,
+  isStatic?: boolean
 ): Promise<string[]> {
   const response = await fetch(`${API_BASE}/certificates/register`, {
     method: 'POST',
@@ -43,7 +45,7 @@ export async function registerCertificates(
       'Content-Type': 'application/json',
       ...getAuthHeader(),
     },
-    body: JSON.stringify({ certificates: items, eventName }),
+    body: JSON.stringify({ certificates: items, eventName, isStatic }),
   });
 
   const data = await response.json().catch(() => ({}));
