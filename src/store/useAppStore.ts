@@ -392,7 +392,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
       exportFormats: { ...state.exportFormats, ...formats },
     })),
 
-  reset: () => set(initialState),
+  reset: () =>
+    set((state) => ({
+      ...initialState,
+      fonts: state.fonts.length > 0 ? state.fonts : initialState.fonts,
+      sidebarWidth: state.sidebarWidth || initialState.sidebarWidth,
+      connectedGoogleAccount: state.connectedGoogleAccount,
+    })),
 
   resetToDownload: () =>
     set({

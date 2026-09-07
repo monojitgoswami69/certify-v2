@@ -15,7 +15,8 @@
     "db:pull": "drizzle-kit introspect",
     "db:studio": "drizzle-kit studio",
     "db:check": "drizzle-kit check",
-    "db:drop": "drizzle-kit drop"
+    "db:drop": "drizzle-kit drop",
+    "generate:benchmark": "node scripts/generate-benchmark-csv.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",

@@ -16,6 +16,7 @@ import { EmailPreviewPane } from '../../components/email/EmailPreviewPane';
 import { CsvPreviewModal } from '../../components/modals/CsvPreviewModal';
 import { ResizeHandle } from '../../components/ui/ResizeHandle';
 import { useAppStore } from '../../store/useAppStore';
+import { useHistoryStore } from '../../store/useHistoryStore';
 import { useAuthStore } from '../../store/useAuthStore';
 import { initializeGoogleFonts } from '../../lib/font-loader';
 import { sanitizeFilename, buildVirtualCsvFile } from '../../lib/utils';
@@ -64,6 +65,17 @@ function WorkspaceContent() {
     });
   }, [setFonts]);
 
+  // Fresh Studio entry: If no event or templateId query param is present, ensure workspace state is clean
+  useEffect(() => {
+    if (!eventParam && !templateIdParam) {
+      const state = useAppStore.getState();
+      if (state.templateImage || state.csvData.length > 0 || state.boxes.length > 0 || state.eventName) {
+        state.reset();
+        useHistoryStore.getState().clearHistory();
+      }
+    }
+  }, [eventParam, templateIdParam]);
+
   // Pre-load template, layout, and CSV dataset if event or templateId query param is supplied
   useEffect(() => {
     if ((!eventParam && !templateIdParam) || !isAuthenticated) return;
@@ -80,6 +92,12 @@ function WorkspaceContent() {
       try {
         let tpl: { id?: string; name: string; imageData: string; layoutConfig?: any } | null = null;
 
+        // If loading a new event and current event is different, reset first
+        if (eventParam && useAppStore.getState().eventName !== eventParam) {
+          useAppStore.getState().reset();
+          useHistoryStore.getState().clearHistory();
+        }
+
         // 1. If event is specified, query dashboard event details (includes participants & template)
         if (eventParam) {
           const res = await fetch(`/api/dashboard?event=${encodeURIComponent(eventParam)}`, {
@@ -90,11 +108,11 @@ function WorkspaceContent() {
             const data = await res.json();
             if (isCancelled) return;
 
-            // Auto-populate CSV data from event participants if not already set
+            // Auto-populate CSV data from event participants if not already matching this event
             if (
               data.participants &&
               data.participants.length > 0 &&
-              useAppStore.getState().csvData.length === 0
+              (useAppStore.getState().csvData.length === 0 || useAppStore.getState().eventName !== eventParam)
             ) {
               const { file: csvFile, headers, rows } = buildVirtualCsvFile(eventParam, data.participants);
               useAppStore.getState().setCsvData(csvFile, headers, rows);
@@ -119,8 +137,12 @@ function WorkspaceContent() {
           }
         }
 
-        // 3. Apply template graphic and layout configuration if not already loaded
-        if (tpl?.imageData && !useAppStore.getState().templateImage && !isCancelled) {
+        // 3. Apply template graphic and layout configuration if not already loaded for this event
+        if (
+          tpl?.imageData &&
+          (!useAppStore.getState().templateImage || useAppStore.getState().eventName !== eventParam) &&
+          !isCancelled
+        ) {
           const blobRes = await fetch(tpl.imageData);
           const blob = await blobRes.blob();
           const tplFilename = `${sanitizeFilename(eventParam || tpl.name)}.png`;

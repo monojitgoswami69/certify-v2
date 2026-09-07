@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useAppStore } from '../../store/useAppStore';
+import { useHistoryStore } from '../../store/useHistoryStore';
 import { downloadBlob, sanitizeFilename, buildVirtualCsvFile } from '../../lib/utils';
 import type { DashboardEventSummary, DashboardParticipant } from '../api/dashboard/route';
 
@@ -170,9 +171,18 @@ function DashboardContent() {
     [token, events, logout, router]
   );
 
-  // Auto-open event detailed report if ?event= query parameter is present in URL
+  // Auto-open event detailed report if ?event= query parameter is present in URL; reset if absent
   useEffect(() => {
-    if (!eventParam || !isAuthenticated) return;
+    if (!eventParam) {
+      if (selectedEventName) {
+        setSelectedEventName(null);
+        setDetailedEventSummary(null);
+        setParticipants([]);
+        setDetailsError(null);
+      }
+      return;
+    }
+    if (!isAuthenticated) return;
     if (selectedEventName !== eventParam) {
       fetchEventDetails(eventParam);
     }
@@ -336,6 +346,13 @@ function DashboardContent() {
     downloadBlob(blob, filename);
   };
 
+  // Fresh Studio entry: Reset state completely so no stale session lingers
+  const handleOpenNewStudio = () => {
+    useAppStore.getState().reset();
+    useHistoryStore.getState().clearHistory();
+    router.push('/editor');
+  };
+
   // Open Event Template in Studio to Add New Records
   const [loadingStudio, setLoadingStudio] = useState(false);
   const handleOpenEventInStudio = async () => {
@@ -355,7 +372,9 @@ function DashboardContent() {
       });
 
       if (!res.ok) {
-        router.push('/editor');
+        useAppStore.getState().reset();
+        useHistoryStore.getState().clearHistory();
+        router.push(`/editor?event=${encodeURIComponent(evName)}&from=event`);
         return;
       }
 
@@ -400,7 +419,9 @@ function DashboardContent() {
 
       if (!match) {
         alert(`No saved canvas template layout found for event "${evName}". Opening Studio...`);
-        router.push('/editor');
+        useAppStore.getState().reset();
+        useHistoryStore.getState().clearHistory();
+        router.push(`/editor?event=${encodeURIComponent(evName)}&from=event`);
         return;
       }
 
@@ -425,11 +446,15 @@ function DashboardContent() {
       const filename = `${sanitizeFilename(evName || tpl.name)}.png`;
       const file = new File([blob], filename, { type: 'image/png' });
 
+      // Reset store before populating with this event's layout & template
+      const store = useAppStore.getState();
+      store.reset();
+      useHistoryStore.getState().clearHistory();
+
       await new Promise<void>((resolve, reject) => {
         const img = new window.Image();
         img.onload = () => {
           const info = `${file.name} (${img.width}×${img.height})`;
-          const store = useAppStore.getState();
           store.setTemplate(file, img, info);
           if (tpl.layoutConfig?.boxes && Array.isArray(tpl.layoutConfig.boxes)) {
             store.setBoxes(tpl.layoutConfig.boxes);
@@ -462,11 +487,13 @@ function DashboardContent() {
         img.src = tpl.imageData;
       });
 
-      router.push(`/editor?event=${encodeURIComponent(evName)}${match?.id ? `&templateId=${match.id}` : ''}`);
+      router.push(`/editor?event=${encodeURIComponent(evName)}&from=event${match?.id ? `&templateId=${match.id}` : ''}`);
     } catch (err) {
       console.error('[Open in Studio Error]:', err);
       alert(err instanceof Error ? err.message : 'Error opening event in Studio');
-      router.push('/editor');
+      useAppStore.getState().reset();
+      useHistoryStore.getState().clearHistory();
+      router.push(`/editor?event=${encodeURIComponent(evName)}&from=event`);
     } finally {
       setLoadingStudio(false);
     }
@@ -563,7 +590,7 @@ function DashboardContent() {
         <div className="flex items-center gap-2">
           {/* Quick link to Canvas Studio */}
           <button
-            onClick={() => router.push('/editor')}
+            onClick={handleOpenNewStudio}
             className="flex items-center gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 bg-white hover:bg-slate-100 text-slate-700 hover:text-slate-900 rounded-lg text-xs sm:text-sm font-semibold border border-[#E5DAC3] transition-all cursor-pointer shadow-2xs hover:shadow-xs active:scale-[0.98]"
             title="Open Certificate Canvas Studio"
           >
@@ -854,7 +881,7 @@ function DashboardContent() {
               </div>
 
               <button
-                onClick={() => router.push('/editor')}
+                onClick={handleOpenNewStudio}
                 className="inline-flex items-center gap-2 px-3.5 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-xs sm:text-sm font-semibold transition-all shadow-2xs hover:shadow-xs cursor-pointer active:scale-[0.98] shrink-0 self-start sm:self-auto"
               >
                 <Plus className="w-4 h-4 stroke-[2.25]" />
@@ -927,7 +954,7 @@ function DashboardContent() {
                 </p>
                 {events.length === 0 && (
                   <button
-                    onClick={() => router.push('/editor')}
+                    onClick={handleOpenNewStudio}
                     className="mt-1.5 inline-flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-xs font-semibold transition-colors cursor-pointer"
                   >
                     <Plus className="w-3.5 h-3.5" />

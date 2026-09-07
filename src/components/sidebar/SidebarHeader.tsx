@@ -3,18 +3,23 @@
 import { ChevronLeft } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Image from 'next/image';
-import { useAppStore } from '../../store/useAppStore';
 
 export function SidebarHeader() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const eventParam = searchParams.get('event');
-  const { eventName } = useAppStore();
+  const fromParam = searchParams.get('from');
+  const isFromEvent = fromParam === 'event' && Boolean(eventParam);
+  const backLabel = isFromEvent && eventParam ? `Back to ${eventParam}` : 'Back to Dashboard';
 
   const handleBack = () => {
-    const targetEvent = eventParam || (eventName && eventName !== 'General Event' ? eventName : null);
-    if (targetEvent) {
-      router.push(`/dashboard?event=${encodeURIComponent(targetEvent)}`);
+    // Navigation Stack Logic:
+    // If opened from an existing event's detailed view (from=event):
+    // return back to that event's detailed view.
+    // Otherwise (Home -> Studio, fresh creation, or newly registered event batch):
+    // ALWAYS return to Home dashboard (/dashboard).
+    if (isFromEvent && eventParam) {
+      router.push(`/dashboard?event=${encodeURIComponent(eventParam)}`);
     } else {
       router.push('/dashboard');
     }
@@ -27,8 +32,8 @@ export function SidebarHeader() {
         <button
           onClick={handleBack}
           className="flex items-center justify-center text-slate-500 hover:text-slate-900 transition-all hover:-translate-x-0.5 active:scale-90 cursor-pointer shrink-0 p-0.5"
-          title={eventParam || (eventName && eventName !== 'General Event') ? `Back to ${eventParam || eventName}` : 'Back to Dashboard'}
-          aria-label="Back"
+          title={backLabel}
+          aria-label={backLabel}
         >
           <ChevronLeft className="w-5 h-5 stroke-[2.5]" />
         </button>
