@@ -130,10 +130,12 @@ export function FontSelector({ value, onChange, onPreview, className = '' }: Fon
 
   const listHeight = VISIBLE_ITEMS * ITEM_HEIGHT;
   const totalHeight = filteredFonts.length * ITEM_HEIGHT;
-  const startIndex = Math.max(0, Math.floor(scrollTop / ITEM_HEIGHT) - BUFFER_ITEMS);
+  const maxScroll = Math.max(0, totalHeight - listHeight);
+  const effectiveScrollTop = Math.min(Math.max(0, scrollTop), maxScroll);
+  const startIndex = Math.max(0, Math.floor(effectiveScrollTop / ITEM_HEIGHT) - BUFFER_ITEMS);
   const endIndex = Math.min(
     filteredFonts.length,
-    Math.ceil((scrollTop + listHeight) / ITEM_HEIGHT) + BUFFER_ITEMS
+    Math.ceil((effectiveScrollTop + listHeight) / ITEM_HEIGHT) + BUFFER_ITEMS
   );
   const visibleFonts = filteredFonts.slice(startIndex, endIndex);
 
@@ -141,11 +143,49 @@ export function FontSelector({ value, onChange, onPreview, className = '' }: Fon
     setScrollTop(e.currentTarget.scrollTop);
   }, []);
 
+  const handleCategoryChange = useCallback((newCat: FontCategory | 'all') => {
+    setCategory(newCat);
+    setScrollTop(0);
+    if (listRef.current) {
+      listRef.current.scrollTop = 0;
+    }
+  }, []);
+
+  const handleSearchChange = useCallback((val: string) => {
+    setSearch(val);
+    setScrollTop(0);
+    if (listRef.current) {
+      listRef.current.scrollTop = 0;
+    }
+  }, []);
+
   const closeDropdown = useCallback(() => {
     setIsOpen(false);
     setSearch('');
+    setScrollTop(0);
     onPreview?.(null);
   }, [onPreview]);
+
+  // Reset or scroll to active font when dropdown opens
+  useEffect(() => {
+    if (isOpen) {
+      requestAnimationFrame(() => {
+        if (listRef.current) {
+          if (value) {
+            const idx = filteredFonts.findIndex((f) => f.family === value);
+            if (idx >= 0) {
+              const target = Math.max(0, (idx - 2) * ITEM_HEIGHT);
+              listRef.current.scrollTop = target;
+              setScrollTop(target);
+              return;
+            }
+          }
+          listRef.current.scrollTop = 0;
+          setScrollTop(0);
+        }
+      });
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -205,14 +245,14 @@ export function FontSelector({ value, onChange, onPreview, className = '' }: Fon
                 ref={searchInputRef}
                 type="text"
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => handleSearchChange(e.target.value)}
                 placeholder="Search fonts..."
                 className="w-full pl-8 pr-8 py-1.5 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-0 focus:border-slate-400"
               />
               {search && (
                 <button
                   type="button"
-                  onClick={() => setSearch('')}
+                  onClick={() => handleSearchChange('')}
                   className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-slate-600"
                 >
                   <X className="w-3.5 h-3.5" />
@@ -226,7 +266,7 @@ export function FontSelector({ value, onChange, onPreview, className = '' }: Fon
               <button
                 key={cat.value}
                 type="button"
-                onClick={() => setCategory(cat.value)}
+                onClick={() => handleCategoryChange(cat.value)}
                 className={`px-2 py-0.5 text-xs font-medium rounded transition-colors ${
                   category === cat.value ? 'bg-primary-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                 }`}
