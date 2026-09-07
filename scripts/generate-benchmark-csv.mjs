@@ -2,7 +2,7 @@
 
 /**
  * Benchmark Dataset Generator
- * Generates a realistic CSV dataset with 1,000 strictly unique recipient names
+ * Generates a realistic CSV dataset with strictly unique recipient names
  * for certificate generation performance testing.
  *
  * Usage:
@@ -17,10 +17,10 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const count = parseInt(process.argv[2] || '1000', 10);
+const count = parseInt(process.argv[2] || '2000', 10);
 const outputPath =
   process.argv[3] ||
-  path.resolve(__dirname, '../demo-data/benchmark_1000.csv');
+  path.resolve(__dirname, `../demo-data/benchmark_${count}.csv`);
 
 const FIRST_NAMES = [
   'Aaliyah', 'Aaron', 'Abigail', 'Adam', 'Aditi', 'Adrian', 'Aidan', 'Alex',
@@ -120,33 +120,40 @@ function sanitizeForCsv(val) {
 }
 
 function generateUniqueNames(targetCount) {
-  const names = new Set();
-  let collisions = 0;
-
-  // Primary combinations
+  const combinations = [];
   for (const first of FIRST_NAMES) {
     for (const last of LAST_NAMES) {
-      names.add(`${first} ${last}`);
-      if (names.size >= targetCount) break;
+      combinations.push(`${first} ${last}`);
     }
+  }
+
+  // Deterministic shuffle with fixed seed for reproducible realistic variety
+  let seed = 42;
+  function pseudoRandom() {
+    seed = (seed * 16807) % 2147483647;
+    return (seed - 1) / 2147483646;
+  }
+
+  for (let i = combinations.length - 1; i > 0; i--) {
+    const j = Math.floor(pseudoRandom() * (i + 1));
+    [combinations[i], combinations[j]] = [combinations[j], combinations[i]];
+  }
+
+  const names = new Set();
+  for (const name of combinations) {
+    names.add(name);
     if (names.size >= targetCount) break;
   }
 
-  // If more are needed, add middle initials systematically
+  // Fallback with middle initials if count exceeds combination pool
   const MIDDLE_INITIALS = ['A.', 'B.', 'C.', 'D.', 'E.', 'J.', 'K.', 'M.', 'R.', 'S.', 'T.', 'V.'];
   let middleIdx = 0;
   while (names.size < targetCount) {
-    const first = FIRST_NAMES[Math.floor(Math.random() * FIRST_NAMES.length)];
-    const last = LAST_NAMES[Math.floor(Math.random() * LAST_NAMES.length)];
+    const first = FIRST_NAMES[Math.floor(pseudoRandom() * FIRST_NAMES.length)];
+    const last = LAST_NAMES[Math.floor(pseudoRandom() * LAST_NAMES.length)];
     const middle = MIDDLE_INITIALS[middleIdx % MIDDLE_INITIALS.length];
     middleIdx++;
-
-    const candidate = `${first} ${middle} ${last}`;
-    if (!names.has(candidate)) {
-      names.add(candidate);
-    } else {
-      collisions++;
-    }
+    names.add(`${first} ${middle} ${last}`);
   }
 
   return Array.from(names);
