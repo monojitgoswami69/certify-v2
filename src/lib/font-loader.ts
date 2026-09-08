@@ -265,4 +265,9 @@ const CURATED_FALLBACK_FONTS: Font[] = [
   { family: 'Dancing Script', category: 'handwriting', variants: ['400', '500', '600', '700'], popularity: 5 },
   { family: 'Bebas Neue', category: 'display', variants: ['400'], popularity: 5 },
   { family: 'Roboto Mono', category: 'monospace', variants: ['400', '500', '600', '700'], popularity: 5 },
+  { family: 'Quantico', category: 'display', variants: ['400', '700'], popularity: 5 },
+  { family: 'Jura', category: 'sans-serif', variants: ['600', '700'], popularity: 5 },
+  { family: 'Quicksand', category: 'sans-serif', variants: ['600', '700'], popularity: 5 },
+  { family: 'Tomorrow', category: 'sans-serif', variants: ['500', '600', '700', '800'], popularity: 5 },
+  { family: 'Electrolize', category: 'sans-serif', variants: ['400'], popularity: 5 },
 ];

@@ -13,6 +13,7 @@ import {
   Clock,
   FileSpreadsheet,
   Cpu,
+  Zap,
 } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import { useCertificateBatchGenerator } from './useCertificateBatchGenerator';
@@ -41,16 +42,12 @@ export function GenerateButton() {
   } = useCertificateBatchGenerator();
 
   const formatDuration = (ms: number): string => {
-    const seconds = Math.floor(ms / 1000);
+    const seconds = Math.round(ms / 1000);
+    if (seconds < 1 && ms > 0) return '<1s';
     if (seconds < 60) return `${seconds}s`;
     const minutes = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${minutes}m ${secs}s`;
-  };
-
-  const formatTime = (date: Date | null): string => {
-    if (!date) return '--:--:--';
-    return date.toLocaleTimeString();
   };
 
   const hasAnyFormat = exportFormats.png || exportFormats.jpg || exportFormats.pdf;
@@ -168,16 +165,6 @@ export function GenerateButton() {
             <Mail className="w-4 h-4 text-primary-600" />
             <span>Send via Email</span>
           </button>
-
-          {generationRecords.length > 0 && (
-            <button
-              onClick={() => setIsReportOpen(true)}
-              className="w-full flex items-center justify-center gap-2 px-3 py-2 border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
-            >
-              <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
-              <span>View Previous Generation Report ({generationRecords.length})</span>
-            </button>
-          )}
         </div>
       )}
 
@@ -210,9 +197,17 @@ export function GenerateButton() {
               />
             </div>
             <div className="flex items-center justify-between text-xs text-slate-500">
-              <span className="text-emerald-600 font-medium">{progress.generated} generated</span>
-              {progress.errors.length > 0 && (
-                <span className="text-red-600 font-medium">{progress.errors.length} failed</span>
+              <div className="flex items-center gap-2">
+                <span className="text-emerald-600 font-medium">{progress.generated} generated</span>
+                {progress.errors.length > 0 && (
+                  <span className="text-red-600 font-medium">{progress.errors.length} failed</span>
+                )}
+              </div>
+              {progress.speed && (
+                <span className="text-slate-600 font-mono text-[11px] flex items-center gap-1 font-medium">
+                  <span className="text-slate-800 font-bold">{progress.speed}</span>
+                  <span className="text-slate-500">certs/sec</span>
+                </span>
               )}
             </div>
           </div>
@@ -236,13 +231,20 @@ export function GenerateButton() {
             </button>
           </div>
 
-          <button
-            onClick={() => setIsReportOpen(true)}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
-          >
-            <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
-            <span>View Live Generation Audit ({generationRecords.length})</span>
-          </button>
+          {/* Streamed Failure Log (only failure logs stream during active generation) */}
+          {progress.errors.length > 0 && (
+            <div className="p-2.5 bg-red-50 border border-red-200 rounded-lg space-y-1 text-xs animate-in fade-in">
+              <div className="flex items-center justify-between font-semibold text-red-800">
+                <span className="flex items-center gap-1.5">
+                  <AlertCircle className="w-3.5 h-3.5 text-red-600 shrink-0" />
+                  <span>{progress.errors.length} Generation Failure{progress.errors.length > 1 ? 's' : ''}</span>
+                </span>
+              </div>
+              <p className="text-[11px] text-red-600 truncate font-mono">
+                Latest: {progress.errors[progress.errors.length - 1].name} — {progress.errors[progress.errors.length - 1].error}
+              </p>
+            </div>
+          )}
 
           <div className="flex items-center justify-center gap-1.5 text-xs text-slate-500 font-medium">
             {progress.workerCount ? (
@@ -261,7 +263,7 @@ export function GenerateButton() {
       )}
 
       {progress.status === 'completed' && (
-        <div className="space-y-4">
+        <div className="space-y-3">
           <div
             className={`p-3 rounded-lg ${
               progress.errors.length > 0
@@ -296,29 +298,18 @@ export function GenerateButton() {
             </div>
           </div>
 
-          <div className="p-3 bg-slate-50 rounded-lg space-y-1 text-xs">
+          <div className="p-3 bg-slate-50 rounded-lg space-y-1.5 text-xs">
             <div className="flex items-center gap-2 text-slate-600">
-              <Clock className="w-3.5 h-3.5" />
-              <span>First generated: {formatTime(logs.firstGenerated)}</span>
+              <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              <span>Time elapsed: <strong className="text-slate-800 font-semibold">{formatDuration(logs.totalElapsed)}</strong></span>
             </div>
-            <div className="flex items-center gap-2 text-slate-600">
-              <Clock className="w-3.5 h-3.5" />
-              <span>Last generated: {formatTime(logs.lastGenerated)}</span>
-            </div>
-            <div className="flex items-center gap-2 text-slate-600">
-              <Clock className="w-3.5 h-3.5" />
-              <span>Total time: {formatDuration(logs.totalElapsed)}</span>
-            </div>
+            {progress.speed && (
+              <div className="flex items-center gap-2 text-slate-600">
+                <Zap className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                <span>Generation speed: <strong className="text-slate-800 font-semibold">{progress.speed} certs/sec</strong></span>
+              </div>
+            )}
           </div>
-
-          {/* Audit Report Button */}
-          <button
-            onClick={() => setIsReportOpen(true)}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-50 border border-emerald-300 hover:bg-emerald-100 text-emerald-800 rounded-lg text-xs font-bold transition-colors cursor-pointer shadow-sm"
-          >
-            <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
-            <span>Open Generation Audit Report ({generationRecords.length})</span>
-          </button>
 
           {progress.errors.length > 0 && (
             <div className="p-3 bg-red-50 border border-red-200 rounded-lg space-y-2">
@@ -327,6 +318,7 @@ export function GenerateButton() {
               </p>
               <div className="flex gap-2">
                 <button
+                  type="button"
                   onClick={handleRetry}
                   className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded-md text-sm font-medium hover:bg-red-700 transition-colors cursor-pointer"
                 >
@@ -334,6 +326,7 @@ export function GenerateButton() {
                   Retry Failed
                 </button>
                 <button
+                  type="button"
                   onClick={handleDownloadErrorReport}
                   className="flex items-center justify-center gap-1.5 px-3 py-1.5 border border-red-300 text-red-600 rounded-md text-sm font-medium hover:bg-red-100 transition-colors cursor-pointer"
                 >
@@ -344,24 +337,42 @@ export function GenerateButton() {
             </div>
           )}
 
-          <button
-            onClick={handleDone}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-800 text-white rounded-lg font-medium hover:bg-slate-900 transition-colors cursor-pointer"
-          >
-            <CheckCircle2 className="w-4 h-4" />
-            Done
-          </button>
+          {/* Action buttons: Open Generation Report & Done */}
+          <div className="space-y-2 pt-0.5">
+            <button
+              type="button"
+              onClick={() => setIsReportOpen(true)}
+              className="w-full h-10 flex items-center justify-center gap-2 px-4 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-lg text-sm font-semibold transition-all shadow-md shadow-emerald-600/20 hover:shadow-emerald-600/30 cursor-pointer"
+            >
+              <FileSpreadsheet className="w-4 h-4 text-white shrink-0" />
+              <span>Open Generation Report</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleDone}
+              className="w-full h-10 flex items-center justify-center gap-2 px-4 bg-slate-800 hover:bg-slate-900 active:bg-slate-950 text-white rounded-lg text-sm font-semibold transition-all shadow-sm cursor-pointer"
+            >
+              <CheckCircle2 className="w-4 h-4 text-white shrink-0" />
+              <span>Done</span>
+            </button>
+          </div>
         </div>
       )}
 
-      {/* Generation Audit Modal */}
+      {/* Generation Audit Modal - never rendered during active generation to preserve max throughput */}
       <CertificateGenerationModal
-        isOpen={isReportOpen}
+        isOpen={
+          isReportOpen &&
+          progress.status !== 'generating' &&
+          progress.status !== 'loading-fonts' &&
+          progress.status !== 'zipping'
+        }
         onClose={() => setIsReportOpen(false)}
         records={generationRecords}
         eventName={eventName}
         onRetryFailed={progress.errors.length > 0 ? handleRetry : undefined}
-        isGenerating={progress.status === 'generating'}
+        isGenerating={false}
         zipBlob={zipBlob}
         exportFormats={exportFormats}
       />

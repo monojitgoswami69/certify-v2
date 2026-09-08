@@ -14,12 +14,12 @@ export interface StoredGoogleCredentials {
 }
 
 const globalForGoogle = globalThis as unknown as {
-  credifyGoogleTokenStore?: Map<string, StoredGoogleCredentials>;
+  certifyGoogleTokenStore?: Map<string, StoredGoogleCredentials>;
 };
 
 const store: Map<string, StoredGoogleCredentials> =
-  globalForGoogle.credifyGoogleTokenStore ?? new Map<string, StoredGoogleCredentials>();
-globalForGoogle.credifyGoogleTokenStore = store;
+  globalForGoogle.certifyGoogleTokenStore ?? new Map<string, StoredGoogleCredentials>();
+globalForGoogle.certifyGoogleTokenStore = store;
 
 export function storeGoogleCredentials(username: string, creds: StoredGoogleCredentials): void {
   const prev = store.get(username);

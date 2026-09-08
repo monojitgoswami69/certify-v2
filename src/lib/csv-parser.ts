@@ -94,12 +94,13 @@ export function parseCsv(text: string): ParsedCsv {
 
   const data: Record<string, string>[] = [];
 
+  const headerCount = headers.length;
   for (let i = 1; i < rows.length; i++) {
     const values = rows[i];
     const rowObj: Record<string, string> = {};
-    headers.forEach((header, idx) => {
-      rowObj[header] = values[idx] !== undefined ? values[idx] : '';
-    });
+    for (let j = 0; j < headerCount; j++) {
+      rowObj[headers[j]] = values[j] !== undefined ? values[j] : '';
+    }
     data.push(rowObj);
   }
 

@@ -12,12 +12,12 @@ interface WindowState {
 }
 
 const globalForRateLimit = globalThis as unknown as {
-  credifyRateLimitMap?: Map<string, WindowState>;
+  certifyRateLimitMap?: Map<string, WindowState>;
 };
 
 const windows: Map<string, WindowState> =
-  globalForRateLimit.credifyRateLimitMap ?? new Map<string, WindowState>();
-globalForRateLimit.credifyRateLimitMap = windows;
+  globalForRateLimit.certifyRateLimitMap ?? new Map<string, WindowState>();
+globalForRateLimit.certifyRateLimitMap = windows;
 
 // Periodic sweep so the map doesn't grow without bound under adversarial IPs.
 let lastSweep = 0;

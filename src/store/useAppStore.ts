@@ -1,5 +1,5 @@
 /**
- * Application Store for Credify™ Next.js Workspace
+ * Application Store for Certify™ Next.js Workspace
  */
 
 import { create } from 'zustand';

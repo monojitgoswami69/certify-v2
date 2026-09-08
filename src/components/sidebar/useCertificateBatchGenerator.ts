@@ -44,6 +44,7 @@ export interface GenerateProgress {
   errors: FailedRecord[];
   generated: number;
   workerCount?: number;
+  speed?: string;
 }
 
 interface GeneratedCertItem {
@@ -61,6 +62,7 @@ const DEFAULT_PROGRESS: GenerateProgress = {
   status: 'idle',
   errors: [],
   generated: 0,
+  speed: undefined,
 };
 
 const DEFAULT_LOGS: GenerateLogs = {
@@ -105,6 +107,10 @@ export function useCertificateBatchGenerator() {
 
   // Accumulated successful certificates across initial run and retries
   const successfulCertsRef = useRef<Map<number, GeneratedCertItem>>(new Map());
+
+  // Failure tracking during generation (for error logs and final report assembly)
+  const failedMapRef = useRef<Map<number, { error: string; timestamp: string }>>(new Map());
+  const errorsRef = useRef<FailedRecord[]>([]);
 
   const validBoxes = boxes.filter((b) => b.field);
   const isReady = Boolean(templateImage && csvData.length > 0 && validBoxes.length > 0);
@@ -220,9 +226,9 @@ export function useCertificateBatchGenerator() {
       pauseRef.current = false;
       setLocalPaused(false);
       setError(null);
+      setIsReportOpen(false);
 
       const startTime = Date.now();
-      const errors: FailedRecord[] = [];
 
       const activeFormatsDisplay = [
         exportFormats.png && 'PNG',
@@ -232,27 +238,17 @@ export function useCertificateBatchGenerator() {
 
       if (!isRetry) {
         successfulCertsRef.current = new Map();
+        failedMapRef.current = new Map();
+        errorsRef.current = [];
         setZipBlob(null);
-
-        // Initialize full generation records for audit tracking
-        const initialRecords: CertificateGenerationRecord[] = records.map(({ rowIndex, row }) => {
-          const name = getFilenameBasis(row);
-          return {
-            rowIndex,
-            name,
-            filename: `${sanitizeFilename(name)}_${rowIndex}`,
-            status: 'pending',
-            formats: activeFormatsDisplay,
-          };
-        });
-        setGenerationRecords(initialRecords);
+        setGenerationRecords([]);
       } else {
-        setGenerationRecords((prev) =>
-          prev.map((r) =>
-            records.some((rec) => rec.rowIndex === r.rowIndex)
-              ? { ...r, status: 'pending', error: undefined }
-              : r
-          )
+        // Clear previous failure entries for the records being retried
+        for (const { rowIndex } of records) {
+          failedMapRef.current.delete(rowIndex);
+        }
+        errorsRef.current = errorsRef.current.filter(
+          (e) => !records.some((r) => r.rowIndex === e.rowIndex)
         );
       }
 
@@ -336,21 +332,11 @@ export function useCertificateBatchGenerator() {
         };
       });
 
-      // Schedulers for high-frequency progress & audit log updates
+      // Scheduler for lightweight progress UI updates (counters + failure logs)
       const progressScheduler = createRafScheduler<GenerateProgress>(setProgress);
 
-      const pendingRecordUpdates = new Map<number, Partial<CertificateGenerationRecord>>();
-      const recordScheduler = createRafScheduler<void>(() => {
-        if (pendingRecordUpdates.size === 0) return;
-        const updates = new Map(pendingRecordUpdates);
-        pendingRecordUpdates.clear();
-        setGenerationRecords((prev) =>
-          prev.map((r) => {
-            const patch = updates.get(r.rowIndex);
-            return patch ? { ...r, ...patch } : r;
-          })
-        );
-      });
+      let pureGenDurationMs = 0;
+      let workerExecutionSucceeded = false;
 
       // Step 4: Multi-Threaded Generation via Worker Pool (core - 1)
       if (CertificateWorkerPool.isSupported()) {
@@ -390,12 +376,13 @@ export function useCertificateBatchGenerator() {
             generated: successfulCertsRef.current.size,
             workerCount,
           });
-          progressScheduler.flush();
+          const genStartTime = performance.now();
 
           await pool.processChunk(tasks, (result, completedInChunk) => {
             if (abortRef.current) return;
 
             if (result.blobs && !result.error) {
+              // Store successful blob in memory - do NOT stream success log records to React state
               successfulCertsRef.current.set(result.rowIndex, {
                 rowIndex: result.rowIndex,
                 filename: result.filename,
@@ -403,54 +390,61 @@ export function useCertificateBatchGenerator() {
                 jpgBlob: result.blobs.jpg,
                 pdfBlob: result.blobs.pdf,
               });
-
-              pendingRecordUpdates.set(result.rowIndex, {
-                status: 'generated',
-                certId: result.verificationUrl ? certIdsRef.current.get(result.rowIndex) : undefined,
-                verificationUrl: result.verificationUrl,
-                timestamp: new Date().toLocaleTimeString(),
-              });
             } else if (result.error) {
+              // Only track and stream failure logs
               const errorMsg = result.error || 'Generation failed';
-              errors.push({
+              const rowObj = records.find((r) => r.rowIndex === result.rowIndex)?.row || {};
+              const timestamp = new Date().toLocaleTimeString();
+
+              failedMapRef.current.set(result.rowIndex, {
+                error: errorMsg,
+                timestamp,
+              });
+
+              errorsRef.current.push({
                 rowIndex: result.rowIndex,
                 name: result.filename,
-                row: records.find((r) => r.rowIndex === result.rowIndex)?.row || {},
+                row: rowObj,
                 error: errorMsg,
-              });
-
-              pendingRecordUpdates.set(result.rowIndex, {
-                status: 'failed',
-                error: errorMsg,
-                timestamp: new Date().toLocaleTimeString(),
               });
             }
 
-            recordScheduler.schedule();
+            const elapsedSec = (performance.now() - genStartTime) / 1000;
+            const speed = elapsedSec > 0.2 ? (completedInChunk / elapsedSec).toFixed(1) : undefined;
 
+            // Stream failure logs, live generation speed, and lightweight counters; no success log records
             progressScheduler.schedule({
               current: completedInChunk,
               total: records.length,
               currentName: result.filename,
               status: 'generating',
-              errors,
+              errors: [...errorsRef.current],
               generated: successfulCertsRef.current.size,
               workerCount,
+              speed,
             });
           });
+
+          pureGenDurationMs = performance.now() - genStartTime;
+          workerExecutionSucceeded = true;
         } catch (poolErr) {
-          console.error('[Worker Pool Error]:', poolErr);
-          setError(`Parallel generation encountered an issue: ${poolErr instanceof Error ? poolErr.message : 'Worker error'}`);
+          console.warn('[Worker Pool Warning, seamlessly falling back to main thread]:', poolErr);
         } finally {
           pool.terminate();
           workerPoolRef.current = null;
         }
-      } else {
-        // Fallback to main-thread rendering if Web Workers / OffscreenCanvas are unsupported
-        for (let i = 0; i < records.length; i++) {
+      }
+
+      if (!workerExecutionSucceeded) {
+        // Fallback to main-thread rendering if Web Workers / OffscreenCanvas are unsupported or failed
+        const remainingRecords = records.filter(
+          (rec) => !successfulCertsRef.current.has(rec.rowIndex)
+        );
+        const fallbackStartTime = performance.now();
+        for (let i = 0; i < remainingRecords.length; i++) {
           if (abortRef.current) break;
 
-          const { rowIndex, row } = records[i];
+          const { rowIndex, row } = remainingRecords[i];
           const filenameBasis = getFilenameBasis(row);
           const filename = `${sanitizeFilename(filenameBasis)}_${rowIndex}`;
 
@@ -477,39 +471,96 @@ export function useCertificateBatchGenerator() {
               jpgBlob: cert.jpgBlob,
               pdfBlob: cert.pdfBlob,
             });
-
-            pendingRecordUpdates.set(rowIndex, {
-              status: 'generated',
-              certId,
-              verificationUrl,
-              timestamp: new Date().toLocaleTimeString(),
-            });
           } catch (err) {
             const errorMsg = err instanceof Error ? err.message : 'Generation failed';
-            errors.push({ rowIndex, name: filenameBasis, row, error: errorMsg });
-            pendingRecordUpdates.set(rowIndex, {
-              status: 'failed',
+            const timestamp = new Date().toLocaleTimeString();
+
+            failedMapRef.current.set(rowIndex, {
               error: errorMsg,
-              timestamp: new Date().toLocaleTimeString(),
+              timestamp,
+            });
+
+            errorsRef.current.push({
+              rowIndex,
+              name: filenameBasis,
+              row,
+              error: errorMsg,
             });
           }
 
-          recordScheduler.schedule();
+          const elapsedSec = (performance.now() - fallbackStartTime) / 1000;
+          const speed = elapsedSec > 0.2 ? ((i + 1) / elapsedSec).toFixed(1) : undefined;
+
           progressScheduler.schedule({
-            current: i + 1,
+            current: successfulCertsRef.current.size + errorsRef.current.length,
             total: records.length,
             currentName: filenameBasis,
             status: 'generating',
-            errors,
+            errors: [...errorsRef.current],
             generated: successfulCertsRef.current.size,
+            speed,
           });
         }
+        pureGenDurationMs += performance.now() - fallbackStartTime;
       }
 
-      recordScheduler.flush();
       progressScheduler.flush();
 
-      // Step 5: Build ZIP Archive via client-zip
+      // Step 5: Assemble the full report at the end of generation (all - failed = succeeded)
+      const failedMap = failedMapRef.current;
+      const completionTimestamp = new Date().toLocaleTimeString();
+
+      const assembledRecords: CertificateGenerationRecord[] = records.map(({ rowIndex, row }) => {
+        const name = getFilenameBasis(row);
+        const filename = `${sanitizeFilename(name)}_${rowIndex}`;
+        const failedInfo = failedMap.get(rowIndex);
+
+        if (failedInfo) {
+          return {
+            rowIndex,
+            name,
+            filename,
+            status: 'failed',
+            error: failedInfo.error,
+            timestamp: failedInfo.timestamp,
+            formats: activeFormatsDisplay,
+          };
+        }
+
+        if (successfulCertsRef.current.has(rowIndex) || !abortRef.current) {
+          const certId = certIdsRef.current.get(rowIndex);
+          const verificationUrl = useQr && certId ? buildVerifyUrlFor(certId) : undefined;
+          return {
+            rowIndex,
+            name,
+            filename,
+            status: 'generated',
+            certId,
+            verificationUrl,
+            timestamp: completionTimestamp,
+            formats: activeFormatsDisplay,
+          };
+        }
+
+        return {
+          rowIndex,
+          name,
+          filename,
+          status: 'pending',
+          formats: activeFormatsDisplay,
+        };
+      });
+
+      if (isRetry) {
+        setGenerationRecords((prev) => {
+          const patchMap = new Map(assembledRecords.map((r) => [r.rowIndex, r]));
+          return prev.map((old) => patchMap.get(old.rowIndex) || old);
+        });
+      } else {
+        setGenerationRecords(assembledRecords);
+      }
+
+      // Step 6: Build ZIP Archive via client-zip
       const allSuccessfulCerts = Array.from(successfulCertsRef.current.values());
       if (allSuccessfulCerts.length > 0 && !abortRef.current) {
         setProgress((prev) => ({
@@ -524,18 +575,26 @@ export function useCertificateBatchGenerator() {
       const totalElapsed = Date.now() - startTime;
       setLogs((prev) => ({ ...prev, totalElapsed, lastGenerated: new Date() }));
 
+      const currentErrors = [...errorsRef.current];
+      const pureGenSec = pureGenDurationMs / 1000;
+      const finalSpeed =
+        pureGenSec > 0.05 && allSuccessfulCerts.length > 0
+          ? (allSuccessfulCerts.length / pureGenSec).toFixed(1)
+          : undefined;
+
       setProgress({
         current: records.length,
         total: records.length,
         currentName: '',
         status: 'completed',
-        errors,
+        errors: currentErrors,
         generated: allSuccessfulCerts.length,
+        speed: finalSpeed,
       });
 
-      setRetryQueue(errors);
+      setRetryQueue(currentErrors);
 
-      // Step 6: Auto-save template & layout configuration
+      // Step 7: Auto-save template & layout configuration
       if (allSuccessfulCerts.length > 0 && !abortRef.current) {
         autoSaveCurrentTemplate({
           templateImage,
@@ -570,11 +629,13 @@ export function useCertificateBatchGenerator() {
   );
 
   const handleGenerate = useCallback(async () => {
+    setIsReportOpen(false);
     const records = csvData.map((row, i) => ({ rowIndex: i + 2, row }));
     await generateBatch(records, false);
   }, [csvData, generateBatch]);
 
   const handleRetry = useCallback(async () => {
+    setIsReportOpen(false);
     const records = retryQueue.map((err) => ({ rowIndex: err.rowIndex, row: err.row }));
     await generateBatch(records, true);
   }, [retryQueue, generateBatch]);
@@ -592,6 +653,7 @@ export function useCertificateBatchGenerator() {
     abortRef.current = true;
     pauseRef.current = false;
     setLocalPaused(false);
+    setIsReportOpen(false);
     if (workerPoolRef.current) {
       workerPoolRef.current.terminate();
       workerPoolRef.current = null;
@@ -603,6 +665,11 @@ export function useCertificateBatchGenerator() {
     setLogs(DEFAULT_LOGS);
     setRetryQueue([]);
     certIdsRef.current = new Map();
+    successfulCertsRef.current = new Map();
+    failedMapRef.current = new Map();
+    errorsRef.current = [];
+    setZipBlob(null);
+    setIsReportOpen(false);
   };
 
   const handleDownloadErrorReport = () => {

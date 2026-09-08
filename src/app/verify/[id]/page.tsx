@@ -1,10 +1,9 @@
 import type { Metadata } from 'next';
-import Image from 'next/image';
 import { VerifyClient } from './VerifyClient';
 
 export const metadata: Metadata = {
-  title: 'Certificate Verification | Credify',
-  description: 'Verify the authenticity of a certificate issued through Credify.',
+  title: 'Certificate Verification | Certify Registry',
+  description: 'Authenticate and inspect the official cryptographic record of this issued credential.',
   robots: { index: false },
 };
 
@@ -14,28 +13,18 @@ export default async function VerifyPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const issuedBy = process.env.ISSUED_BY || process.env.NEXT_PUBLIC_ISSUED_BY || 'Certify';
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-3 sm:p-6">
-      <div className="w-full max-w-lg bg-white rounded-2xl border border-slate-200/90 shadow-sm px-4 py-5 sm:px-8 sm:py-6">
-        <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3 sm:pb-4 mb-2">
-          <Image
-            src="/credify-logo.png"
-            alt="Credify Logo"
-            width={26}
-            height={26}
-            className="w-6.5 h-6.5 object-contain shrink-0"
-          />
-          <span className="font-bold text-slate-800 tracking-tight text-base">Credify</span>
-          <span className="ml-auto text-xs font-semibold text-slate-400 uppercase tracking-wider">
-            Official Verification
-          </span>
-        </div>
-        <VerifyClient id={id} />
-      </div>
-      <p className="mt-4 text-xs text-slate-400 text-center max-w-sm px-4">
-        Certificates are cryptographically verified against the issuer&apos;s official registry in real time.
-      </p>
+    <div className="min-h-screen bg-[#FBFAF5] relative flex flex-col items-center justify-center text-slate-900 selection:bg-emerald-100 selection:text-emerald-900 px-4 sm:px-6 py-12 sm:py-20 overflow-x-hidden">
+      {/* Subtle ambient illumination beam */}
+      <div
+        className="absolute top-0 inset-x-0 h-[420px] bg-[radial-gradient(ellipse_70%_55%_at_50%_0%,rgba(16,185,129,0.065),transparent)] pointer-events-none"
+        aria-hidden="true"
+      />
+      <main className="w-full max-w-2xl mx-auto flex flex-col items-center relative z-10">
+        <VerifyClient id={id} defaultIssuedBy={issuedBy} />
+      </main>
     </div>
   );
 }

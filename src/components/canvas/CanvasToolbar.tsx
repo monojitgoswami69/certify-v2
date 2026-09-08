@@ -31,6 +31,11 @@ export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
   zoomMenuRef,
   onResetLayout,
 }) => {
+  const isMac =
+    typeof navigator !== 'undefined' &&
+    /Mac|iPhone|iPod|iPad/i.test(navigator.platform || navigator.userAgent);
+  const modKey = isMac ? '⌘' : 'Ctrl+';
+
   return (
     <div className="absolute bottom-6 flex items-center gap-2 bg-white px-3.5 py-1.5 rounded-xl shadow-xl border border-slate-400 text-slate-800 text-xs font-medium z-30">
       {/* Undo / Redo */}
@@ -39,7 +44,7 @@ export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
           onClick={onUndo}
           disabled={!canUndo}
           className="p-1.5 hover:bg-slate-100 text-slate-700 hover:text-slate-950 rounded-lg disabled:opacity-25 transition-colors"
-          title="Undo (Ctrl+Z)"
+          title={`Undo (${modKey}Z)`}
         >
           <Undo2 className="w-4 h-4" />
         </button>
@@ -47,7 +52,7 @@ export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
           onClick={onRedo}
           disabled={!canRedo}
           className="p-1.5 hover:bg-slate-100 text-slate-700 hover:text-slate-950 rounded-lg disabled:opacity-25 transition-colors"
-          title="Redo (Ctrl+Y)"
+          title={`Redo (${modKey}${isMac ? '⇧Z' : 'Y'})`}
         >
           <Redo2 className="w-4 h-4" />
         </button>
@@ -61,7 +66,7 @@ export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
           onClick={() => onZoomChange(zoom - 0.25)}
           disabled={zoom <= MIN_ZOOM}
           className="p-1.5 hover:bg-slate-100 text-slate-700 hover:text-slate-950 rounded-lg disabled:opacity-25 transition-colors"
-          title="Zoom Out (Ctrl+-)"
+          title={`Zoom Out (${modKey}-)`}
         >
           <ZoomOut className="w-4 h-4" />
         </button>
@@ -112,7 +117,7 @@ export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
           onClick={() => onZoomChange(zoom + 0.25)}
           disabled={zoom >= MAX_ZOOM}
           className="p-1.5 hover:bg-slate-100 text-slate-700 hover:text-slate-950 rounded-lg disabled:opacity-25 transition-colors"
-          title="Zoom In (Ctrl++)"
+          title={`Zoom In (${modKey}+)`}
         >
           <ZoomIn className="w-4 h-4" />
         </button>
@@ -120,7 +125,7 @@ export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
         <button
           onClick={onResetFit}
           className="p-1.5 hover:bg-slate-100 text-slate-600 hover:text-slate-950 rounded-lg transition-colors"
-          title="Fit to Viewport (Ctrl+0)"
+          title={`Fit to Viewport (${modKey}0)`}
         >
           <Maximize2 className="w-3.5 h-3.5" />
         </button>

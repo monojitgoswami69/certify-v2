@@ -9,10 +9,15 @@ export function downloadBlob(blob: Blob, filename: string): void {
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
+  a.style.display = 'none';
   document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
-  a.remove();
+  // Defer revocation by 1.5s to ensure Safari (macOS/iOS/iPadOS) and Firefox
+  // download managers finish reading the blob stream before it is unmapped
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+    a.remove();
+  }, 1500);
 }
 
 /**
@@ -104,9 +109,21 @@ export function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const WINDOWS_RESERVED_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+
 export function sanitizeFilename(text: string): string {
-  const safe = text.replace(/[^a-zA-Z0-9\s\-_]/g, '');
-  return safe.trim().replace(/\s+/g, '_').substring(0, 50) || 'certificate';
+  let safe = (text || '')
+    .replace(/[/\\?%*:|"<>]/g, '')
+    .replace(/[^a-zA-Z0-9\s\-_.]/g, '')
+    .trim()
+    .replace(/\s+/g, '_')
+    .replace(/[. ]+$/, ''); // Disallow trailing dot or space on Windows
+
+  if (!safe || WINDOWS_RESERVED_NAMES.test(safe)) {
+    safe = safe ? `${safe}_file` : 'certificate';
+  }
+
+  return safe.substring(0, 60) || 'certificate';
 }
 
 export interface ErrorRecord {

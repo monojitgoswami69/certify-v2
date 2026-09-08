@@ -7,10 +7,10 @@ const API_BASE = '/api';
 function getAuthHeader(): Record<string, string> {
   if (typeof window === 'undefined') return {};
   const token =
-    localStorage.getItem('credify_auth_token') ||
-    sessionStorage.getItem('credify_session_token') ||
     localStorage.getItem('certify_auth_token') ||
-    sessionStorage.getItem('certify_session_token');
+    sessionStorage.getItem('certify_session_token') ||
+    localStorage.getItem('credify_auth_token') ||
+    sessionStorage.getItem('credify_session_token');
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 

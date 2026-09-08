@@ -162,7 +162,7 @@ export function CanvasEditor() {
 
   useEffect(() => {
     let cancelled = false;
-    QRCode.toDataURL('CREDIFY-VERIFY-PLACEHOLDER', {
+    QRCode.toDataURL('CERTIFY-VERIFY-PLACEHOLDER', {
       margin: 1,
       width: 512,
       color: {
@@ -283,9 +283,9 @@ export function CanvasEditor() {
     };
   }, [fitImageToCanvas]);
 
-  // Background container mouse down (Pan mode & workspace background click)
+  // Background container mouse/pointer down (Pan mode & workspace background click)
   const handleContainerMouseDown = useCallback(
-    (e: React.MouseEvent) => {
+    (e: React.MouseEvent | React.PointerEvent) => {
       if (e.button === 1 || isSpacePressed) {
         setDragMode('pan');
         setPanDragStart({ x: e.clientX, y: e.clientY });
@@ -303,9 +303,9 @@ export function CanvasEditor() {
     [isSpacePressed, pan, setActiveBox, setActiveQrId]
   );
 
-  // Canvas element mouse down
+  // Canvas element mouse/pointer down
   const handleCanvasMouseDown = useCallback(
-    (e: React.MouseEvent) => {
+    (e: React.MouseEvent | React.PointerEvent) => {
       if (!templateImage) return;
 
       if (e.button === 1 || isSpacePressed) {
@@ -420,12 +420,17 @@ export function CanvasEditor() {
     ]
   );
 
-  // Window-level mouse move & mouse up for dragging / drawing
+  // Window-level mouse move & mouse up for dragging / drawing (RAF throttled for 60-120 FPS performance)
   useEffect(() => {
     if (dragMode === 'none') return;
 
-    const handleWindowMouseMove = (e: MouseEvent) => {
-      if (!templateImage) return;
+    let rafId: number | null = null;
+    let latestEvent: MouseEvent | null = null;
+
+    const processMove = () => {
+      rafId = null;
+      if (!latestEvent || !templateImage) return;
+      const e = latestEvent;
 
       if (dragMode === 'pan') {
         const dx = e.clientX - panDragStart.x;
@@ -549,7 +554,23 @@ export function CanvasEditor() {
       }
     };
 
+    const handleWindowMouseMove = (e: MouseEvent) => {
+      latestEvent = e;
+      if (rafId === null) {
+        rafId = requestAnimationFrame(processMove);
+      }
+    };
+
     const handleWindowMouseUp = () => {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      if (latestEvent) {
+        processMove();
+        latestEvent = null;
+      }
+
       if (dragMode === 'draw' && tempBox && tempBox.w > 15 && tempBox.h > 15) {
         pushState(boxes, qrZones);
         addBox(tempBox);
@@ -595,9 +616,16 @@ export function CanvasEditor() {
 
     window.addEventListener('mousemove', handleWindowMouseMove);
     window.addEventListener('mouseup', handleWindowMouseUp);
+    window.addEventListener('pointermove', handleWindowMouseMove as EventListener);
+    window.addEventListener('pointerup', handleWindowMouseUp as EventListener);
     return () => {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+      }
       window.removeEventListener('mousemove', handleWindowMouseMove);
       window.removeEventListener('mouseup', handleWindowMouseUp);
+      window.removeEventListener('pointermove', handleWindowMouseMove as EventListener);
+      window.removeEventListener('pointerup', handleWindowMouseUp as EventListener);
     };
   }, [
     dragMode,
@@ -624,7 +652,7 @@ export function CanvasEditor() {
 
   // Hover cursor styling when not dragging
   const handleCanvasMouseMove = useCallback(
-    (e: React.MouseEvent) => {
+    (e: React.MouseEvent | React.PointerEvent) => {
       if (dragMode !== 'none' || !templateImage) return;
 
       if (isSpacePressed) {
@@ -733,10 +761,12 @@ export function CanvasEditor() {
     <div
       ref={containerRef}
       onMouseDown={handleContainerMouseDown}
+      onPointerDown={handleContainerMouseDown}
       className={`flex-1 flex flex-col items-center justify-center p-6 overflow-hidden relative select-none ${
         isSpacePressed ? (dragMode === 'pan' ? 'cursor-grabbing' : 'cursor-grab') : ''
       }`}
       style={{
+        touchAction: 'none',
         backgroundColor: '#f1f4f9',
         backgroundImage: `
           linear-gradient(to right, rgba(100, 116, 139, 0.08) 1px, transparent 1px),
@@ -756,6 +786,7 @@ export function CanvasEditor() {
           ref={canvasRef}
           className="bg-white block"
           style={{
+            touchAction: 'none',
             outline: `3px solid ${adaptiveBorder.borderColor}`,
             outlineOffset: '0px',
             boxShadow: `
@@ -765,6 +796,8 @@ export function CanvasEditor() {
           }}
           onMouseDown={handleCanvasMouseDown}
           onMouseMove={handleCanvasMouseMove}
+          onPointerDown={handleCanvasMouseDown}
+          onPointerMove={handleCanvasMouseMove}
           tabIndex={0}
         />
       </div>

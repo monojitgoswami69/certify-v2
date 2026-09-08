@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback, Suspense } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Image from 'next/image';
 import {
@@ -31,10 +31,10 @@ import type { DashboardEventSummary, DashboardParticipant } from '../api/dashboa
 function getStoredToken(): string | null {
   if (typeof window === 'undefined') return null;
   return (
-    localStorage.getItem('credify_auth_token') ||
-    sessionStorage.getItem('credify_session_token') ||
     localStorage.getItem('certify_auth_token') ||
-    sessionStorage.getItem('certify_session_token')
+    sessionStorage.getItem('certify_session_token') ||
+    localStorage.getItem('credify_auth_token') ||
+    sessionStorage.getItem('credify_session_token')
   );
 }
 
@@ -43,6 +43,7 @@ function DashboardContent() {
   const searchParams = useSearchParams();
   const eventParam = searchParams.get('event');
   const { isAuthenticated, isLoading: authLoading, token, logout, initialize } = useAuthStore();
+  const mainRef = useRef<HTMLElement>(null);
 
   // Events summary list state
   const [events, setEvents] = useState<DashboardEventSummary[]>([]);
@@ -53,9 +54,9 @@ function DashboardContent() {
   const [eventSearchQuery, setEventSearchQuery] = useState('');
 
   // -------------------------------------------------------------
-  // Detailed View State (On-Demand Fetching for a single event)
+  // Detailed View State (URL eventParam is single source of truth)
   // -------------------------------------------------------------
-  const [selectedEventName, setSelectedEventName] = useState<string | null>(null);
+  const selectedEventName = eventParam;
   const [detailedEventSummary, setDetailedEventSummary] = useState<DashboardEventSummary | null>(null);
   const [participants, setParticipants] = useState<DashboardParticipant[]>([]);
   const [loadingDetails, setLoadingDetails] = useState(false);
@@ -71,6 +72,12 @@ function DashboardContent() {
   // Deleting event state
   const [deletingEventName, setDeletingEventName] = useState<string | null>(null);
 
+  // In-flight request deduplication and stable events ref
+  const inFlightOverviewRef = useRef<boolean>(false);
+  const inFlightDetailsRef = useRef<string | null>(null);
+  const eventsRef = useRef(events);
+  eventsRef.current = events;
+
   // 1. Mount Effect: Initialize Auth
   useEffect(() => {
     initialize();
@@ -80,6 +87,9 @@ function DashboardContent() {
   const fetchEventsList = useCallback(async (explicitToken?: string) => {
     const activeToken = explicitToken || token || getStoredToken();
     if (!activeToken) return;
+
+    if (inFlightOverviewRef.current) return;
+    inFlightOverviewRef.current = true;
 
     setLoading(true);
     setError(null);
@@ -109,18 +119,21 @@ function DashboardContent() {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
       setLoading(false);
+      inFlightOverviewRef.current = false;
     }
   }, [token, logout, router]);
 
-  // Trigger fetch as soon as active token exists
+  // Trigger fetch as soon as active token exists, UNLESS we are viewing a specific event directly from URL query
   useEffect(() => {
     const activeToken = token || getStoredToken();
     if (activeToken) {
-      fetchEventsList(activeToken);
+      if (!eventParam && events.length === 0) {
+        fetchEventsList(activeToken);
+      }
     } else if (!authLoading && !isAuthenticated) {
       router.push('/login');
     }
-  }, [token, authLoading, isAuthenticated, fetchEventsList, router]);
+  }, [token, authLoading, isAuthenticated, eventParam, events.length, fetchEventsList, router]);
 
   // 3. Fetch Detailed Event Participants (On-Demand)
   const fetchEventDetails = useCallback(
@@ -128,14 +141,18 @@ function DashboardContent() {
       const activeToken = token || getStoredToken();
       if (!activeToken) return;
 
-      setSelectedEventName(eventName);
+      // Deduplicate if already fetching this exact event
+      if (inFlightDetailsRef.current === eventName) return;
+      inFlightDetailsRef.current = eventName;
+
       setLoadingDetails(true);
       setDetailsError(null);
       setParticipantSearchQuery('');
       setParticipantStatusFilter('all');
+      mainRef.current?.scrollTo({ top: 0 });
 
-      // Pre-populate summary from local list if available
-      const localSummary = events.find((e) => e.eventName === eventName);
+      // Pre-populate summary from local list if available (via ref to keep callback identity stable)
+      const localSummary = eventsRef.current.find((e) => e.eventName === eventName);
       if (localSummary) {
         setDetailedEventSummary(localSummary);
       }
@@ -166,35 +183,36 @@ function DashboardContent() {
         setDetailsError(err instanceof Error ? err.message : 'Failed to load event details');
       } finally {
         setLoadingDetails(false);
+        inFlightDetailsRef.current = null;
       }
     },
-    [token, events, logout, router]
+    [token, logout, router]
   );
 
-  // Auto-open event detailed report if ?event= query parameter is present in URL; reset if absent
+  // Auto-fetch event details whenever eventParam URL changes; reset when navigating back
   useEffect(() => {
     if (!eventParam) {
-      if (selectedEventName) {
-        setSelectedEventName(null);
-        setDetailedEventSummary(null);
-        setParticipants([]);
-        setDetailsError(null);
-      }
+      setDetailedEventSummary(null);
+      setParticipants([]);
+      setDetailsError(null);
       return;
     }
-    if (!isAuthenticated) return;
-    if (selectedEventName !== eventParam) {
-      fetchEventDetails(eventParam);
-    }
-  }, [eventParam, isAuthenticated, selectedEventName, fetchEventDetails]);
+    const activeToken = token || getStoredToken();
+    if (!activeToken) return;
+
+    fetchEventDetails(eventParam);
+  }, [eventParam, token, fetchEventDetails]);
 
   // Return from detailed view to events list
   const handleBackToEventsList = () => {
-    setSelectedEventName(null);
     setDetailedEventSummary(null);
     setParticipants([]);
     setDetailsError(null);
+    mainRef.current?.scrollTo({ top: 0 });
     router.push('/dashboard', { scroll: false });
+    if (eventsRef.current.length === 0) {
+      fetchEventsList();
+    }
   };
 
   // Revoke or Reinstate Certificate
@@ -296,7 +314,6 @@ function DashboardContent() {
 
       // If viewing this event in detailed view, return to events list
       if (selectedEventName === eventName) {
-        setSelectedEventName(null);
         setDetailedEventSummary(null);
         setParticipants([]);
         router.push('/dashboard', { scroll: false });
@@ -567,22 +584,22 @@ function DashboardContent() {
   }
 
   return (
-    <div className="min-h-screen bg-[#FBFAF5] text-slate-900 flex flex-col font-sans" style={{ backgroundColor: '#FBFAF5' }}>
+    <div className="animate-fade-in h-screen h-dvh bg-[#FBFAF5] text-slate-900 flex flex-col font-sans overflow-hidden" style={{ backgroundColor: '#FBFAF5' }}>
       {/* ------------------------------------------------------------- */}
       {/* Clean Light Navbar Header (Matching Canvas Workspace)         */}
       {/* ------------------------------------------------------------- */}
-      <header className="sticky top-0 z-30 bg-[#FBF4E2]/95 backdrop-blur-md border-b border-[#E5DAC3] px-4 sm:px-6 py-2 sm:py-2.5 flex items-center justify-between shadow-2xs" style={{ backgroundColor: '#FBF4E2' }}>
+      <header className="shrink-0 z-30 bg-[#FBF4E2] border-b border-[#E5DAC3] px-4 sm:px-6 py-2 sm:py-2.5 flex items-center justify-between shadow-2xs" style={{ backgroundColor: '#FBF4E2' }}>
         <div className="flex items-center gap-1.5">
           <Image
-            src="/credify-logo.png"
-            alt="Credify Logo"
+            src="/certify-logo.png"
+            alt="Certify Logo"
             width={36}
             height={36}
             className="w-9 h-9 object-contain shrink-0"
             priority
           />
           <div className="flex flex-col justify-center">
-            <span className="font-bold text-sm sm:text-base text-slate-900 tracking-tight leading-tight">Credify</span>
+            <span className="font-bold text-sm sm:text-base text-slate-900 tracking-tight leading-tight">Certify</span>
             <p className="text-[11px] sm:text-xs text-stone-500 hidden sm:block leading-tight mt-0.5">Certificate Verification &amp; Registry</p>
           </div>
         </div>
@@ -614,31 +631,33 @@ function DashboardContent() {
       </header>
 
       {/* ------------------------------------------------------------- */}
-      {/* Main Container                                                */}
+      {/* Main Scrollable Container (Scrollbar strictly below header)    */}
       {/* ------------------------------------------------------------- */}
-      <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 py-4 sm:py-5 space-y-4">
+      <main ref={mainRef} className="flex-1 overflow-y-auto">
+        <div className="max-w-6xl w-full mx-auto px-4 sm:px-6 py-4 sm:py-5 space-y-4">
         {/* ========================================================= */}
         {/* VIEW A: Single Event Detailed View (On-Demand)            */}
         {/* ========================================================= */}
         {selectedEventName ? (
-          <div className="space-y-4">
+          <div key={`event-${selectedEventName}`} className="animate-fade-in space-y-4">
             {/* Detailed View Header & Back Button Directly On Page */}
-            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 pb-3 sm:pb-3.5 border-b border-[#E5DAC3]">
-              <div className="flex items-start gap-2">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 sm:pb-3.5 border-b border-[#E5DAC3] min-h-[58px]">
+              <div className="flex items-center gap-2 min-w-0">
                 <button
+                  type="button"
                   onClick={handleBackToEventsList}
-                  className="flex items-center justify-center text-slate-500 hover:text-slate-900 transition-all cursor-pointer hover:-translate-x-0.5 active:scale-90 shrink-0 mt-0.5 p-0.5"
+                  className="flex items-center justify-center text-slate-500 hover:text-slate-900 transition-colors p-1.5 -ml-1.5 rounded-lg hover:bg-[#EFE5D0]/70 active:scale-90 shrink-0 cursor-pointer"
                   title="Back to Registered Events"
                   aria-label="Back to Registered Events"
                 >
                   <ChevronLeft className="w-5 h-5 sm:w-6 sm:h-6 stroke-[2.5]" />
                 </button>
-                <div>
-                  <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
+                <div className="min-w-0">
+                  <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight leading-tight truncate">
                     {selectedEventName}
                   </h1>
                   {detailedEventSummary && (
-                    <div className="flex items-center gap-2 mt-1 text-xs font-medium text-slate-600 flex-wrap">
+                    <div className="flex items-center gap-2 mt-0.5 text-xs font-medium text-slate-600 flex-wrap">
                       <span className="font-bold text-slate-900">
                         {detailedEventSummary.certificateCount} {detailedEventSummary.certificateCount === 1 ? 'record' : 'records'}
                       </span>
@@ -651,33 +670,36 @@ function DashboardContent() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 self-start sm:self-auto pl-7 sm:pl-0">
+              <div className="flex items-center gap-2 shrink-0 self-start sm:self-auto">
                 <button
+                  type="button"
                   onClick={handleExportEventCsv}
                   disabled={participants.length === 0}
-                  className="flex items-center gap-1.5 px-3 py-1.5 sm:py-2 bg-white hover:bg-slate-100 text-slate-800 hover:text-slate-900 border border-[#E5DAC3] rounded-lg text-xs sm:text-sm font-semibold transition-all cursor-pointer shadow-2xs hover:shadow-xs active:scale-[0.98] disabled:opacity-50"
+                  className="h-9 inline-flex items-center gap-1.5 px-3 bg-white hover:bg-slate-100 text-slate-800 hover:text-slate-900 border border-[#E5DAC3] rounded-lg text-xs sm:text-sm font-semibold transition-all cursor-pointer shadow-2xs hover:shadow-xs active:scale-[0.98] disabled:opacity-50"
                 >
-                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                   <span>Export CSV</span>
                 </button>
 
                 <button
+                  type="button"
                   onClick={handleOpenEventInStudio}
                   disabled={loadingStudio}
-                  className="flex items-center gap-1.5 px-3 py-1.5 sm:py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-xs sm:text-sm font-semibold transition-all cursor-pointer shadow-2xs hover:shadow-xs active:scale-[0.98] disabled:opacity-50"
+                  className="h-9 inline-flex items-center gap-1.5 px-3.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-xs sm:text-sm font-semibold transition-all cursor-pointer shadow-2xs hover:shadow-xs active:scale-[0.98] disabled:opacity-50"
                   title="Open this event's template & layout in Canvas Studio to issue new certificates"
                 >
-                  <ExternalLink className="w-3.5 h-3.5" />
+                  <ExternalLink className="w-3.5 h-3.5 shrink-0" />
                   <span>{loadingStudio ? 'Opening...' : 'Open in Studio'}</span>
                 </button>
 
                 <button
+                  type="button"
                   onClick={() => selectedEventName && handleDeleteEvent(selectedEventName)}
                   disabled={deletingEventName === selectedEventName}
-                  className="flex items-center gap-1.5 px-3 py-1.5 sm:py-2 bg-white hover:bg-red-50 text-red-600 hover:text-red-700 border border-red-200 hover:border-red-300 rounded-lg text-xs sm:text-sm font-semibold transition-all cursor-pointer shadow-2xs hover:shadow-xs active:scale-[0.98] disabled:opacity-50"
+                  className="h-9 inline-flex items-center gap-1.5 px-3 bg-white hover:bg-red-50 text-red-600 hover:text-red-700 border border-red-200 hover:border-red-300 rounded-lg text-xs sm:text-sm font-semibold transition-all cursor-pointer shadow-2xs hover:shadow-xs active:scale-[0.98] disabled:opacity-50"
                   title={`Permanently delete event "${selectedEventName}" and all its certificates`}
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
+                  <Trash2 className="w-3.5 h-3.5 shrink-0" />
                   <span>{deletingEventName === selectedEventName ? 'Deleting...' : 'Delete Event'}</span>
                 </button>
               </div>
@@ -868,11 +890,11 @@ function DashboardContent() {
           /* ========================================================= */
           /* VIEW B: Single Page View (Header on top, Records on bottom) */
           /* ========================================================= */
-          <div className="space-y-4">
+          <div key="events-list" className="animate-fade-in space-y-4">
             {/* Top Section Directly On Page */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 sm:pb-3.5 border-b border-[#E5DAC3]">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 sm:pb-3.5 border-b border-[#E5DAC3] min-h-[58px]">
               <div>
-                <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
+                <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight leading-tight">
                   Registered Events &amp; Certificates
                 </h1>
                 <p className="text-xs sm:text-sm text-stone-500 mt-0.5">
@@ -880,13 +902,16 @@ function DashboardContent() {
                 </p>
               </div>
 
-              <button
-                onClick={handleOpenNewStudio}
-                className="inline-flex items-center gap-2 px-3.5 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-xs sm:text-sm font-semibold transition-all shadow-2xs hover:shadow-xs cursor-pointer active:scale-[0.98] shrink-0 self-start sm:self-auto"
-              >
-                <Plus className="w-4 h-4 stroke-[2.25]" />
-                <span>Add New Certificates</span>
-              </button>
+              <div className="flex items-center gap-2 shrink-0 self-start sm:self-auto">
+                <button
+                  type="button"
+                  onClick={handleOpenNewStudio}
+                  className="h-9 inline-flex items-center gap-2 px-3.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-xs sm:text-sm font-semibold transition-all shadow-2xs hover:shadow-xs cursor-pointer active:scale-[0.98]"
+                >
+                  <Plus className="w-4 h-4 stroke-[2.25] shrink-0" />
+                  <span>Add New Certificates</span>
+                </button>
+              </div>
             </div>
 
             {error && (
@@ -980,7 +1005,6 @@ function DashboardContent() {
                     <div
                       key={event.eventName}
                       onClick={() => {
-                        fetchEventDetails(event.eventName);
                         router.push(`/dashboard?event=${encodeURIComponent(event.eventName)}`, { scroll: false });
                       }}
                       className="group px-3.5 py-2 sm:py-2.5 hover:bg-slate-100/80 transition-colors cursor-pointer dashboard-events-grid gap-1.5 md:gap-0"
@@ -1063,6 +1087,7 @@ function DashboardContent() {
             )}
           </div>
         )}
+        </div>
       </main>
     </div>
   );

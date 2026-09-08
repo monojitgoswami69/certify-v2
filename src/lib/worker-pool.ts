@@ -29,16 +29,30 @@ export class CertificateWorkerPool {
    */
   static getOptimalWorkerCount(): number {
     const cores = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 4 : 4;
-    return Math.max(1, Math.min(cores - 1, 16));
+    // Clamp to 8 max workers to prevent tab memory exhaustion on mobile/tablets (e.g. iPad 1.5GB cap)
+    // and high-core desktop workstations (e.g. 32-128 core workstations)
+    return Math.max(1, Math.min(cores - 1, 8));
   }
 
   static isSupported(): boolean {
-    return (
-      typeof window !== 'undefined' &&
-      typeof Worker !== 'undefined' &&
-      typeof OffscreenCanvas !== 'undefined' &&
-      typeof createImageBitmap !== 'undefined'
-    );
+    try {
+      if (
+        typeof window === 'undefined' ||
+        typeof Worker === 'undefined' ||
+        typeof OffscreenCanvas === 'undefined' ||
+        typeof createImageBitmap === 'undefined' ||
+        typeof OffscreenCanvas.prototype.convertToBlob !== 'function'
+      ) {
+        return false;
+      }
+      // Guarantee that 2D rendering context is actually implementable on this platform's OffscreenCanvas
+      // (guards against Safari < 16.4 or older WebKit stubs)
+      const testCanvas = new OffscreenCanvas(1, 1);
+      const ctx = testCanvas.getContext('2d');
+      return !!ctx;
+    } catch {
+      return false;
+    }
   }
 
   /**

@@ -26,16 +26,18 @@ export default function LoginPage() {
   // On mount: restore remembered username and initialize session
   useEffect(() => {
     try {
-      const savedUser = localStorage.getItem('credify_remembered_username');
+      const savedUser =
+        localStorage.getItem('certify_remembered_username') ||
+        localStorage.getItem('credify_remembered_username');
       if (savedUser) {
         setUsername(savedUser);
         setRememberMe(true);
       }
       const hasStoredToken = !!(
-        localStorage.getItem('credify_auth_token') ||
-        sessionStorage.getItem('credify_session_token') ||
         localStorage.getItem('certify_auth_token') ||
-        sessionStorage.getItem('certify_session_token')
+        sessionStorage.getItem('certify_session_token') ||
+        localStorage.getItem('credify_auth_token') ||
+        sessionStorage.getItem('credify_session_token')
       );
       if (!hasStoredToken) {
         setIsCheckingSession(false);
@@ -66,8 +68,9 @@ export default function LoginPage() {
       const success = await login(username, password, rememberMe);
       if (success) {
         if (rememberMe) {
-          localStorage.setItem('credify_remembered_username', username);
+          localStorage.setItem('certify_remembered_username', username);
         } else {
+          localStorage.removeItem('certify_remembered_username');
           localStorage.removeItem('credify_remembered_username');
         }
         router.push('/dashboard');
@@ -99,8 +102,8 @@ export default function LoginPage() {
         </div>
         <div className="login-glass-card relative z-10 rounded-[24px] px-8 py-6 flex items-center gap-3 shadow-xl">
           <Image
-            src="/credify-logo.png"
-            alt="Credify Logo"
+            src="/certify-logo.png"
+            alt="Certify Logo"
             width={24}
             height={24}
             className="w-6 h-6 object-contain"
@@ -146,7 +149,7 @@ export default function LoginPage() {
 
             <div className="relative z-10 p-8 md:p-12 mb-4">
               <h1 className="text-3xl md:text-5xl font-bold leading-tight tracking-tight drop-shadow-sm">
-                Welcome to <span className="text-amber-300 font-black tracking-normal">Credify</span>
+                Welcome to <span className="text-amber-300 font-black tracking-normal">Certify</span>
               </h1>
               <p className="mt-6 text-white/95 text-lg font-normal leading-relaxed">
                 Your one-stop destination for generating, exporting, and emailing professional certificates.

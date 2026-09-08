@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { desc, eq, or, isNull } from 'drizzle-orm';
 import { db } from '../../../lib/db';
 import { certificates, templates } from '../../../db/schema';
-import { getAuthUserFromRequest, unauthorizedResponse } from '../../../lib/server-auth';
+import { getAdminUserFromRequest, unauthorizedResponse } from '../../../lib/server-auth';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -35,9 +35,9 @@ export interface DashboardStats {
 }
 
 export async function GET(request: Request) {
-  const username = getAuthUserFromRequest(request);
+  const username = getAdminUserFromRequest(request);
   if (!username) {
-    return unauthorizedResponse('Invalid or expired session');
+    return unauthorizedResponse('Admin privilege required');
   }
 
   if (!process.env.DATABASE_URL) {
@@ -49,6 +49,8 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const requestedEvent = searchParams.get('event');
+  const includeRowData = searchParams.get('includeRowData') === 'true';
+  const includeTemplate = searchParams.get('includeTemplate') === 'true';
 
   try {
     // -------------------------------------------------------------
@@ -56,17 +58,23 @@ export async function GET(request: Request) {
     // -------------------------------------------------------------
     if (requestedEvent) {
       const decodedEventName = decodeURIComponent(requestedEvent).trim();
+      
+      const selectFields: any = {
+        id: certificates.id,
+        eventName: certificates.eventName,
+        recipientName: certificates.recipientName,
+        recipientEmail: certificates.recipientEmail,
+        status: certificates.status,
+        issuedAt: certificates.issuedAt,
+        templateName: certificates.templateName,
+      };
+
+      if (includeRowData) {
+        selectFields.rowData = certificates.rowData;
+      }
+
       const rows = await db
-        .select({
-          id: certificates.id,
-          eventName: certificates.eventName,
-          recipientName: certificates.recipientName,
-          recipientEmail: certificates.recipientEmail,
-          status: certificates.status,
-          issuedAt: certificates.issuedAt,
-          templateName: certificates.templateName,
-          rowData: certificates.rowData,
-        })
+        .select(selectFields)
         .from(certificates)
         .where(eq(certificates.eventName, decodedEventName))
         .orderBy(desc(certificates.issuedAt));
@@ -95,7 +103,7 @@ export async function GET(request: Request) {
           status: r.status,
           issuedAt: isoDate,
           templateName: r.templateName,
-          rowData: (r.rowData as Record<string, string> | null) || null,
+          rowData: includeRowData ? ((r.rowData as Record<string, string> | null) || null) : null,
         };
       });
 
@@ -109,51 +117,53 @@ export async function GET(request: Request) {
         templateName: eventTemplateName,
       };
 
-      // Find the associated canvas template if available (query metadata first to avoid pulling heavy imageData across all templates)
+      // Only query canvas template graphic if explicitly requested by Studio/Editor
       let matchedTemplate = null;
-      try {
-        const templateHeaders = await db
-          .select({
-            id: templates.id,
-            name: templates.name,
-          })
-          .from(templates);
+      if (includeTemplate) {
+        try {
+          const templateHeaders = await db
+            .select({
+              id: templates.id,
+              name: templates.name,
+            })
+            .from(templates);
 
-        if (templateHeaders.length > 0) {
-          const tplBase = eventTemplateName
-            ? eventTemplateName.replace(/\.[^/.]+$/, '').trim().toLowerCase()
-            : '';
-          const evBase = decodedEventName.trim().toLowerCase();
+          if (templateHeaders.length > 0) {
+            const tplBase = eventTemplateName
+              ? eventTemplateName.replace(/\.[^/.]+$/, '').trim().toLowerCase()
+              : '';
+            const evBase = decodedEventName.trim().toLowerCase();
 
-          const matchMeta =
-            templateHeaders.find((t) => t.name.trim().toLowerCase() === evBase) ||
-            templateHeaders.find((t) => tplBase && t.name.trim().toLowerCase() === tplBase) ||
-            templateHeaders.find(
-              (t) =>
-                (evBase && t.name.toLowerCase().includes(evBase)) ||
-                (tplBase && t.name.toLowerCase().includes(tplBase))
-            ) ||
-            (templateHeaders.length === 1 ? templateHeaders[0] : null);
+            const matchMeta =
+              templateHeaders.find((t) => t.name.trim().toLowerCase() === evBase) ||
+              templateHeaders.find((t) => tplBase && t.name.trim().toLowerCase() === tplBase) ||
+              templateHeaders.find(
+                (t) =>
+                  (evBase && t.name.toLowerCase().includes(evBase)) ||
+                  (tplBase && t.name.toLowerCase().includes(tplBase))
+              ) ||
+              (templateHeaders.length === 1 ? templateHeaders[0] : null);
 
-          if (matchMeta) {
-            const [fullTemplate] = await db
-              .select({
-                id: templates.id,
-                name: templates.name,
-                imageData: templates.imageData,
-                width: templates.width,
-                height: templates.height,
-                layoutConfig: templates.layoutConfig,
-              })
-              .from(templates)
-              .where(eq(templates.id, matchMeta.id))
-              .limit(1);
+            if (matchMeta) {
+              const [fullTemplate] = await db
+                .select({
+                  id: templates.id,
+                  name: templates.name,
+                  imageData: templates.imageData,
+                  width: templates.width,
+                  height: templates.height,
+                  layoutConfig: templates.layoutConfig,
+                })
+                .from(templates)
+                .where(eq(templates.id, matchMeta.id))
+                .limit(1);
 
-            matchedTemplate = fullTemplate || null;
+              matchedTemplate = fullTemplate || null;
+            }
           }
+        } catch (err) {
+          console.warn('[Dashboard] Could not fetch template for event:', err);
         }
-      } catch (err) {
-        console.warn('[Dashboard] Could not fetch template for event:', err);
       }
 
       return NextResponse.json(
@@ -260,9 +270,9 @@ export async function GET(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const username = getAuthUserFromRequest(request);
+  const username = getAdminUserFromRequest(request);
   if (!username) {
-    return unauthorizedResponse('Invalid or expired session');
+    return unauthorizedResponse('Admin privilege required');
   }
 
   if (!process.env.DATABASE_URL) {

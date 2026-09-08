@@ -104,8 +104,8 @@ let cachedFormats: OutputFormat[] = [];
 let cachedJpegQuality = 0.92;
 let cachedPdfOrientation: 'landscape' | 'portrait' = 'landscape';
 
-let reusableCanvas: OffscreenCanvas | null = null;
-let reusableCtx: OffscreenCanvasRenderingContext2D | null = null;
+let reusableCanvases: [OffscreenCanvas, OffscreenCanvas] | null = null;
+let reusableContexts: [OffscreenCanvasRenderingContext2D, OffscreenCanvasRenderingContext2D] | null = null;
 
 // =============================================================================
 // Text Fitting & Rendering
@@ -119,7 +119,7 @@ function findFittingFontSize(
   box: TextBox,
   fontBase: string
 ): number {
-  const cacheKey = `${text.length}:${box.w}:${box.h}:${box.fontSize}:${box.fontFamily}`;
+  const cacheKey = `${text}:${box.w}:${box.h}:${box.fontSize}:${box.fontFamily}`;
   const cached = fontSizeCache.get(cacheKey);
   if (cached !== undefined) return cached;
 
@@ -190,20 +190,18 @@ function drawTextBox(
 function drawVerificationQr(
   ctx: OffscreenCanvasRenderingContext2D,
   zone: QrPlacement,
-  url: string
+  qr: QRCode.QRCode
 ): void {
-  if (!url) return;
-
-  // Generate the bit-matrix modules directly in memory
-  const qr = QRCode.create(url, { errorCorrectionLevel: 'M' });
   const moduleCount = qr.modules.size;
   const moduleSize = zone.size / moduleCount;
 
+  // Single batched path: queues all module rects and fills them in one GPU draw call
   ctx.fillStyle = '#000000';
+  ctx.beginPath();
   for (let r = 0; r < moduleCount; r++) {
     for (let c = 0; c < moduleCount; c++) {
       if (qr.modules.get(r, c)) {
-        ctx.fillRect(
+        ctx.rect(
           zone.x + c * moduleSize,
           zone.y + r * moduleSize,
           moduleSize,
@@ -212,6 +210,7 @@ function drawVerificationQr(
       }
     }
   }
+  ctx.fill();
 }
 
 // =============================================================================
@@ -299,7 +298,7 @@ async function flushPending(pending: PendingEncode): Promise<void> {
 // =============================================================================
 
 async function generateBatch(items: BatchItem[]): Promise<void> {
-  if (!cachedTemplateBitmap || !reusableCanvas || !reusableCtx) {
+  if (!cachedTemplateBitmap || !reusableCanvases || !reusableContexts) {
     for (const item of items) {
       self.postMessage({
         type: 'itemComplete',
@@ -315,9 +314,6 @@ async function generateBatch(items: BatchItem[]): Promise<void> {
     return;
   }
 
-  const ctx = reusableCtx;
-  const canvas = reusableCanvas;
-
   if (fontSizeCache.size > 2000) {
     fontSizeCache.clear();
   }
@@ -325,17 +321,23 @@ async function generateBatch(items: BatchItem[]): Promise<void> {
   const needJpeg = cachedFormats.includes('jpg') || cachedFormats.includes('pdf');
   const needPng = cachedFormats.includes('png');
 
+  let activeBufferIdx = 0;
   let pending: PendingEncode | null = null;
 
   for (const item of items) {
     try {
+      const canvas = reusableCanvases[activeBufferIdx];
+      const ctx = reusableContexts[activeBufferIdx];
+      activeBufferIdx = 1 - activeBufferIdx;
+
       // 1. DRAW: Background Template
       ctx.drawImage(cachedTemplateBitmap, 0, 0);
 
       // 2. DRAW: QR Verification Zones
       if (item.verificationUrl && cachedQrZones.length > 0) {
+        const qr = QRCode.create(item.verificationUrl, { errorCorrectionLevel: 'M' });
         for (const zone of cachedQrZones) {
-          drawVerificationQr(ctx, zone, item.verificationUrl);
+          drawVerificationQr(ctx, zone, qr);
         }
       }
 
@@ -458,11 +460,26 @@ self.onmessage = async (event: MessageEvent<InitMessage | GenerateBatchMessage>)
           return { box, fontBase, textX, textAlign };
         });
 
-      reusableCanvas = new OffscreenCanvas(cachedTemplateWidth, cachedTemplateHeight);
-      reusableCtx = reusableCanvas.getContext('2d', {
-        alpha: false,
-        desynchronized: true,
-      })!;
+      const createBuffer = () => {
+        const c = new OffscreenCanvas(cachedTemplateWidth, cachedTemplateHeight);
+        let cx = c.getContext('2d', {
+          alpha: false,
+          desynchronized: true,
+        });
+        // Fallback for Safari/Firefox where desynchronized: true or alpha: false can return null
+        if (!cx) {
+          cx = c.getContext('2d');
+        }
+        if (!cx) {
+          throw new Error('Failed to acquire 2D context from OffscreenCanvas in Worker');
+        }
+        return { c, cx };
+      };
+
+      const buf0 = createBuffer();
+      const buf1 = createBuffer();
+      reusableCanvases = [buf0.c, buf1.c];
+      reusableContexts = [buf0.cx, buf1.cx];
 
       self.postMessage({ type: 'ready' } as WorkerResponse);
     } catch (err) {

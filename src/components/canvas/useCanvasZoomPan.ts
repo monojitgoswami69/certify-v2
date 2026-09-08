@@ -130,15 +130,32 @@ export function useCanvasZoomPan({
   }, [fitImageToCanvas]);
 
   // Native wheel handler for smooth trackpad pan, shift scroll, and Ctrl/Cmd zoom
+  // Normalizes deltaMode across Windows physical mice, macOS trackpads, and Linux/Firefox
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !templateImage) return;
 
     const handleWheel = (e: WheelEvent) => {
+      // Delta mode normalization:
+      // DOM_DELTA_LINE = 1 (Windows/Linux physical notched mouse, Firefox on all OSes, typical delta is 1-3 lines)
+      // DOM_DELTA_PAGE = 2 (Page scrolling)
+      // DOM_DELTA_PIXEL = 0 (macOS precision trackpad, smooth gesture wheels, typical delta is 10-60 pixels)
+      const lineMultiplier = 20;
+      const pageMultiplier = 400;
+      const factor =
+        e.deltaMode === WheelEvent.DOM_DELTA_LINE
+          ? lineMultiplier
+          : e.deltaMode === WheelEvent.DOM_DELTA_PAGE
+          ? pageMultiplier
+          : 1;
+
+      const normX = e.deltaX * factor;
+      const normY = e.deltaY * factor;
+
       // 1. Ctrl / Cmd + Wheel: Zoom in / out centered at mouse
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
-        const zoomDelta = -e.deltaY * 0.005;
+        const zoomDelta = -normY * 0.003;
         const targetZoom = zoom * (1 + zoomDelta);
         handleZoomChange(targetZoom, { x: e.clientX, y: e.clientY });
         return;
@@ -160,26 +177,86 @@ export function useCanvasZoomPan({
       const maxPanY = Math.max(0, (cssHeight - containerRect.height) / 2 + 100);
 
       if (e.shiftKey) {
+        // Shift + Wheel = Horizontal Scroll
+        // On macOS, the browser automatically translates Shift + vertical wheel into deltaX.
+        // On Windows/Linux, some browsers keep deltaY and leave deltaX = 0.
+        // We pick whichever delta has non-zero magnitude to guarantee horizontal scrolling across all platforms.
+        const horizontalDelta = Math.abs(normX) > 0 ? normX : normY;
         setPan((prev) => ({
-          x: Math.max(-maxPanX, Math.min(maxPanX, prev.x - e.deltaY)),
+          x: Math.max(-maxPanX, Math.min(maxPanX, prev.x - horizontalDelta)),
           y: prev.y,
         }));
-      } else if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
-        setPan((prev) => ({
-          x: Math.max(-maxPanX, Math.min(maxPanX, prev.x - e.deltaX)),
-          y: Math.max(-maxPanY, Math.min(maxPanY, prev.y - e.deltaY)),
-        }));
       } else {
+        // Standard 2D pan: handles vertical wheel, horizontal tilt wheel, and fluid diagonal trackpad gestures
         setPan((prev) => ({
-          x: prev.x,
-          y: Math.max(-maxPanY, Math.min(maxPanY, prev.y - e.deltaY)),
+          x: Math.max(-maxPanX, Math.min(maxPanX, prev.x - normX)),
+          y: Math.max(-maxPanY, Math.min(maxPanY, prev.y - normY)),
         }));
       }
     };
 
+    // Touch gesture handling for tablets and touchscreen laptops (iPad, Surface Pro, 2-in-1 devices)
+    let initialTouchDist = 0;
+    let initialTouchZoom = 1;
+    let initialTouchPan = { x: 0, y: 0 };
+    let initialMidpoint = { x: 0, y: 0 };
+
+    const handleTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        e.preventDefault();
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        initialTouchDist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+        initialTouchZoom = zoom;
+        initialTouchPan = { ...pan };
+        initialMidpoint = {
+          x: (t1.clientX + t2.clientX) / 2,
+          y: (t1.clientY + t2.clientY) / 2,
+        };
+      }
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 2 && initialTouchDist > 0) {
+        e.preventDefault();
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        const currentDist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+        const scaleChange = currentDist / initialTouchDist;
+        const targetZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, initialTouchZoom * scaleChange));
+
+        const currentMid = {
+          x: (t1.clientX + t2.clientX) / 2,
+          y: (t1.clientY + t2.clientY) / 2,
+        };
+        const midDiffX = currentMid.x - initialMidpoint.x;
+        const midDiffY = currentMid.y - initialMidpoint.y;
+
+        setZoom(targetZoom);
+        setPan({
+          x: initialTouchPan.x + midDiffX,
+          y: initialTouchPan.y + midDiffY,
+        });
+      }
+    };
+
+    const handleTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length < 2) {
+        initialTouchDist = 0;
+      }
+    };
+
     container.addEventListener('wheel', handleWheel, { passive: false });
-    return () => container.removeEventListener('wheel', handleWheel);
-  }, [zoom, effectiveScale, templateImage, handleZoomChange, containerRef]);
+    container.addEventListener('touchstart', handleTouchStart, { passive: false });
+    container.addEventListener('touchmove', handleTouchMove, { passive: false });
+    container.addEventListener('touchend', handleTouchEnd);
+    return () => {
+      container.removeEventListener('wheel', handleWheel);
+      container.removeEventListener('touchstart', handleTouchStart);
+      container.removeEventListener('touchmove', handleTouchMove);
+      container.removeEventListener('touchend', handleTouchEnd);
+    };
+  }, [zoom, pan, effectiveScale, templateImage, handleZoomChange, containerRef]);
 
   // Click outside listener for Zoom Dropdown Menu
   useEffect(() => {
@@ -248,16 +325,20 @@ export function useCanvasZoomPan({
         handleZoomChange(zoom - 0.25);
       }
 
-      // Ctrl/Cmd + Z: Undo
-      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
+      // Ctrl/Cmd + Z: Undo (supports international keyboard layouts like QWERTZ / AZERTY)
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        !e.shiftKey &&
+        (e.key?.toLowerCase() === 'z' || e.code === 'KeyZ')
+      ) {
         e.preventDefault();
         onUndo?.();
       }
 
       // Ctrl/Cmd + Shift + Z or Ctrl/Cmd + Y: Redo
       if (
-        ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'z' || e.key === 'Z')) ||
-        ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y'))
+        ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key?.toLowerCase() === 'z' || e.code === 'KeyZ')) ||
+        ((e.ctrlKey || e.metaKey) && (e.key?.toLowerCase() === 'y' || e.code === 'KeyY'))
       ) {
         e.preventDefault();
         onRedo?.();

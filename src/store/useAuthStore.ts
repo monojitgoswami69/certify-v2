@@ -1,15 +1,17 @@
 /**
- * Authentication Store for Credify™ Next.js
+ * Authentication Store for Certify™ Next.js
  * Supports both Google OAuth SSO and Classic Credentials.
  */
 
 import { create } from 'zustand';
 
 const API_BASE = '/api';
-const TOKEN_KEY = 'credify_auth_token';
-const SESSION_TOKEN_KEY = 'credify_session_token';
-const USER_INFO_KEY = 'credify_user_info';
-const REMEMBERED_USER_KEY = 'credify_remembered_username';
+const TOKEN_KEY = 'certify_auth_token';
+const SESSION_TOKEN_KEY = 'certify_session_token';
+const USER_INFO_KEY = 'certify_user_info';
+const REMEMBERED_USER_KEY = 'certify_remembered_username';
+
+let inFlightVerifyPromise: Promise<boolean> | null = null;
 
 export interface UserProfile {
   username: string;
@@ -51,7 +53,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const token = data.token;
       const user: UserProfile = {
         username: data.username,
-        email: data.username.includes('@') ? data.username : `${data.username}@credify.local`,
+        email: data.username.includes('@') ? data.username : `${data.username}@certify.local`,
       };
 
       if (rememberMe) {
@@ -116,12 +118,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   logout: () => {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_INFO_KEY);
-    localStorage.removeItem('certify_auth_token');
-    localStorage.removeItem('certify_user_info');
+    localStorage.removeItem('credify_auth_token');
+    localStorage.removeItem('credify_user_info');
     sessionStorage.removeItem(SESSION_TOKEN_KEY);
     sessionStorage.removeItem(USER_INFO_KEY);
-    sessionStorage.removeItem('certify_session_token');
-    sessionStorage.removeItem('certify_user_info');
+    sessionStorage.removeItem('credify_session_token');
+    sessionStorage.removeItem('credify_user_info');
     // Note: REMEMBERED_USER_KEY is kept so returning users have their username prefilled
     set({ isAuthenticated: false, token: null, user: null, isLoading: false });
   },
@@ -133,23 +135,33 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       return false;
     }
 
-    try {
-      const response = await fetch(`${API_BASE}/auth/verify`, {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (response.ok) {
-        set({ isAuthenticated: true, isLoading: false });
-        return true;
-      } else {
-        get().logout();
-        return false;
-      }
-    } catch {
-      set({ isAuthenticated: false, isLoading: false });
-      return false;
+    if (inFlightVerifyPromise) {
+      return inFlightVerifyPromise;
     }
+
+    inFlightVerifyPromise = (async () => {
+      try {
+        const response = await fetch(`${API_BASE}/auth/verify`, {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        if (response.ok) {
+          set({ isAuthenticated: true, isLoading: false });
+          return true;
+        } else {
+          get().logout();
+          return false;
+        }
+      } catch {
+        set({ isAuthenticated: false, isLoading: false });
+        return false;
+      } finally {
+        inFlightVerifyPromise = null;
+      }
+    })();
+
+    return inFlightVerifyPromise;
   },
 
   initialize: async () => {
@@ -158,13 +170,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const storedToken =
       localStorage.getItem(TOKEN_KEY) ||
       sessionStorage.getItem(SESSION_TOKEN_KEY) ||
-      localStorage.getItem('certify_auth_token') ||
-      sessionStorage.getItem('certify_session_token');
+      localStorage.getItem('credify_auth_token') ||
+      sessionStorage.getItem('credify_session_token');
     const userStr =
       localStorage.getItem(USER_INFO_KEY) ||
       sessionStorage.getItem(USER_INFO_KEY) ||
-      localStorage.getItem('certify_user_info') ||
-      sessionStorage.getItem('certify_user_info');
+      localStorage.getItem('credify_user_info') ||
+      sessionStorage.getItem('credify_user_info');
 
     let user: UserProfile | null = null;
     if (userStr) {
@@ -175,8 +187,25 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
     }
 
-    if (storedToken) {
-      set({ token: storedToken, user, isLoading: true });
+    if (!storedToken) {
+      set({ isAuthenticated: false, isLoading: false });
+      return;
+    }
+
+    // If already verified and authenticated with this same token, don't refetch
+    if (get().isAuthenticated && get().token === storedToken && !get().isLoading) {
+      return;
+    }
+
+    // Reuse existing in-flight verification if already running
+    if (inFlightVerifyPromise) {
+      await inFlightVerifyPromise;
+      return;
+    }
+
+    set({ token: storedToken, user, isLoading: true });
+
+    inFlightVerifyPromise = (async () => {
       try {
         const response = await fetch(`${API_BASE}/auth/verify`, {
           method: 'GET',
@@ -185,14 +214,19 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
         if (response.ok) {
           set({ isAuthenticated: true, isLoading: false });
+          return true;
         } else {
           get().logout();
+          return false;
         }
       } catch {
         get().logout();
+        return false;
+      } finally {
+        inFlightVerifyPromise = null;
       }
-    } else {
-      set({ isAuthenticated: false, isLoading: false });
-    }
+    })();
+
+    await inFlightVerifyPromise;
   },
 }));

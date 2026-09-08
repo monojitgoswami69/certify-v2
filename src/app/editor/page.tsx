@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, Suspense } from 'react';
-import { FileSpreadsheet, X, Image as ImageIcon, CalendarDays } from 'lucide-react';
+import { FileSpreadsheet, X, Image as ImageIcon, CalendarDays, Monitor } from 'lucide-react';
 import { ErrorBoundary } from '../../components/ui/ErrorBoundary';
 import { SidebarHeader } from '../../components/sidebar/SidebarHeader';
 import { StepCard } from '../../components/sidebar/StepCard';
@@ -48,6 +48,17 @@ function WorkspaceContent() {
   const templateIdParam = searchParams.get('templateId');
   const eventParam = searchParams.get('event');
   const [showCsvPreview, setShowCsvPreview] = useState(false);
+  const [isNarrowScreen, setIsNarrowScreen] = useState(false);
+  const [dismissNarrowWarning, setDismissNarrowWarning] = useState(false);
+
+  useEffect(() => {
+    const checkWidth = () => {
+      setIsNarrowScreen(typeof window !== 'undefined' && window.innerWidth < 768);
+    };
+    checkWidth();
+    window.addEventListener('resize', checkWidth);
+    return () => window.removeEventListener('resize', checkWidth);
+  }, []);
 
   useEffect(() => {
     initialize();
@@ -84,7 +95,10 @@ function WorkspaceContent() {
     const activeToken =
       token ||
       (typeof window !== 'undefined'
-        ? localStorage.getItem('credify_auth_token') || sessionStorage.getItem('credify_session_token')
+        ? localStorage.getItem('certify_auth_token') ||
+          sessionStorage.getItem('certify_session_token') ||
+          localStorage.getItem('credify_auth_token') ||
+          sessionStorage.getItem('credify_session_token')
         : null);
     if (!activeToken) return;
 
@@ -100,9 +114,12 @@ function WorkspaceContent() {
 
         // 1. If event is specified, query dashboard event details (includes participants & template)
         if (eventParam) {
-          const res = await fetch(`/api/dashboard?event=${encodeURIComponent(eventParam)}`, {
-            headers: { Authorization: `Bearer ${activeToken}` },
-          });
+          const res = await fetch(
+            `/api/dashboard?event=${encodeURIComponent(eventParam)}&includeRowData=true&includeTemplate=true`,
+            {
+              headers: { Authorization: `Bearer ${activeToken}` },
+            }
+          );
 
           if (res.ok) {
             const data = await res.json();
@@ -187,9 +204,9 @@ function WorkspaceContent() {
     };
   }, [templateIdParam, eventParam, isAuthenticated, token]);
 
-  if (isLoading) {
+  if (isLoading && !isAuthenticated) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 animate-smooth-fade">
         <div className="flex flex-col items-center gap-4">
           <div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin"></div>
           <p className="text-slate-500 text-sm font-medium">Initializing workspace...</p>
@@ -216,7 +233,7 @@ function WorkspaceContent() {
 
   if (viewMode === 'email') {
     return (
-      <div className="h-screen flex flex-col bg-slate-50">
+      <div className="animate-fade-in h-screen h-dvh flex flex-col bg-slate-50">
         <main className="flex-1 flex overflow-hidden">
           <EmailSidebar />
           <EmailPreviewPane />
@@ -226,7 +243,7 @@ function WorkspaceContent() {
   }
 
   return (
-    <div className="h-screen flex bg-slate-50 overflow-hidden">
+    <div className="animate-fade-in h-screen h-dvh flex bg-slate-50 overflow-hidden">
       <aside
         style={{ width: `${sidebarWidth}px` }}
         className="relative bg-white border-r border-slate-500/80 flex-shrink-0 flex flex-col h-full"
@@ -359,6 +376,37 @@ function WorkspaceContent() {
       <CanvasEditor />
 
       <CsvPreviewModal isOpen={showCsvPreview} onClose={() => setShowCsvPreview(false)} />
+
+      {/* Small Screen / Mobile Warning Modal */}
+      {isNarrowScreen && !dismissNarrowWarning && (
+        <div className="fixed inset-0 z-[999] bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 text-center shadow-2xl border border-slate-200 space-y-4 animate-in zoom-in-95 duration-200">
+            <div className="w-14 h-14 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center mx-auto shadow-sm">
+              <Monitor className="w-7 h-7" />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-slate-900">Widescreen Display Recommended</h3>
+              <p className="text-xs sm:text-sm text-slate-500 mt-1.5 leading-relaxed">
+                Canvas Studio is designed for desktop, laptop, and widescreen tablet displays (such as an iPad or Surface in landscape) to inspect certificate dimensions and place elements accurately.
+              </p>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-2 pt-2">
+              <button
+                onClick={() => router.push('/dashboard')}
+                className="flex-1 py-2.5 px-4 bg-primary-600 hover:bg-primary-700 text-white rounded-xl text-xs sm:text-sm font-semibold transition-colors cursor-pointer"
+              >
+                Return to Dashboard
+              </button>
+              <button
+                onClick={() => setDismissNarrowWarning(true)}
+                className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs sm:text-sm font-semibold transition-colors cursor-pointer"
+              >
+                Proceed Anyway
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

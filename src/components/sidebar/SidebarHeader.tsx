@@ -31,24 +31,24 @@ export function SidebarHeader() {
         {/* Dedicated Back Arrowhead to Event View / Dashboard */}
         <button
           onClick={handleBack}
-          className="flex items-center justify-center text-slate-500 hover:text-slate-900 transition-all hover:-translate-x-0.5 active:scale-90 cursor-pointer shrink-0 p-0.5"
+          className="flex items-center justify-center text-slate-500 hover:text-slate-900 transition-all hover:-translate-x-0.5 active:scale-90 cursor-pointer shrink-0 p-1 -ml-1 rounded-lg hover:bg-slate-200/70"
           title={backLabel}
           aria-label={backLabel}
         >
           <ChevronLeft className="w-5 h-5 stroke-[2.5]" />
         </button>
 
-        {/* Credify Branding */}
+        {/* Certify Branding */}
         <div className="flex items-center gap-1.5 min-w-0">
           <Image
-            src="/credify-logo.png"
-            alt="Credify Logo"
+            src="/certify-logo.png"
+            alt="Certify Logo"
             width={28}
             height={28}
             className="w-7 h-7 object-contain shrink-0"
           />
           <h1 className="text-[18px] font-bold text-slate-900 tracking-tight leading-none">
-            Credify
+            Certify
           </h1>
         </div>
       </div>

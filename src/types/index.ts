@@ -1,5 +1,5 @@
 /**
- * TypeScript Interfaces & Types for Credify™ Next.js
+ * TypeScript Interfaces & Types for Certify™ Next.js
  */
 
 export type HorizontalAlign = 'left' | 'center' | 'right';

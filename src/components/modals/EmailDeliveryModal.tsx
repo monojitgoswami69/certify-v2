@@ -13,6 +13,8 @@ import {
   Mail,
   FileSpreadsheet,
   AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import type { EmailDeliveryRecord, EmailDeliveryStatus } from '../../types';
 import { downloadFullDeliveryReport, downloadErrorReport } from '../../lib/utils';
@@ -87,6 +89,18 @@ export function EmailDeliveryModal({
     });
   }, [records, search, statusFilter]);
 
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 50;
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, statusFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredRecords.length / PAGE_SIZE));
+  const effectivePage = Math.min(currentPage, totalPages);
+  const startIndex = (effectivePage - 1) * PAGE_SIZE;
+  const pageRecords = filteredRecords.slice(startIndex, startIndex + PAGE_SIZE);
+
   if (!isOpen || !mounted) return null;
 
   const handleDownloadFull = () => {
@@ -118,7 +132,7 @@ export function EmailDeliveryModal({
   return createPortal(
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6 bg-slate-900/50 animate-in fade-in duration-200">
       <div
-        className="relative bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden"
+        className="relative bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Modal Header */}
@@ -312,7 +326,7 @@ export function EmailDeliveryModal({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-normal">
-                {filteredRecords.map((record) => {
+                {pageRecords.map((record) => {
                   let badge = null;
                   if (record.status === 'sent') {
                     badge = (
@@ -389,17 +403,47 @@ export function EmailDeliveryModal({
           )}
         </div>
 
-        {/* Modal Footer */}
-        <div className="flex items-center justify-between px-6 py-3 border-t border-slate-200 bg-slate-50 text-xs text-slate-500">
+        {/* Modal Footer & Pagination */}
+        <div className="flex flex-col sm:flex-row items-center justify-between px-6 py-3 border-t border-slate-200 bg-slate-50 text-xs text-slate-500 gap-2">
           <span>
-            Showing {filteredRecords.length} of {records.length} records
+            Showing <span className="font-semibold text-slate-700">{filteredRecords.length === 0 ? 0 : startIndex + 1}</span>–<span className="font-semibold text-slate-700">{Math.min(startIndex + PAGE_SIZE, filteredRecords.length)}</span> of <span className="font-semibold text-slate-700">{filteredRecords.length}</span> records
+            {records.length !== filteredRecords.length && ` (filtered from ${records.length})`}
           </span>
-          <button
-            onClick={onClose}
-            className="px-4 py-1.5 bg-slate-800 hover:bg-slate-900 text-white font-medium rounded-lg transition-colors cursor-pointer"
-          >
-            Close Log
-          </button>
+
+          <div className="flex items-center gap-3">
+            {totalPages > 1 && (
+              <div className="flex items-center gap-1.5 select-none">
+                <button
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  disabled={effectivePage <= 1}
+                  className="p-1 rounded border border-slate-200 bg-white hover:bg-slate-100 disabled:opacity-40 disabled:pointer-events-none transition-colors cursor-pointer"
+                  title="Previous Page"
+                  aria-label="Previous Page"
+                >
+                  <ChevronLeft className="w-4 h-4 text-slate-600" />
+                </button>
+                <span className="px-2 font-mono text-[11px] font-semibold text-slate-700">
+                  {effectivePage} / {totalPages}
+                </span>
+                <button
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={effectivePage >= totalPages}
+                  className="p-1 rounded border border-slate-200 bg-white hover:bg-slate-100 disabled:opacity-40 disabled:pointer-events-none transition-colors cursor-pointer"
+                  title="Next Page"
+                  aria-label="Next Page"
+                >
+                  <ChevronRight className="w-4 h-4 text-slate-600" />
+                </button>
+              </div>
+            )}
+
+            <button
+              onClick={onClose}
+              className="px-4 py-1.5 bg-slate-800 hover:bg-slate-900 text-white font-medium rounded-lg transition-colors cursor-pointer"
+            >
+              Close Log
+            </button>
+          </div>
         </div>
       </div>
     </div>,

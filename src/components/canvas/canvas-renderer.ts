@@ -8,6 +8,12 @@ export const LABEL_HEIGHT = 20;
 export const LABEL_PADDING = 6;
 export const QR_MIN_SIZE = 40;
 
+const canvasFontSizeCache = new Map<string, number>();
+
+export function clearCanvasFontSizeCache() {
+  canvasFontSizeCache.clear();
+}
+
 export function getHandlePositions(sel: { x: number; y: number; w: number; h: number }) {
   const mx = sel.x + sel.w / 2;
   const my = sel.y + sel.h / 2;
@@ -83,36 +89,45 @@ export function drawBoxOnCanvas(
       loadGoogleFont(useFontFamily);
     }
 
-    // High-performance binary search text fitting (replaces slow linear decrement loop)
+    // High-performance cached binary search text fitting
     const maxW = displayBox.w - 10;
     const maxH = displayBox.h - 10;
-    let displayFontSize = minFontSize * effectiveScale;
+    const cacheKey = `${previewText}:${Math.round(displayBox.w)}:${Math.round(displayBox.h)}:${box.fontSize}:${fontFamily}:${effectiveScale}`;
+    let displayFontSize = canvasFontSizeCache.get(cacheKey);
 
-    if (maxW > 0 && maxH > 0) {
-      let low = minFontSize;
-      let high = box.fontSize;
+    if (displayFontSize === undefined) {
+      displayFontSize = minFontSize * effectiveScale;
+      if (maxW > 0 && maxH > 0) {
+        let low = minFontSize;
+        let high = box.fontSize;
 
-      // Fast path: check if maximum font size fits immediately
-      const testMaxDisplay = high * effectiveScale;
-      ctx.font = `${testMaxDisplay}px ${fontFamily}`;
-      if (ctx.measureText(previewText).width <= maxW && testMaxDisplay * 1.2 <= maxH) {
-        displayFontSize = testMaxDisplay;
-      } else {
-        while (low <= high) {
-          const mid = (low + high) >> 1;
-          const testDisplay = mid * effectiveScale;
-          ctx.font = `${testDisplay}px ${fontFamily}`;
-          const textW = ctx.measureText(previewText).width;
-          const textH = testDisplay * 1.2;
+        // Fast path: check if maximum font size fits immediately
+        const testMaxDisplay = high * effectiveScale;
+        ctx.font = `${testMaxDisplay}px ${fontFamily}`;
+        if (ctx.measureText(previewText).width <= maxW && testMaxDisplay * 1.2 <= maxH) {
+          displayFontSize = testMaxDisplay;
+        } else {
+          while (low <= high) {
+            const mid = (low + high) >> 1;
+            const testDisplay = mid * effectiveScale;
+            ctx.font = `${testDisplay}px ${fontFamily}`;
+            const textW = ctx.measureText(previewText).width;
+            const textH = testDisplay * 1.2;
 
-          if (textW <= maxW && textH <= maxH) {
-            displayFontSize = testDisplay;
-            low = mid + 1;
-          } else {
-            high = mid - 1;
+            if (textW <= maxW && textH <= maxH) {
+              displayFontSize = testDisplay;
+              low = mid + 1;
+            } else {
+              high = mid - 1;
+            }
           }
         }
       }
+
+      if (canvasFontSizeCache.size > 1000) {
+        canvasFontSizeCache.clear();
+      }
+      canvasFontSizeCache.set(cacheKey, displayFontSize);
     }
 
     ctx.font = `${displayFontSize}px ${fontFamily}`;

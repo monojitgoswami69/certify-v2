@@ -43,7 +43,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ detail: 'Google token or credential required' }, { status: 400 });
     }
 
-    // Create session JWT token for Credify™ app
+    // Create session JWT token for Certify™ app
     const token = createJwtToken(email);
 
     return NextResponse.json({

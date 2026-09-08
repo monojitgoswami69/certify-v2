@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { eq, or } from 'drizzle-orm';
 import { db } from '../../../../../lib/db';
 import { certificates } from '../../../../../db/schema';
-import { getAuthUserFromRequest, unauthorizedResponse } from '../../../../../lib/server-auth';
+import { getAdminUserFromRequest, unauthorizedResponse } from '../../../../../lib/server-auth';
 import { hashToken, isValidCertificateId } from '../../../../../lib/verification';
 
 /**
@@ -12,9 +12,9 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const username = getAuthUserFromRequest(request);
+  const username = getAdminUserFromRequest(request);
   if (!username) {
-    return unauthorizedResponse('Invalid or expired token');
+    return unauthorizedResponse('Admin privilege required');
   }
 
   const { id } = await params;

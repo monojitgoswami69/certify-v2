@@ -32,6 +32,7 @@ export const certificates = pgTable(
     uniqueIndex('certificates_token_hash_idx').on(table.tokenHash),
     index('certificates_event_name_idx').on(table.eventName),
     index('certificates_record_fingerprint_idx').on(table.recordFingerprint),
+    index('certificates_issued_at_idx').on(table.issuedAt),
   ]
 );
 

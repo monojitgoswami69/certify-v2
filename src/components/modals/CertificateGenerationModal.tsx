@@ -13,7 +13,10 @@ import {
   FileSpreadsheet,
   AlertTriangle,
   Archive,
+  FileBarChart,
   ExternalLink,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import type { CertificateGenerationRecord, CertificateGenerationStatus, ExportFormats } from '../../types';
 import { downloadFullGenerationReport, downloadErrorReport, downloadBlob, sanitizeFilename } from '../../lib/utils';
@@ -98,6 +101,18 @@ export function CertificateGenerationModal({
     });
   }, [records, search, statusFilter]);
 
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 50;
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, statusFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredRecords.length / PAGE_SIZE));
+  const effectivePage = Math.min(currentPage, totalPages);
+  const startIndex = (effectivePage - 1) * PAGE_SIZE;
+  const pageRecords = filteredRecords.slice(startIndex, startIndex + PAGE_SIZE);
+
   if (!isOpen || !mounted) return null;
 
   const handleDownloadFull = () => {
@@ -126,14 +141,12 @@ export function CertificateGenerationModal({
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/50 animate-in fade-in duration-200">
       <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
         {/* Modal Header */}
-        <div className="p-5 border-b border-slate-200 flex items-center justify-between bg-slate-50/50">
+        <div className="px-6 py-4.5 border-b border-slate-200 flex items-center justify-between bg-white">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-primary-100 flex items-center justify-center text-primary-600 font-bold">
-              <Archive className="w-5 h-5" />
-            </div>
+            <FileBarChart className="w-6 h-6 text-primary-600 shrink-0 stroke-[2]" />
             <div>
-              <h2 className="text-lg font-bold text-slate-800">Certificate Generation Report</h2>
-              <p className="text-xs text-slate-500">
+              <h2 className="text-lg font-bold text-slate-900 tracking-tight leading-none">Certificate Generation Report</h2>
+              <p className="text-xs text-slate-500 mt-1">
                 {eventName ? `Event: ${eventName}` : 'Direct Certificate Batch Generation'} ·{' '}
                 {records.length} total recipients
               </p>
@@ -262,7 +275,7 @@ export function CertificateGenerationModal({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-medium">
-                  {filteredRecords.map((r) => (
+                  {pageRecords.map((r) => (
                     <tr
                       key={r.rowIndex}
                       className={`hover:bg-slate-50/70 transition-colors ${
@@ -360,6 +373,38 @@ export function CertificateGenerationModal({
                   ))}
                 </tbody>
               </table>
+
+              {/* Table Pagination Bar */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between px-3.5 py-2.5 bg-slate-50 border-t border-slate-200 text-xs text-slate-600 select-none">
+                  <span>
+                    Showing <span className="font-semibold text-slate-800">{startIndex + 1}</span>–<span className="font-semibold text-slate-800">{Math.min(startIndex + PAGE_SIZE, filteredRecords.length)}</span> of <span className="font-semibold text-slate-800">{filteredRecords.length}</span>
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                      disabled={effectivePage <= 1}
+                      className="p-1 rounded border border-slate-200 bg-white hover:bg-slate-100 disabled:opacity-40 disabled:pointer-events-none transition-colors cursor-pointer"
+                      title="Previous Page"
+                      aria-label="Previous Page"
+                    >
+                      <ChevronLeft className="w-4 h-4 text-slate-600" />
+                    </button>
+                    <span className="px-2 font-mono text-[11px] font-semibold text-slate-700">
+                      {effectivePage} / {totalPages}
+                    </span>
+                    <button
+                      onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                      disabled={effectivePage >= totalPages}
+                      className="p-1 rounded border border-slate-200 bg-white hover:bg-slate-100 disabled:opacity-40 disabled:pointer-events-none transition-colors cursor-pointer"
+                      title="Next Page"
+                      aria-label="Next Page"
+                    >
+                      <ChevronRight className="w-4 h-4 text-slate-600" />
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

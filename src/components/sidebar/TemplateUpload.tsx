@@ -85,16 +85,17 @@ export function TemplateUpload() {
     (file: File) => {
       if (!file || !file.type.startsWith('image/')) return;
 
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const img = new Image();
-        img.onload = () => {
-          const info = `${file.name} (${img.width}×${img.height})`;
-          setTemplate(file, img, info);
-        };
-        img.src = e.target?.result as string;
+      const objectUrl = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(objectUrl);
+        const info = `${file.name} (${img.width}×${img.height})`;
+        setTemplate(file, img, info);
       };
-      reader.readAsDataURL(file);
+      img.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+      };
+      img.src = objectUrl;
     },
     [setTemplate]
   );
