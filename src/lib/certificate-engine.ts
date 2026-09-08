@@ -7,14 +7,16 @@
 
 import { jsPDF } from 'jspdf';
 import QRCode from 'qrcode';
-import type { TextBox, CsvRow, HorizontalAlign, VerticalAlign } from '../types';
+import type { TextBox, CsvRow, HorizontalAlign, VerticalAlign, QrStyleConfig } from '../types';
 import { getFontFamilyCSS } from './font-loader';
 import { resolveFieldValue } from './utils';
+import { drawStyledQr } from './qr-renderer';
 
 export interface QrPlacement {
   x: number;
   y: number;
   size: number;
+  style?: QrStyleConfig;
 }
 
 /**
@@ -177,33 +179,20 @@ export function blobToBase64(blob: Blob): Promise<string> {
 }
 
 /**
- * Direct Bit-Matrix QR Code Rendering (Vector Accurate, Zero DOM, Sub-millisecond)
+ * QR Code Rendering with customizable vector styles
  */
 function drawVerificationQr(
   ctx: CanvasRenderingContext2D,
   zone: QrPlacement,
-  qr: QRCode.QRCode
+  verificationUrl: string
 ): void {
-  const moduleCount = qr.modules.size;
-  const moduleSize = zone.size / moduleCount;
-
-  ctx.save();
-  ctx.fillStyle = '#000000';
-  ctx.beginPath();
-  for (let r = 0; r < moduleCount; r++) {
-    for (let c = 0; c < moduleCount; c++) {
-      if (qr.modules.get(r, c)) {
-        ctx.rect(
-          zone.x + c * moduleSize,
-          zone.y + r * moduleSize,
-          moduleSize,
-          moduleSize
-        );
-      }
-    }
-  }
-  ctx.fill();
-  ctx.restore();
+  drawStyledQr(ctx, {
+    x: zone.x,
+    y: zone.y,
+    size: zone.size,
+    text: verificationUrl,
+    style: zone.style,
+  });
 }
 
 /**
@@ -240,9 +229,14 @@ export async function generateCertificate(
 
   const zonesToDraw = qrZones && qrZones.length > 0 ? qrZones : qrZone ? [qrZone] : [];
   if (zonesToDraw.length > 0 && verificationUrl) {
-    const qr = QRCode.create(verificationUrl, { errorCorrectionLevel: 'M' });
     for (const zone of zonesToDraw) {
-      drawVerificationQr(ctx, zone, qr);
+      drawStyledQr(ctx, {
+        x: zone.x,
+        y: zone.y,
+        size: zone.size,
+        text: verificationUrl,
+        style: zone.style,
+      });
     }
   }
 

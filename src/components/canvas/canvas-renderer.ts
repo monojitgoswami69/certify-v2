@@ -2,6 +2,7 @@ import type { TextBox } from '../../types';
 import type { QrZone } from '../../store/useAppStore';
 import { isFontLoaded, loadGoogleFont, getFontFamilyCSS } from '../../lib/font-loader';
 import type { HandleKey } from '../../lib/canvas-snapping';
+import { drawStyledQr } from '../../lib/qr-renderer';
 
 export const HANDLE_SIZE = 8;
 export const LABEL_HEIGHT = 20;
@@ -194,13 +195,24 @@ export function drawQrZonesOnCanvas(
 
     ctx.save();
 
+    try {
+      drawStyledQr(ctx, {
+        x: dx,
+        y: dy,
+        size: ds,
+        text: 'https://certify.app/verify/DEMO',
+        style: zone.style,
+      });
+    } catch {
+      if (placeholderImg && placeholderImg.complete && placeholderImg.naturalWidth > 0) {
+        ctx.drawImage(placeholderImg, dx, dy, ds, ds);
+      }
+    }
+
+    // Selection overlay across the entire QR code (including center cutout badge & logo)
     if (isActive) {
       ctx.fillStyle = 'rgba(139, 92, 246, 0.08)';
       ctx.fillRect(dx, dy, ds, ds);
-    }
-
-    if (placeholderImg && placeholderImg.complete && placeholderImg.naturalWidth > 0) {
-      ctx.drawImage(placeholderImg, dx, dy, ds, ds);
     }
 
     ctx.strokeStyle = isActive ? '#7c3aed' : '#a78bfa';
@@ -259,14 +271,27 @@ export function drawQrZonesOnCanvas(
     const gs = defaultSize * effectiveScale;
 
     ctx.save();
+
+    try {
+      ctx.save();
+      ctx.globalAlpha = 0.55;
+      drawStyledQr(ctx, {
+        x: gx,
+        y: gy,
+        size: gs,
+        text: 'https://certify.app/verify/DEMO',
+      });
+      ctx.restore();
+    } catch {
+      if (placeholderImg && placeholderImg.complete && placeholderImg.naturalWidth > 0) {
+        ctx.globalAlpha = 0.55;
+        ctx.drawImage(placeholderImg, gx, gy, gs, gs);
+        ctx.globalAlpha = 1.0;
+      }
+    }
+
     ctx.fillStyle = 'rgba(139, 92, 246, 0.2)';
     ctx.fillRect(gx, gy, gs, gs);
-
-    if (placeholderImg && placeholderImg.complete && placeholderImg.naturalWidth > 0) {
-      ctx.globalAlpha = 0.55;
-      ctx.drawImage(placeholderImg, gx, gy, gs, gs);
-      ctx.globalAlpha = 1.0;
-    }
 
     ctx.strokeStyle = '#7c3aed';
     ctx.lineWidth = 2;

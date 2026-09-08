@@ -25,6 +25,7 @@ import {
   getQrResizeHandleAtPoint,
   QR_MIN_SIZE,
 } from './canvas-renderer';
+import { getCachedImage } from '../../lib/qr-renderer';
 import { CanvasToolbar } from './CanvasToolbar';
 
 type DragMode = 'none' | 'draw' | 'move' | 'resize' | 'qr-move' | 'qr-resize' | 'pan';
@@ -281,6 +282,25 @@ export function CanvasEditor() {
       };
     }
   }, [render]);
+
+  // Re-render when custom QR logos/emblems finish loading
+  useEffect(() => {
+    const logos = qrZones.map((z) => z.style?.logo).filter(Boolean) as string[];
+    if (logos.length === 0) return;
+    let active = true;
+    logos.forEach((logoUrl) => {
+      getCachedImage(logoUrl);
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        if (active) render();
+      };
+      img.src = logoUrl;
+    });
+    return () => {
+      active = false;
+    };
+  }, [qrZones, render]);
 
   // ResizeObserver on container to automatically re-fit canvas when sidebar is resized
   useEffect(() => {

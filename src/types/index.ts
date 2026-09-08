@@ -75,11 +75,61 @@ export interface EmailProgress {
   records?: EmailDeliveryRecord[];
 }
 
+export type QrBodyShape =
+  | 'square'
+  | 'rounded-connected'
+  | 'smooth'
+  | 'dots'
+  | 'extra-rounded'
+  | 'classy'
+  | 'classy-rounded'
+  | 'horizontal'
+  | 'vertical'
+  | 'diamond'
+  | 'star'
+  | 'hexagon'
+  | 'mosaic'
+  | 'leaf'
+  | 'rounded';
+export type QrEyeFrameShape =
+  | 'square'
+  | 'rounded'
+  | 'extra-rounded'
+  | 'circle'
+  | 'leaf'
+  | 'leaf-inverted'
+  | 'pointed-leaf'
+  | 'diamond'
+  | 'shield';
+export type QrEyeDotShape =
+  | 'square'
+  | 'dot'
+  | 'rounded'
+  | 'diamond'
+  | 'star'
+  | 'cross'
+  | 'leaf'
+  | 'ring';
+export type QrCenterShape = 'square' | 'circle' | 'rounded' | 'shield' | 'diamond';
+
+export interface QrStyleConfig {
+  bodyShape?: QrBodyShape;
+  eyeFrameShape?: QrEyeFrameShape;
+  eyeDotShape?: QrEyeDotShape;
+  patternColor?: string;
+  eyeFrameColor?: string;
+  eyeDotColor?: string;
+  backgroundColor?: string;
+  logo?: string;
+  centerShape?: QrCenterShape;
+}
+
 export interface QrZone {
   id: string;
   x: number;
   y: number;
   size: number;
+  style?: QrStyleConfig;
 }
 
 export type CertificateGenerationStatus = 'pending' | 'generating' | 'generated' | 'failed';

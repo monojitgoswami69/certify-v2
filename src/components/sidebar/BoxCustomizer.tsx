@@ -10,21 +10,27 @@ import { CustomSelect } from '../ui/CustomSelect';
 import { resolveFieldValue } from '../../lib/utils';
 import type { HorizontalAlign, VerticalAlign } from '../../types';
 
+import { QrCustomizer } from './QrCustomizer';
+
 export function BoxCustomizer() {
   const {
     boxes,
     activeBoxId,
+    activeQrId,
     csvHeaders,
     csvData,
     qrZones,
     updateBox,
     deleteBox,
     setFontPreview,
+    setActiveBox,
+    setActiveQrId,
   } = useAppStore();
 
   const { pushState } = useHistoryStore();
 
   const activeBox = boxes.find((b) => b.id === activeBoxId);
+  const activeQr = qrZones.find((z) => z.id === activeQrId);
 
   const focusedInputRef = useRef<string | null>(null);
   const isInputEditingRef = useRef(false);
@@ -76,19 +82,60 @@ export function BoxCustomizer() {
     }
   }, [activeBox?.fontSize, activeBox?.x, activeBox?.y, activeBox?.w, activeBox?.h, activeBox?.id]);
 
+  // If a QR code is selected, render the rich QR customizer
+  if (activeQr) {
+    return <QrCustomizer activeQr={activeQr} />;
+  }
+
+  // If no text box is selected
   if (!activeBox) {
-    if (boxes.length === 0) {
+    if (boxes.length === 0 && qrZones.length === 0) {
       return (
-        <div className="p-4 bg-slate-50 rounded-xl border border-dashed border-slate-300 text-center">
-          <p className="text-sm text-slate-500">
-            Draw a box on the template to add text areas
+        <div className="py-8 text-center text-stone-500 space-y-1.5">
+          <p className="text-sm font-medium text-stone-700">No elements created yet</p>
+          <p className="text-xs text-stone-500">
+            Draw a box on the template in Step 3 to add dynamic text or click &apos;Add QR Code&apos;
           </p>
         </div>
       );
     }
     return (
-      <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 text-center">
-        <p className="text-sm text-slate-500">Click on a box to customize it</p>
+      <div className="space-y-4 py-2">
+        <p className="text-xs text-stone-500">
+          Click an element on the canvas to customize it, or select below:
+        </p>
+        <div className="space-y-1.5">
+          {boxes.map((box, index) => (
+            <button
+              key={box.id}
+              type="button"
+              onClick={() => setActiveBox(box.id)}
+              className="w-full flex items-center justify-between py-2 px-3 rounded-lg border border-stone-200/80 hover:border-stone-400 hover:bg-stone-50 text-left transition-colors"
+            >
+              <span className="text-xs font-medium text-stone-800">
+                {box.field || `Text Box ${index + 1}`}
+              </span>
+              <span className="text-[10px] font-mono text-stone-400">
+                {Math.round(box.w)} × {Math.round(box.h)} px
+              </span>
+            </button>
+          ))}
+          {qrZones.map((zone, index) => (
+            <button
+              key={zone.id}
+              type="button"
+              onClick={() => setActiveQrId(zone.id)}
+              className="w-full flex items-center justify-between py-2 px-3 rounded-lg border border-stone-200/80 hover:border-stone-400 hover:bg-stone-50 text-left transition-colors"
+            >
+              <span className="text-xs font-medium text-stone-800">
+                {qrZones.length > 1 ? `QR Code ${index + 1}` : 'QR Verification Code'}
+              </span>
+              <span className="text-[10px] font-mono text-stone-400">
+                {Math.round(zone.size)} × {Math.round(zone.size)} px
+              </span>
+            </button>
+          ))}
+        </div>
       </div>
     );
   }

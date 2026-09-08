@@ -254,6 +254,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
       x: Math.max(0, Math.round(x)),
       y: Math.max(0, Math.round(y)),
       size: defaultSize,
+      style: {
+        bodyShape: 'smooth',
+        eyeFrameShape: 'rounded',
+        eyeDotShape: 'rounded',
+        patternColor: '#000000',
+        backgroundColor: 'transparent',
+        centerShape: 'rounded',
+      },
     };
     const updated = [...qrZones, newZone];
     set({

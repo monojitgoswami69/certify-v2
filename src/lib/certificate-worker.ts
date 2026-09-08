@@ -11,7 +11,9 @@
 
 import { jsPDF } from 'jspdf';
 import QRCode from 'qrcode';
+import type { QrStyleConfig } from '../types';
 import { resolveFieldValue } from './utils';
+import { drawStyledQr } from './qr-renderer';
 
 export type OutputFormat = 'png' | 'jpg' | 'pdf';
 
@@ -33,6 +35,7 @@ export interface QrPlacement {
   x: number;
   y: number;
   size: number;
+  style?: QrStyleConfig;
 }
 
 export interface CsvRow {
@@ -101,6 +104,7 @@ let cachedTemplateWidth = 0;
 let cachedTemplateHeight = 0;
 let cachedBoxRenderInfo: BoxRenderInfo[] = [];
 let cachedQrZones: QrPlacement[] = [];
+let cachedLogoBitmaps = new Map<string, ImageBitmap>();
 let cachedFormats: OutputFormat[] = [];
 let cachedJpegQuality = 0.92;
 let cachedPdfOrientation: 'landscape' | 'portrait' = 'landscape';
@@ -191,27 +195,17 @@ function drawTextBox(
 function drawVerificationQr(
   ctx: OffscreenCanvasRenderingContext2D,
   zone: QrPlacement,
-  qr: QRCode.QRCode
+  verificationUrl: string
 ): void {
-  const moduleCount = qr.modules.size;
-  const moduleSize = zone.size / moduleCount;
-
-  // Single batched path: queues all module rects and fills them in one GPU draw call
-  ctx.fillStyle = '#000000';
-  ctx.beginPath();
-  for (let r = 0; r < moduleCount; r++) {
-    for (let c = 0; c < moduleCount; c++) {
-      if (qr.modules.get(r, c)) {
-        ctx.rect(
-          zone.x + c * moduleSize,
-          zone.y + r * moduleSize,
-          moduleSize,
-          moduleSize
-        );
-      }
-    }
-  }
-  ctx.fill();
+  const logoBitmap = zone.style?.logo ? cachedLogoBitmaps.get(zone.style.logo) : null;
+  drawStyledQr(ctx, {
+    x: zone.x,
+    y: zone.y,
+    size: zone.size,
+    text: verificationUrl,
+    style: zone.style,
+    logoImg: logoBitmap,
+  });
 }
 
 // =============================================================================
@@ -336,9 +330,8 @@ async function generateBatch(items: BatchItem[]): Promise<void> {
 
       // 2. DRAW: QR Verification Zones
       if (item.verificationUrl && cachedQrZones.length > 0) {
-        const qr = QRCode.create(item.verificationUrl, { errorCorrectionLevel: 'M' });
         for (const zone of cachedQrZones) {
-          drawVerificationQr(ctx, zone, qr);
+          drawVerificationQr(ctx, zone, item.verificationUrl);
         }
       }
 
@@ -437,6 +430,19 @@ self.onmessage = async (event: MessageEvent<InitMessage | GenerateBatchMessage>)
       cachedJpegQuality = message.jpegQuality ?? 0.92;
       cachedPdfOrientation = message.templateWidth > message.templateHeight ? 'landscape' : 'portrait';
       cachedQrZones = message.qrZones || [];
+      cachedLogoBitmaps.clear();
+      for (const zone of cachedQrZones) {
+        if (zone.style?.logo && !cachedLogoBitmaps.has(zone.style.logo)) {
+          try {
+            const res = await fetch(zone.style.logo);
+            const blob = await res.blob();
+            const bitmap = await createImageBitmap(blob);
+            cachedLogoBitmaps.set(zone.style.logo, bitmap);
+          } catch {
+            // Silently fallback if logo fails to decode
+          }
+        }
+      }
 
       cachedBoxRenderInfo = message.boxes
         .filter((box) => box.field)

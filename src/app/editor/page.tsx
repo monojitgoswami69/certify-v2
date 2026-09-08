@@ -230,12 +230,12 @@ function WorkspaceContent() {
   const step2Complete = csvData.length > 0;
   const step3Complete = boxes.length > 0 || qrZones.length > 0;
   const validBoxes = boxes.filter((b) => b.field);
-  const step4Complete = validBoxes.length > 0;
+  const step4Complete = validBoxes.length > 0 || qrZones.length > 0;
 
   const step1Status = step1Complete ? 'completed' : 'active';
   const step2Status = !step1Complete ? 'pending' : step2Complete ? 'completed' : 'active';
   const step3Status = !step1Complete ? 'pending' : step3Complete ? 'completed' : 'active';
-  const step4Status = !step1Complete || boxes.length === 0 ? 'pending' : step4Complete ? 'completed' : 'active';
+  const step4Status = !step1Complete || (boxes.length === 0 && qrZones.length === 0) ? 'pending' : step4Complete ? 'completed' : 'active';
   const step5Status = !step1Complete || !step2Complete || (!step4Complete && qrZones.length === 0) ? 'pending' : 'active';
 
   if (viewMode === 'email') {

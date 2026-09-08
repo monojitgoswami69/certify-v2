@@ -90,7 +90,7 @@ export function VerifyClient({
   // -------------------------------------------------------------
   if (state === 'loading') {
     return (
-      <div className="w-full flex flex-col items-center justify-center py-14 sm:py-20 text-center animate-fade-in">
+      <div className="w-full flex flex-col items-center justify-center text-center animate-fade-in">
         {/* Animated Authentic Magnifying Glass Search Graphic */}
         <div className="relative flex items-center justify-center w-32 h-32 mb-7 select-none">
           {/* Concentric Registry Ping Rings */}
@@ -388,7 +388,7 @@ export function VerifyClient({
   // -------------------------------------------------------------
   if (state.status === 'not_found') {
     return (
-      <div className="w-full flex flex-col items-center text-center animate-fade-in py-8 sm:py-14">
+      <div className="w-full flex flex-col items-center justify-center text-center animate-fade-in">
         {/* Animated Amber Query Mark */}
         <div className="relative flex items-center justify-center verify-pop-badge mb-3">
           <div className="absolute w-28 h-28 rounded-full bg-amber-400/20 blur-2xl pointer-events-none" />
@@ -434,7 +434,7 @@ export function VerifyClient({
   // STATE 5: RATE LIMITED OR SERVICE ERROR
   // -------------------------------------------------------------
   return (
-    <div className="w-full flex flex-col items-center text-center animate-fade-in py-10 sm:py-16">
+    <div className="w-full flex flex-col items-center justify-center text-center animate-fade-in">
       <div className="w-16 h-16 rounded-full bg-stone-100 flex items-center justify-center mb-4 text-stone-500 border border-stone-200">
         <AlertTriangle className="w-8 h-8 text-stone-600" />
       </div>
