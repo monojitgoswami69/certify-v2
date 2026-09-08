@@ -17,6 +17,8 @@ interface ConfettiPiece {
   rotationSpeed: number;
   wobble: number;
   wobbleSpeed: number;
+  delay: number;
+  seed: number;
   shape: 'rect' | 'circle' | 'strip' | 'diamond';
 }
 
@@ -26,10 +28,11 @@ const PALETTE = [
   '#34D399', // Mint emerald
   '#F59E0B', // Warm gold
   '#D97706', // Champagne gold
+  '#FCD34D', // Light gold
   '#6366F1', // Royal indigo
   '#64748B', // Slate
   '#0F172A', // Obsidian
-  '#FCD34D', // Light gold
+  '#F1F5F9', // Crisp platinum
 ];
 
 export function ConfettiCanvas({
@@ -73,37 +76,53 @@ export function ConfettiCanvas({
     };
     window.addEventListener('resize', handleResize);
 
-    // Burst origin from the true bottom-left corner of the browser viewport/window
-    const originX = 0;
-    const originY = height;
-
-    const particleCount = Math.min(105, Math.max(60, Math.floor(width / 13)));
+    // Balanced dual-cannon emitters (bottom-left and bottom-right)
+    // Cross-fires upward and toward the center across the verified credential
+    const totalCount = Math.min(130, Math.max(75, Math.floor(width / 11)));
     const particles: ConfettiPiece[] = [];
 
-    for (let i = 0; i < particleCount; i++) {
-      // Angle shooting upward and rightward across the viewport: ~20° to 70°
-      const angle = 0.35 + Math.random() * 0.82;
-      const speed = 16 + Math.random() * 16;
+    for (let i = 0; i < totalCount; i++) {
+      // Alternate cannons: even index from bottom-left, odd index from bottom-right
+      const isLeft = i % 2 === 0;
+
+      // Broad launch muzzle spread (60px) prevents particles from stacking in a clump
+      const originX = isLeft
+        ? Math.max(20, width * 0.05) + (Math.random() - 0.5) * 60
+        : Math.min(width - 20, width * 0.95) + (Math.random() - 0.5) * 60;
+      const originY = height + 10 + (Math.random() - 0.5) * 25;
+
+      // Trajectory angle:
+      // Left cannon fires ~55° up-right; Right cannon fires ~125° up-left
+      const baseAngle = isLeft ? Math.PI * 0.32 : Math.PI * 0.68;
+      const angle = baseAngle + (Math.random() - 0.5) * 0.42;
+
+      // Speed distribution creates rich vertical depth (some shoot high, some flutter mid-air)
+      const speed = 17 + Math.random() * 15;
       const shapeRand = Math.random();
 
+      // Time-staggered launch (0ms to 240ms) streams particles like a real party cannon
+      const delay = Math.random() * 240;
+
       particles.push({
-        x: originX + Math.random() * 25,
-        y: originY - Math.random() * 15,
-        vx: Math.cos(angle) * speed * (0.85 + Math.random() * 0.3),
+        x: originX,
+        y: originY,
+        vx: Math.cos(angle) * speed,
         vy: -Math.sin(angle) * speed,
-        gravity: 0.28 + Math.random() * 0.08,
-        drag: 0.985,
+        gravity: 0.3 + Math.random() * 0.08,
+        drag: 0.983,
         width: 7 + Math.random() * 6,
-        height: 5 + Math.random() * 5,
+        height: 5 + Math.random() * 6,
         color: PALETTE[Math.floor(Math.random() * PALETTE.length)],
         rotation: Math.random() * Math.PI * 2,
-        rotationSpeed: (Math.random() - 0.5) * 0.25,
+        rotationSpeed: (Math.random() - 0.5) * 0.22,
         wobble: Math.random() * Math.PI * 2,
-        wobbleSpeed: 0.09 + Math.random() * 0.07,
+        wobbleSpeed: 0.08 + Math.random() * 0.08,
+        delay,
+        seed: Math.random() * 1000,
         shape:
           shapeRand > 0.8
             ? 'diamond'
-            : shapeRand > 0.6
+            : shapeRand > 0.62
             ? 'circle'
             : shapeRand > 0.35
             ? 'strip'
@@ -112,7 +131,7 @@ export function ConfettiCanvas({
     }
 
     const startTime = performance.now();
-    const DURATION = 3600; // 3.6 seconds for complete graceful arc
+    const DURATION = 3800; // 3.8 seconds for complete graceful cascade
 
     const render = (now: number) => {
       const elapsed = now - startTime;
@@ -122,10 +141,10 @@ export function ConfettiCanvas({
         return;
       }
 
-      // Smooth ease-out fade starting at 2.0s
+      // Smooth ease-out fade starting at 2.2s
       let alpha = 1;
-      if (elapsed > 2000) {
-        const progress = (elapsed - 2000) / (DURATION - 2000);
+      if (elapsed > 2200) {
+        const progress = (elapsed - 2200) / (DURATION - 2200);
         alpha = Math.max(0, 1 - Math.pow(progress, 1.5));
       }
 
@@ -134,18 +153,27 @@ export function ConfettiCanvas({
       ctx.globalAlpha = alpha;
 
       for (const p of particles) {
+        // Particle has not launched yet -> skip rendering (eliminates starting clump!)
+        if (elapsed < p.delay) continue;
+
+        const age = elapsed - p.delay;
+
         p.vx *= p.drag;
         p.vy = p.vy * p.drag + p.gravity;
-        p.x += p.vx;
+        // Subtle aerodynamic lateral air drift
+        p.x += p.vx + Math.sin((age + p.seed) * 0.0035) * 0.55;
         p.y += p.vy;
         p.rotation += p.rotationSpeed;
         p.wobble += p.wobbleSpeed;
+
+        // Smooth scale-in over initial 60ms prevents sudden pop-in at the muzzle
+        const scaleIn = Math.min(1, age / 60);
 
         ctx.save();
         ctx.translate(p.x, p.y);
         ctx.rotate(p.rotation);
         // Genuine 3D paper flutter simulation by scaling the X axis via cosine
-        ctx.scale(Math.cos(p.wobble), 1);
+        ctx.scale(Math.cos(p.wobble) * scaleIn, scaleIn);
         ctx.fillStyle = p.color;
 
         if (p.shape === 'circle') {

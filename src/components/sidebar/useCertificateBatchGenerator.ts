@@ -10,6 +10,7 @@ import {
   sanitizeFilename,
   hasFileSystemAccess,
   streamToFile,
+  resolveFieldValue,
 } from '../../lib/utils';
 import { generateCertificate } from '../../lib/certificate-engine';
 import { ensureFontsLoaded, loadFontsForWorker, type WorkerFontData } from '../../lib/font-loader';
@@ -128,8 +129,9 @@ export function useCertificateBatchGenerator() {
   const getFilenameBasis = useCallback(
     (row: CsvRow) => {
       for (const box of boxes) {
-        if (box.field && row[box.field]?.trim()) {
-          return row[box.field].trim();
+        const val = resolveFieldValue(box.field, row);
+        if (val.trim()) {
+          return val.trim();
         }
       }
       return 'Certificate';

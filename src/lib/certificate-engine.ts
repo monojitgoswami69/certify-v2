@@ -9,6 +9,7 @@ import { jsPDF } from 'jspdf';
 import QRCode from 'qrcode';
 import type { TextBox, CsvRow, HorizontalAlign, VerticalAlign } from '../types';
 import { getFontFamilyCSS } from './font-loader';
+import { resolveFieldValue } from './utils';
 
 export interface QrPlacement {
   x: number;
@@ -247,7 +248,7 @@ export async function generateCertificate(
 
   for (const box of boxes) {
     if (!box.field) continue;
-    const text = row[box.field] || '';
+    const text = resolveFieldValue(box.field, row);
     drawTextBox(ctx, text, box);
   }
 

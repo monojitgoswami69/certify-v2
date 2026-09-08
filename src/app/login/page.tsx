@@ -148,10 +148,10 @@ export default function LoginPage() {
             <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent"></div>
 
             <div className="relative z-10 p-8 md:p-12 mb-4">
-              <h1 className="text-3xl md:text-5xl font-bold leading-tight tracking-tight drop-shadow-sm">
-                Welcome to <span className="text-amber-300 font-black tracking-normal">Certify</span>
+              <h1 className="text-3xl md:text-5xl font-jura font-bold leading-tight tracking-tight drop-shadow-sm font-[700]">
+                Welcome to <span className="text-amber-300 font-jura font-bold tracking-normal font-[700]">Certify</span>
               </h1>
-              <p className="mt-6 text-white/95 text-lg font-normal leading-relaxed">
+              <p className="mt-6 text-white/95 text-base sm:text-lg font-quicksand font-medium leading-relaxed">
                 Your one-stop destination for generating, exporting, and emailing professional certificates.
               </p>
             </div>
@@ -161,23 +161,23 @@ export default function LoginPage() {
         <div className="md:w-[55%] p-8 md:p-16 flex flex-col justify-center relative">
           <div className="max-w-md mx-auto w-full">
             <div className="mb-8">
-              <h2 className="text-3xl font-bold text-slate-800 tracking-tight mb-2">Welcome back</h2>
-              <p className="text-slate-500 text-base">Enter your credentials to access the workspace</p>
+              <h2 className="text-3xl font-jura font-bold text-slate-800 tracking-tight mb-2 font-[700]">Welcome back</h2>
+              <p className="text-slate-500 font-quicksand font-medium text-base">Enter your credentials to access the workspace</p>
             </div>
 
             {error && (
-              <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl text-red-600 text-sm font-medium">
+              <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl text-red-600 font-quicksand text-sm font-semibold">
                 {error}
               </div>
             )}
 
             <form className="space-y-6" onSubmit={handleSubmit}>
               <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-2 ml-1" htmlFor="username">
+                <label className="block text-xs uppercase tracking-wider font-bold font-quicksand text-slate-700 mb-2 ml-1" htmlFor="username">
                   Username
                 </label>
                 <input
-                  className="w-full px-4 py-3.5 rounded-xl login-input-glass text-slate-900 transition-all outline-none placeholder:text-slate-500 shadow-xs"
+                  className="w-full px-4 py-3.5 rounded-xl login-input-glass text-slate-900 font-quicksand font-medium transition-all outline-none placeholder:text-slate-500 shadow-xs"
                   id="username"
                   name="username"
                   placeholder="Enter your username"
@@ -189,12 +189,12 @@ export default function LoginPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-2 ml-1" htmlFor="password">
+                <label className="block text-xs uppercase tracking-wider font-bold font-quicksand text-slate-700 mb-2 ml-1" htmlFor="password">
                   Password
                 </label>
                 <div className="relative">
                   <input
-                    className="w-full px-4 py-3.5 rounded-xl login-input-glass text-slate-900 transition-all outline-none placeholder:text-slate-500 shadow-xs pr-12"
+                    className="w-full px-4 py-3.5 rounded-xl login-input-glass text-slate-900 font-quicksand font-medium transition-all outline-none placeholder:text-slate-500 shadow-xs pr-12"
                     id="password"
                     name="password"
                     placeholder="Enter your password"
@@ -204,7 +204,7 @@ export default function LoginPage() {
                     required
                   />
                   <button
-                    className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 transition-colors p-1 rounded-md"
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 transition-colors p-1 rounded-md cursor-pointer"
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
                     aria-label={showPassword ? 'Hide password' : 'Show password'}
@@ -223,13 +223,13 @@ export default function LoginPage() {
                   onChange={(e) => setRememberMe(e.target.checked)}
                   className="w-4 h-4 rounded border-slate-300 text-primary-600 focus:ring-0 focus:outline-none transition-colors cursor-pointer accent-primary-600"
                 />
-                <label htmlFor="remember" className="text-sm font-medium text-slate-600 cursor-pointer select-none">
+                <label htmlFor="remember" className="text-sm font-quicksand font-semibold text-slate-600 cursor-pointer select-none">
                   Remember me
                 </label>
               </div>
 
               <button
-                className="w-full bg-primary-600 hover:bg-primary-700 text-white font-bold py-4 rounded-xl shadow-lg shadow-primary-600/25 transition-all transform hover:-translate-y-0.5 active:translate-y-0 text-lg mt-4 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none cursor-pointer"
+                className="w-full bg-primary-600 hover:bg-primary-700 text-white font-saira font-bold uppercase tracking-wider py-3.5 rounded-xl shadow-lg shadow-primary-600/25 transition-all transform hover:-translate-y-0.5 active:translate-y-0 text-base mt-4 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none cursor-pointer"
                 type="submit"
                 disabled={isLoading}
               >

@@ -44,7 +44,7 @@ export function StepCard({ number, title, status, children }: StepCardProps) {
         </span>
         <h3
           className={clsx(
-            'font-semibold text-sm truncate',
+            'font-bold text-sm truncate',
             status === 'pending' ? 'text-slate-400' : 'text-slate-900'
           )}
         >

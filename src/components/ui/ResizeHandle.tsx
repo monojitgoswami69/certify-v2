@@ -43,7 +43,7 @@ export function ResizeHandle() {
   return (
     <div
       onMouseDown={startResizing}
-      className="absolute top-0 -right-[6px] w-3 h-full cursor-col-resize z-20 group flex items-center justify-center select-none"
+      className="absolute top-0 -right-[6px] w-3 h-full cursor-col-resize z-20 group hidden md:flex items-center justify-center select-none"
       title="Drag to resize sidebar"
     >
       {/* Visual border highlight line along full height */}

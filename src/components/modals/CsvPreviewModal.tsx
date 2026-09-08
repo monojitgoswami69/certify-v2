@@ -50,16 +50,14 @@ export function CsvPreviewModal({ isOpen, onClose }: CsvPreviewModalProps) {
       <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[90vh] flex flex-col overflow-hidden border border-slate-200/80 animate-in zoom-in-95 duration-150">
         {/* Fixed Modal Header */}
         <div className="flex items-center justify-between px-5 sm:px-6 py-3.5 border-b border-slate-200 bg-white shrink-0">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="w-9 h-9 rounded-xl bg-primary-50 border border-primary-100 flex items-center justify-center shrink-0">
-              <Table className="w-4 h-4 text-primary-600" />
-            </div>
+          <div className="flex items-center gap-2.5 min-w-0">
+            <Table className="w-5 h-5 text-primary-600 shrink-0 stroke-[1.75]" />
             <div className="min-w-0">
-              <h2 className="font-bold text-slate-900 text-base tracking-tight truncate">
+              <h2 className="font-jura font-bold text-slate-900 text-base sm:text-lg tracking-tight truncate font-[700]">
                 CSV Data Preview
               </h2>
-              <p className="text-xs text-slate-500 truncate mt-0.5">
-                <span className="font-medium text-slate-700">{csvFile?.name || 'Uploaded Dataset'}</span>
+              <p className="font-quicksand text-xs text-slate-500 truncate mt-0.5 font-medium">
+                <span className="font-semibold text-slate-700">{csvFile?.name || 'Uploaded Dataset'}</span>
                 {' · '}
                 <span>{csvData.length} records</span>
                 {' · '}

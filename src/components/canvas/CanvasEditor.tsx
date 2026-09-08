@@ -13,6 +13,7 @@ import {
   type HandleKey,
 } from '../../lib/canvas-snapping';
 import type { TextBox, QrZone } from '../../types';
+import { resolveFieldValue } from '../../lib/utils';
 import { useAdaptiveBorder } from './useAdaptiveBorder';
 import { useCanvasZoomPan } from './useCanvasZoomPan';
 import {
@@ -215,7 +216,8 @@ export function CanvasEditor() {
     // Render unselected text boxes
     boxes.forEach((box) => {
       if (box.id !== activeBoxId) {
-        const previewText = csvData.length > 0 && box.field ? csvData[0][box.field] : undefined;
+        const previewVal = csvData.length > 0 ? resolveFieldValue(box.field, csvData[0]) : '';
+        const previewText = previewVal || (previewEnabled ? (box.field || 'Sample Text') : undefined);
         drawBoxOnCanvas(ctx, box, false, effectiveScale, previewEnabled, fontPreview, previewText);
       }
     });
@@ -223,7 +225,8 @@ export function CanvasEditor() {
     // Render active text box
     const activeBox = boxes.find((b) => b.id === activeBoxId);
     if (activeBox) {
-      const previewText = csvData.length > 0 && activeBox.field ? csvData[0][activeBox.field] : undefined;
+      const previewVal = csvData.length > 0 ? resolveFieldValue(activeBox.field, csvData[0]) : '';
+      const previewText = previewVal || (previewEnabled ? (activeBox.field || 'Sample Text') : undefined);
       drawBoxOnCanvas(ctx, activeBox, true, effectiveScale, previewEnabled, fontPreview, previewText);
     }
 
@@ -264,6 +267,19 @@ export function CanvasEditor() {
 
   useEffect(() => {
     render();
+  }, [render]);
+
+  // Re-render when custom web fonts finish loading in the browser
+  useEffect(() => {
+    if (typeof document !== 'undefined' && 'fonts' in document) {
+      let active = true;
+      document.fonts.ready.then(() => {
+        if (active) render();
+      });
+      return () => {
+        active = false;
+      };
+    }
   }, [render]);
 
   // ResizeObserver on container to automatically re-fit canvas when sidebar is resized
@@ -614,18 +630,18 @@ export function CanvasEditor() {
       }
     };
 
-    window.addEventListener('mousemove', handleWindowMouseMove);
-    window.addEventListener('mouseup', handleWindowMouseUp);
-    window.addEventListener('pointermove', handleWindowMouseMove as EventListener);
-    window.addEventListener('pointerup', handleWindowMouseUp as EventListener);
+    const hasPointer = typeof window !== 'undefined' && 'PointerEvent' in window;
+    const moveEvent = hasPointer ? 'pointermove' : 'mousemove';
+    const upEvent = hasPointer ? 'pointerup' : 'mouseup';
+
+    window.addEventListener(moveEvent, handleWindowMouseMove as EventListener);
+    window.addEventListener(upEvent, handleWindowMouseUp as EventListener);
     return () => {
       if (rafId !== null) {
         cancelAnimationFrame(rafId);
       }
-      window.removeEventListener('mousemove', handleWindowMouseMove);
-      window.removeEventListener('mouseup', handleWindowMouseUp);
-      window.removeEventListener('pointermove', handleWindowMouseMove as EventListener);
-      window.removeEventListener('pointerup', handleWindowMouseUp as EventListener);
+      window.removeEventListener(moveEvent, handleWindowMouseMove as EventListener);
+      window.removeEventListener(upEvent, handleWindowMouseUp as EventListener);
     };
   }, [
     dragMode,
@@ -744,13 +760,11 @@ export function CanvasEditor() {
           backgroundAttachment: 'fixed',
         }}
       >
-        <div className="w-14 h-14 rounded-2xl bg-slate-200/80 border border-slate-300/80 flex items-center justify-center text-slate-500 mb-3 shadow-2xs">
-          <ImageIcon className="w-7 h-7 text-slate-500 stroke-[1.75]" />
-        </div>
-        <h3 className="text-base sm:text-lg font-semibold text-slate-700 mb-1">
+        <ImageIcon className="w-10 h-10 text-slate-400 stroke-[1.5] mb-3" />
+        <h3 className="text-base sm:text-lg font-jura font-bold text-slate-700 mb-1">
           Upload a template to get started
         </h3>
-        <p className="text-sm text-slate-500 max-w-sm leading-relaxed">
+        <p className="text-sm font-quicksand text-slate-500 max-w-sm leading-relaxed">
           Select a certificate template image on the left sidebar to begin placing text fields and verification QR codes.
         </p>
       </div>
@@ -760,7 +774,6 @@ export function CanvasEditor() {
   return (
     <div
       ref={containerRef}
-      onMouseDown={handleContainerMouseDown}
       onPointerDown={handleContainerMouseDown}
       className={`flex-1 flex flex-col items-center justify-center p-6 overflow-hidden relative select-none ${
         isSpacePressed ? (dragMode === 'pan' ? 'cursor-grabbing' : 'cursor-grab') : ''
@@ -794,8 +807,6 @@ export function CanvasEditor() {
               ${adaptiveBorder.shadow}
             `,
           }}
-          onMouseDown={handleCanvasMouseDown}
-          onMouseMove={handleCanvasMouseMove}
           onPointerDown={handleCanvasMouseDown}
           onPointerMove={handleCanvasMouseMove}
           tabIndex={0}

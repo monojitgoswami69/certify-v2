@@ -84,9 +84,12 @@ export function CustomSelect({
         type="button"
         onClick={() => setIsOpen(!isOpen)}
         className={clsx(
-          'w-full px-3 py-2 text-sm text-left bg-white border rounded-lg flex items-center justify-between gap-2 transition-colors',
-          'focus:outline-none focus:ring-0 focus:border-slate-400',
-          isOpen ? 'border-slate-400 shadow-xs' : 'border-slate-200 hover:border-slate-300'
+          'w-full px-3 py-2 text-sm text-left bg-white border flex items-center justify-between gap-2 transition-colors focus:outline-none',
+          isOpen
+            ? dropUp
+              ? 'rounded-t-none rounded-b-lg border-slate-400 border-t-slate-200 shadow-xs'
+              : 'rounded-b-none rounded-t-lg border-slate-400 border-b-slate-200 shadow-xs'
+            : 'rounded-lg border-slate-200 hover:border-slate-300 focus:border-slate-400'
         )}
       >
         <div className="flex items-center gap-2 flex-1 truncate">
@@ -101,8 +104,10 @@ export function CustomSelect({
       {isOpen && (
         <div
           className={clsx(
-            'absolute z-[100] left-0 right-0 bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden',
-            dropUp ? 'bottom-full mb-1' : 'top-full mt-1'
+            'absolute z-[100] left-0 right-0 bg-white shadow-xl overflow-hidden',
+            dropUp
+              ? 'bottom-full mb-0 rounded-t-lg rounded-b-none border-x border-t border-slate-400'
+              : 'top-full mt-0 rounded-b-lg rounded-t-none border-x border-b border-slate-400'
           )}
         >
           {searchable && (

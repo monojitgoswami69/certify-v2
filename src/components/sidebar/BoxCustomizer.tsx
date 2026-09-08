@@ -5,7 +5,9 @@ import { Trash2, AlignLeft, AlignCenter, AlignRight } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import { useHistoryStore } from '../../store/useHistoryStore';
 import { FontSelector } from './FontSelector';
+import { ColorPicker } from './ColorPicker';
 import { CustomSelect } from '../ui/CustomSelect';
+import { resolveFieldValue } from '../../lib/utils';
 import type { HorizontalAlign, VerticalAlign } from '../../types';
 
 export function BoxCustomizer() {
@@ -92,7 +94,7 @@ export function BoxCustomizer() {
   }
 
   const previewValue =
-    csvData.length > 0 && activeBox.field ? csvData[0][activeBox.field] || '(empty)' : '';
+    csvData.length > 0 && activeBox.field ? resolveFieldValue(activeBox.field, csvData[0]) || '(empty)' : '';
 
   const handleUpdate = (updates: Partial<typeof activeBox>) => {
     pushState(boxes, qrZones);
@@ -224,8 +226,8 @@ export function BoxCustomizer() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-xs text-slate-400 uppercase tracking-wide">Selected Box</p>
-          <p className="font-medium text-slate-700 mt-0.5">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Selected Box</p>
+          <p className="font-semibold text-slate-800 mt-0.5">
             {activeBox.field || 'No field selected'}
           </p>
         </div>
@@ -243,19 +245,21 @@ export function BoxCustomizer() {
 
       {previewValue && (
         <div className="p-2 bg-primary-50 rounded-lg border border-primary-100">
-          <p className="text-xs text-primary-600 mb-0.5">First row preview:</p>
+          <p className="text-xs font-semibold text-primary-700 mb-0.5">First row preview:</p>
           <p className="text-sm font-medium text-primary-800 truncate">{previewValue}</p>
         </div>
       )}
 
       <div>
-        <label className="block text-xs font-medium text-slate-500 mb-1.5">CSV Field</label>
+        <label className="block text-xs font-semibold text-slate-600 mb-1.5">CSV Field</label>
         <CustomSelect
           value={activeBox.field}
           onChange={(val) => handleUpdate({ field: val })}
           options={[
             { value: '', label: 'Select a field...' },
-            ...csvHeaders.map((h) => ({ value: h, label: h })),
+            ...Array.from(
+              new Set([...csvHeaders, ...(activeBox.field ? [activeBox.field] : [])])
+            ).map((h) => ({ value: h, label: h })),
           ]}
           placeholder="Select a field..."
           searchable
@@ -278,7 +282,7 @@ export function BoxCustomizer() {
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="block text-xs font-medium text-slate-500 mb-1.5">Size (px)</label>
+          <label className="block text-xs font-semibold text-slate-600 mb-1.5">Size (px)</label>
           <input
             type="number"
             min={10}
@@ -293,26 +297,23 @@ export function BoxCustomizer() {
           />
         </div>
         <div>
-          <label className="block text-xs font-medium text-slate-500 mb-1.5">Color</label>
-          <input
-            type="color"
+          <label className="block text-xs font-semibold text-slate-600 mb-1.5">Color</label>
+          <ColorPicker
             value={activeBox.fontColor}
-            onFocus={startInputEdit}
-            onChange={(e) => {
-              startInputEdit();
-              updateBox(activeBox.id, { fontColor: e.target.value });
+            onStartEdit={startInputEdit}
+            onChange={(hex) => {
+              updateBox(activeBox.id, { fontColor: hex });
             }}
-            onBlur={finishInputEdit}
-            className="w-full h-10 border border-slate-200 rounded-lg cursor-pointer"
+            onFinishEdit={finishInputEdit}
           />
         </div>
       </div>
 
       <div className="space-y-2">
-        <label className="block text-xs font-medium text-slate-500">Alignment</label>
+        <label className="block text-xs font-semibold text-slate-600">Alignment</label>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <p className="text-xs text-slate-400 mb-1">Horizontal</p>
+            <p className="text-xs font-medium text-slate-500 mb-1">Horizontal</p>
             <div className="flex bg-slate-100 rounded-lg p-0.5">
               {hAlignOptions.map(({ value, icon: Icon, label }) => (
                 <button
@@ -332,7 +333,7 @@ export function BoxCustomizer() {
           </div>
 
           <div>
-            <p className="text-xs text-slate-400 mb-1">Vertical</p>
+            <p className="text-xs font-medium text-slate-500 mb-1">Vertical</p>
             <div className="flex bg-slate-100 rounded-lg p-0.5">
               {vAlignOptions.map(({ value, label }) => (
                 <button
@@ -356,7 +357,7 @@ export function BoxCustomizer() {
       {/* Position & Bounds */}
       <div className="space-y-2 pt-2 border-t border-slate-100">
         <div className="flex items-center justify-between">
-          <label className="text-xs font-semibold text-slate-700">Position & Bounds</label>
+          <label className="text-xs font-bold text-slate-800">Position & Bounds</label>
           <span className="text-[10px] font-mono text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">px</span>
         </div>
 

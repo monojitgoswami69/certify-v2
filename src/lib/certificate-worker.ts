@@ -11,6 +11,7 @@
 
 import { jsPDF } from 'jspdf';
 import QRCode from 'qrcode';
+import { resolveFieldValue } from './utils';
 
 export type OutputFormat = 'png' | 'jpg' | 'pdf';
 
@@ -343,7 +344,7 @@ async function generateBatch(items: BatchItem[]): Promise<void> {
 
       // 3. DRAW: Text Boxes
       for (const info of cachedBoxRenderInfo) {
-        const text = item.row[info.box.field] || '';
+        const text = resolveFieldValue(info.box.field, item.row);
         drawTextBox(ctx, text, info);
       }
 

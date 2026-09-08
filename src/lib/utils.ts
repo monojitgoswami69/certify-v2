@@ -244,6 +244,88 @@ export function downloadFullGenerationReport(
 }
 
 /**
+ * Resiliently resolves the text value for a certificate text box from a data row.
+ * Handles exact key matches, whitespace-trimmed matches, case-insensitive matches,
+ * and common aliases (e.g. 'Name' <-> 'Full Name' <-> 'recipientName').
+ */
+export function resolveFieldValue(
+  field: string | undefined | null,
+  row: Record<string, string> | undefined | null
+): string {
+  if (!field || !row) return '';
+
+  // 1. Direct exact match
+  if (row[field] !== undefined && row[field] !== null && String(row[field]).trim() !== '') {
+    return String(row[field]);
+  }
+
+  // 2. Trimmed exact match
+  const trimmedField = field.trim();
+  if (row[trimmedField] !== undefined && row[trimmedField] !== null && String(row[trimmedField]).trim() !== '') {
+    return String(row[trimmedField]);
+  }
+
+  // 3. Case-insensitive key match
+  const lowerField = trimmedField.toLowerCase();
+  const matchedKey = Object.keys(row).find(
+    (k) => k.trim().toLowerCase() === lowerField
+  );
+  if (matchedKey && row[matchedKey] !== undefined && row[matchedKey] !== null && String(row[matchedKey]).trim() !== '') {
+    return String(row[matchedKey]);
+  }
+
+  // 4. Common name aliases (handles spaces, underscores, hyphens, and case differences)
+  const normalizedField = lowerField.replace(/[\s_\-]/g, '');
+  const nameAliases = [
+    'name',
+    'fullname',
+    'recipientname',
+    'studentname',
+    'participantname',
+    'candidatename',
+    'membername',
+  ];
+  if (nameAliases.includes(normalizedField)) {
+    for (const alias of nameAliases) {
+      const k = Object.keys(row).find(
+        (key) => key.toLowerCase().replace(/[\s_\-]/g, '') === alias
+      );
+      if (k && row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== '') {
+        return String(row[k]);
+      }
+    }
+  }
+
+  // 5. Common email aliases
+  const emailAliases = ['email', 'emailaddress', 'recipientemail', 'mail'];
+  if (emailAliases.includes(normalizedField)) {
+    for (const alias of emailAliases) {
+      const k = Object.keys(row).find(
+        (key) => key.toLowerCase().replace(/[\s_\-]/g, '') === alias
+      );
+      if (k && row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== '') {
+        return String(row[k]);
+      }
+    }
+  }
+
+  // 6. Common date aliases
+  const dateAliases = ['date', 'issuedate', 'issuedat', 'dateofissue'];
+  if (dateAliases.includes(normalizedField)) {
+    for (const alias of dateAliases) {
+      const k = Object.keys(row).find(
+        (key) => key.toLowerCase().replace(/[\s_\-]/g, '') === alias
+      );
+      if (k && row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== '') {
+        return String(row[k]);
+      }
+    }
+  }
+
+  return '';
+}
+
+/**
  * Reconstructs a virtual CSV File object and row records from participant data.
  * Used when auto-populating Studio from a saved event batch.
  */
@@ -262,17 +344,32 @@ export function buildVirtualCsvFile(
     let row: Record<string, string> = {};
     if (p.rowData && typeof p.rowData === 'object' && Object.keys(p.rowData).length > 0) {
       row = { ...p.rowData };
-    } else {
-      row = {
-        'Full Name': p.recipientName,
-        ...(p.recipientEmail ? { Email: p.recipientEmail } : {}),
-      };
     }
+
+    // Always ensure primary recipient identifiers exist in row
+    const effectiveName =
+      row['Name'] ||
+      row['Full Name'] ||
+      row['recipientName'] ||
+      p.recipientName ||
+      '';
+
+    if (!row['Name'] && effectiveName) {
+      row['Name'] = effectiveName;
+    }
+    if (!row['Full Name'] && effectiveName) {
+      row['Full Name'] = effectiveName;
+    }
+    if (p.recipientEmail && !row['Email']) {
+      row['Email'] = p.recipientEmail;
+    }
+
     Object.keys(row).forEach((k) => headersSet.add(k));
     rows.push(row);
   }
 
   if (headersSet.size === 0) {
+    headersSet.add('Name');
     headersSet.add('Full Name');
   }
 

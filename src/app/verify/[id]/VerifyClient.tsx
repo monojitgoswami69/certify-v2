@@ -266,16 +266,16 @@ export function VerifyClient({
         {/* Architectural Editorial Layout (Strictly NO Cards/Boxes)   */}
         {/* Harmonious Typography (Jura Values & Quicksand Labels)     */}
         {/* ----------------------------------------------------------- */}
-        <div className="w-full mt-8 sm:mt-10 border-y border-stone-300/80 divide-y divide-stone-200/80 text-left">
+        <div className="w-full mt-8 sm:mt-10 border-y border-stone-300/80 divide-y divide-stone-200/80 text-center sm:text-left">
           {/* Certificate Holder */}
           <div
-            className="py-3.5 sm:py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-4 verify-row-animate"
+            className="py-3.5 sm:py-4 flex flex-col items-center sm:flex-row sm:items-center justify-between gap-1 sm:gap-4 verify-row-animate text-center sm:text-left"
             style={{ animationDelay: '240ms' }}
           >
-            <span className="font-quicksand font-bold text-xs tracking-[0.14em] uppercase text-stone-500 shrink-0 sm:w-44 select-none font-[700]">
+            <span className="font-quicksand font-bold text-xs tracking-[0.14em] uppercase text-stone-500 shrink-0 sm:w-44 select-none font-[700] text-center sm:text-left">
               Certificate Holder
             </span>
-            <span className="font-jura font-bold text-base sm:text-lg text-stone-900 break-words sm:text-right font-[700]">
+            <span className="font-jura font-bold text-base sm:text-lg text-stone-900 break-words text-center sm:text-right font-[700]">
               {state.recipientName}
             </span>
           </div>
@@ -283,13 +283,13 @@ export function VerifyClient({
           {/* Event */}
           {state.eventName && (
             <div
-              className="py-3.5 sm:py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-4 verify-row-animate"
+              className="py-3.5 sm:py-4 flex flex-col items-center sm:flex-row sm:items-center justify-between gap-1 sm:gap-4 verify-row-animate text-center sm:text-left"
               style={{ animationDelay: '320ms' }}
             >
-              <span className="font-quicksand font-bold text-xs tracking-[0.14em] uppercase text-stone-500 shrink-0 sm:w-44 select-none font-[700]">
+              <span className="font-quicksand font-bold text-xs tracking-[0.14em] uppercase text-stone-500 shrink-0 sm:w-44 select-none font-[700] text-center sm:text-left">
                 Event
               </span>
-              <span className="font-jura font-bold text-base sm:text-lg text-stone-900 break-words sm:text-right font-[700]">
+              <span className="font-jura font-bold text-base sm:text-lg text-stone-900 break-words text-center sm:text-right font-[700]">
                 {state.eventName}
               </span>
             </div>
@@ -298,13 +298,13 @@ export function VerifyClient({
           {/* Registered Email */}
           {state.recipientEmail && (
             <div
-              className="py-3.5 sm:py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-4 verify-row-animate"
+              className="py-3.5 sm:py-4 flex flex-col items-center sm:flex-row sm:items-center justify-between gap-1 sm:gap-4 verify-row-animate text-center sm:text-left"
               style={{ animationDelay: '400ms' }}
             >
-              <span className="font-quicksand font-bold text-xs tracking-[0.14em] uppercase text-stone-500 shrink-0 sm:w-44 select-none font-[700]">
+              <span className="font-quicksand font-bold text-xs tracking-[0.14em] uppercase text-stone-500 shrink-0 sm:w-44 select-none font-[700] text-center sm:text-left">
                 Registered Email
               </span>
-              <span className="font-jura font-bold text-base sm:text-lg text-stone-900 break-all sm:text-right font-[700]">
+              <span className="font-jura font-bold text-base sm:text-lg text-stone-900 break-all text-center sm:text-right font-[700]">
                 {state.recipientEmail}
               </span>
             </div>
@@ -312,13 +312,13 @@ export function VerifyClient({
 
           {/* Issue Date */}
           <div
-            className="py-3.5 sm:py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-4 verify-row-animate"
+            className="py-3.5 sm:py-4 flex flex-col items-center sm:flex-row sm:items-center justify-between gap-1 sm:gap-4 verify-row-animate text-center sm:text-left"
             style={{ animationDelay: '480ms' }}
           >
-            <span className="font-quicksand font-bold text-xs tracking-[0.14em] uppercase text-stone-500 shrink-0 sm:w-44 select-none font-[700]">
+            <span className="font-quicksand font-bold text-xs tracking-[0.14em] uppercase text-stone-500 shrink-0 sm:w-44 select-none font-[700] text-center sm:text-left">
               Issue Date
             </span>
-            <span className="font-jura font-bold text-base sm:text-lg text-stone-900 sm:text-right font-[700]">
+            <span className="font-jura font-bold text-base sm:text-lg text-stone-900 text-center sm:text-right font-[700]">
               {formatDate(state.issuedAt)}
             </span>
           </div>
@@ -426,17 +426,6 @@ export function VerifyClient({
             No issued credential matches this identifier in our verification registry. Please ensure the link or QR code is intact and was generated via Certify.
           </p>
         </div>
-
-        <div className="mt-8 flex items-center gap-3">
-          <button
-            type="button"
-            onClick={fetchVerification}
-            className="inline-flex items-center gap-2 px-4.5 py-2.5 bg-stone-900 hover:bg-stone-800 text-white rounded-lg text-xs font-quicksand font-bold tracking-wider uppercase transition-all shadow-2xs hover:shadow-xs active:scale-[0.98] font-[700]"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span>Retry Verification</span>
-          </button>
-        </div>
       </div>
     );
   }
@@ -466,7 +455,7 @@ export function VerifyClient({
         <button
           type="button"
           onClick={fetchVerification}
-          className="inline-flex items-center gap-2 px-4.5 py-2.5 bg-stone-900 hover:bg-stone-800 text-white rounded-lg text-xs font-quicksand font-bold tracking-wider uppercase transition-all shadow-2xs hover:shadow-xs active:scale-[0.98] font-[700]"
+          className="inline-flex items-center gap-2 px-4.5 py-2.5 bg-stone-900 hover:bg-stone-800 text-white rounded-lg text-xs font-saira font-bold tracking-wider uppercase transition-all shadow-2xs hover:shadow-xs active:scale-[0.98] font-[700]"
         >
           <RotateCcw className="w-3.5 h-3.5" />
           <span>Try Again</span>

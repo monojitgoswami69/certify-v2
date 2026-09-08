@@ -46,9 +46,9 @@ const CURATED_FALLBACK = [
   { family: 'Oswald', category: 'sans-serif', variants: ['400', '500', '600', '700'], popularity: 9 },
   { family: 'Roboto Mono', category: 'monospace', variants: ['400', '500', '600', '700'], popularity: 8 },
   { family: 'JetBrains Mono', category: 'monospace', variants: ['400', '500', '600', '700'], popularity: 8 },
-  { family: 'Quantico', category: 'display', variants: ['400', '700'], popularity: 9 },
   { family: 'Jura', category: 'sans-serif', variants: ['600', '700'], popularity: 9 },
   { family: 'Quicksand', category: 'sans-serif', variants: ['600', '700'], popularity: 9 },
+  { family: 'Saira', category: 'sans-serif', variants: ['400', '500', '600', '700'], popularity: 9 },
   { family: 'Tomorrow', category: 'sans-serif', variants: ['500', '600', '700', '800'], popularity: 9 },
   { family: 'Electrolize', category: 'sans-serif', variants: ['400'], popularity: 9 },
 ];

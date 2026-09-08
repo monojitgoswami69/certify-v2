@@ -125,11 +125,18 @@ function WorkspaceContent() {
             const data = await res.json();
             if (isCancelled) return;
 
-            // Auto-populate CSV data from event participants if not already matching this event
+            // Auto-populate CSV data from event participants if not already fully hydrated
+            const currentCsv = useAppStore.getState().csvData;
+            const hasCompleteData =
+              currentCsv.length > 0 &&
+              useAppStore.getState().eventName === eventParam &&
+              currentCsv[0] &&
+              (currentCsv[0]['Name'] !== undefined || Object.keys(currentCsv[0]).some((k) => k !== 'Full Name' && k !== 'Email'));
+
             if (
               data.participants &&
               data.participants.length > 0 &&
-              (useAppStore.getState().csvData.length === 0 || useAppStore.getState().eventName !== eventParam)
+              (!hasCompleteData || currentCsv.length === 0 || useAppStore.getState().eventName !== eventParam)
             ) {
               const { file: csvFile, headers, rows } = buildVirtualCsvFile(eventParam, data.participants);
               useAppStore.getState().setCsvData(csvFile, headers, rows);
@@ -245,8 +252,8 @@ function WorkspaceContent() {
   return (
     <div className="animate-fade-in h-screen h-dvh flex bg-slate-50 overflow-hidden">
       <aside
-        style={{ width: `${sidebarWidth}px` }}
-        className="relative bg-white border-r border-slate-500/80 flex-shrink-0 flex flex-col h-full"
+        style={{ width: `min(${sidebarWidth}px, 100vw)` }}
+        className="relative bg-white border-r border-slate-500/80 flex-shrink-0 flex flex-col h-full w-full md:w-auto max-w-full md:max-w-[75vw]"
       >
         <ResizeHandle />
         <SidebarHeader />

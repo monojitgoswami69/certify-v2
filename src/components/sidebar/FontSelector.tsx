@@ -214,8 +214,8 @@ export function FontSelector({ value, onChange, onPreview, className = '' }: Fon
   return (
     <div ref={containerRef} className={`relative ${isOpen ? 'z-50' : ''} ${className}`}>
       <div className="flex items-center justify-between mb-1.5">
-        <label className="text-xs font-medium text-slate-500">Font</label>
-        <span className="text-xs text-slate-400">
+        <label className="text-xs font-semibold text-slate-600">Font</label>
+        <span className="text-xs font-medium text-slate-400">
           {isLoadingList ? 'Loading fonts...' : `${availableFonts.length} available`}
         </span>
       </div>
@@ -223,7 +223,13 @@ export function FontSelector({ value, onChange, onPreview, className = '' }: Fon
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full px-3 py-2 text-sm text-left bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-0 focus:border-slate-400 flex items-center justify-between gap-2 hover:border-slate-300 transition-colors"
+        className={`w-full px-3 py-2 text-sm text-left bg-white border flex items-center justify-between gap-2 transition-colors ${
+          isOpen
+            ? dropUp
+              ? 'rounded-t-none rounded-b-lg border-slate-400 border-t-slate-200 shadow-sm'
+              : 'rounded-b-none rounded-t-lg border-slate-400 border-b-slate-200 shadow-sm'
+            : 'rounded-lg border-slate-200 hover:border-slate-300 focus:outline-none focus:border-slate-400'
+        }`}
       >
         <span className="flex-1 truncate" style={{ fontFamily: value ? `"${value}", system-ui` : 'inherit' }}>
           {value || 'Select font...'}
@@ -233,9 +239,11 @@ export function FontSelector({ value, onChange, onPreview, className = '' }: Fon
 
       {isOpen && (
         <div
-          className={`absolute z-[100] left-0 right-0 ${
-            dropUp ? 'bottom-full mb-1' : 'top-full mt-1'
-          } bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden`}
+          className={`absolute z-[100] left-0 right-0 bg-white shadow-xl overflow-hidden ${
+            dropUp
+              ? 'bottom-full mb-0 rounded-t-lg rounded-b-none border-x border-t border-slate-400'
+              : 'top-full mt-0 rounded-b-lg rounded-t-none border-x border-b border-slate-400'
+          }`}
           onMouseLeave={() => onPreview?.(null)}
         >
           <div className="p-2 border-b border-slate-100">

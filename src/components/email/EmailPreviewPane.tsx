@@ -3,7 +3,7 @@
 import { Mail, Paperclip, FileImage, FileText as FilePdf, Code } from 'lucide-react';
 import { useState } from 'react';
 import { useAppStore } from '../../store/useAppStore';
-import { replaceTemplateVariables } from '../../lib/utils';
+import { replaceTemplateVariables, resolveFieldValue } from '../../lib/utils';
 
 export function EmailPreviewPane() {
   const { csvData, boxes, emailColumn, emailSettings, connectedGoogleAccount } = useAppStore();
@@ -15,8 +15,8 @@ export function EmailPreviewPane() {
 
   const nameField =
     boxes.find((b) => b.field.toLowerCase().includes('name'))?.field || boxes[0]?.field || '';
-  const recipientName = previewData[nameField] || 'John Doe';
-  const recipientEmail = previewData[emailColumn] || 'recipient@example.com';
+  const recipientName = resolveFieldValue(nameField, previewData) || 'John Doe';
+  const recipientEmail = resolveFieldValue(emailColumn, previewData) || 'recipient@example.com';
 
   const renderedSubject = replaceTemplateVariables(emailSettings.subject, previewData);
   const renderedBodyPlain = replaceTemplateVariables(emailSettings.bodyPlain, previewData);
