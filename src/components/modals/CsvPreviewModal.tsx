@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Table, Search } from 'lucide-react';
+import { X, Table, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 
 interface CsvPreviewModalProps {
@@ -10,10 +10,13 @@ interface CsvPreviewModalProps {
   onClose: () => void;
 }
 
+const PAGE_SIZE = 50;
+
 export function CsvPreviewModal({ isOpen, onClose }: CsvPreviewModalProps) {
   const { csvHeaders, csvData, csvFile } = useAppStore();
   const [mounted, setMounted] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
 
   useEffect(() => {
     setMounted(true);
@@ -28,6 +31,16 @@ export function CsvPreviewModal({ isOpen, onClose }: CsvPreviewModalProps) {
       )
     );
   }, [csvData, searchQuery]);
+
+  // Reset to page 1 when search query changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
+  const effectivePage = Math.min(currentPage, totalPages);
+  const startIndex = (effectivePage - 1) * PAGE_SIZE;
+  const pageRows = filteredRows.slice(startIndex, startIndex + PAGE_SIZE);
 
   if (!isOpen || !mounted) return null;
 
@@ -114,9 +127,9 @@ export function CsvPreviewModal({ isOpen, onClose }: CsvPreviewModalProps) {
               </tr>
             </thead>
 
-            {/* Scrollable Rows */}
+            {/* Scrollable Rows (Paged) */}
             <tbody className="divide-y divide-slate-100 bg-white">
-              {filteredRows.length === 0 ? (
+              {pageRows.length === 0 ? (
                 <tr>
                   <td
                     colSpan={csvHeaders.length + 1}
@@ -126,14 +139,14 @@ export function CsvPreviewModal({ isOpen, onClose }: CsvPreviewModalProps) {
                   </td>
                 </tr>
               ) : (
-                filteredRows.map((row, rowIdx) => (
+                pageRows.map((row, rowIdx) => (
                   <tr
                     key={rowIdx}
                     className="hover:bg-primary-50/30 transition-colors group"
                   >
                     {/* Fixed Sticky Left Column for row number */}
                     <td className="sticky left-0 z-10 bg-slate-50/95 group-hover:bg-slate-100/95 backdrop-blur-xs px-3.5 py-2 text-center text-slate-400 font-mono text-[11px] border-r border-slate-200 whitespace-nowrap font-medium select-none">
-                      {rowIdx + 1}
+                      {startIndex + rowIdx + 1}
                     </td>
                     {csvHeaders.map((header, colIdx) => (
                       <td
@@ -155,13 +168,43 @@ export function CsvPreviewModal({ isOpen, onClose }: CsvPreviewModalProps) {
           </table>
         </div>
 
-        {/* Fixed Footer Bar */}
-        <div className="flex items-center justify-between px-5 sm:px-6 py-2.5 border-t border-slate-200 bg-slate-50 shrink-0 text-xs text-slate-500">
+        {/* Fixed Footer Bar with Pagination Controls */}
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 px-5 sm:px-6 py-2.5 border-t border-slate-200 bg-slate-50 shrink-0 text-xs text-slate-500">
           <div>
-            Showing <span className="font-semibold text-slate-800">{filteredRows.length}</span> of{' '}
-            <span className="font-semibold text-slate-800">{csvData.length}</span> rows
+            Showing <span className="font-semibold text-slate-800">{filteredRows.length > 0 ? startIndex + 1 : 0}</span>–
+            <span className="font-semibold text-slate-800">{Math.min(startIndex + PAGE_SIZE, filteredRows.length)}</span> of{' '}
+            <span className="font-semibold text-slate-800">{filteredRows.length}</span> rows
             {searchQuery && ' (filtered)'}
           </div>
+
+          {/* Pagination buttons */}
+          {totalPages > 1 && (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={effectivePage <= 1}
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                className="flex items-center gap-1 px-2.5 py-1 bg-white hover:bg-slate-100 disabled:opacity-30 disabled:pointer-events-none border border-slate-200 rounded-md text-slate-700 font-medium transition-colors cursor-pointer shadow-2xs"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+                Previous
+              </button>
+              <span className="text-slate-600 font-medium px-1">
+                Page <span className="font-semibold text-slate-900">{effectivePage}</span> of{' '}
+                <span className="font-semibold text-slate-900">{totalPages}</span>
+              </span>
+              <button
+                type="button"
+                disabled={effectivePage >= totalPages}
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                className="flex items-center gap-1 px-2.5 py-1 bg-white hover:bg-slate-100 disabled:opacity-30 disabled:pointer-events-none border border-slate-200 rounded-md text-slate-700 font-medium transition-colors cursor-pointer shadow-2xs"
+              >
+                Next
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
           <button
             onClick={onClose}
             className="px-3.5 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg text-xs font-semibold transition-colors cursor-pointer shadow-2xs"

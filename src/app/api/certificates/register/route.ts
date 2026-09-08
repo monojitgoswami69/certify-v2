@@ -134,19 +134,25 @@ export async function POST(request: Request) {
   }
 
   try {
-    // 1. Query existing records matching any fingerprint in the batch
+    // 1. Query existing records matching any fingerprint in the batch (chunked to prevent parameter limits)
     const fingerprintsArray = Array.from(fingerprintSet);
-    const existingCerts =
-      fingerprintsArray.length > 0
-        ? await db
-            .select({
-              id: certificates.id,
-              recordFingerprint: certificates.recordFingerprint,
-              rowData: certificates.rowData,
-            })
-            .from(certificates)
-            .where(inArray(certificates.recordFingerprint, fingerprintsArray))
-        : [];
+    const existingCerts: Array<{ id: string; recordFingerprint: string | null; rowData: unknown }> = [];
+    const FINGERPRINT_CHUNK_SIZE = 500;
+
+    for (let i = 0; i < fingerprintsArray.length; i += FINGERPRINT_CHUNK_SIZE) {
+      const chunk = fingerprintsArray.slice(i, i + FINGERPRINT_CHUNK_SIZE);
+      if (chunk.length > 0) {
+        const chunkResults = await db
+          .select({
+            id: certificates.id,
+            recordFingerprint: certificates.recordFingerprint,
+            rowData: certificates.rowData,
+          })
+          .from(certificates)
+          .where(inArray(certificates.recordFingerprint, chunk));
+        existingCerts.push(...chunkResults);
+      }
+    }
 
     const existingMap = new Map<string, string>();
     const existingWithoutRowData = new Map<string, string>();
@@ -162,6 +168,7 @@ export async function POST(request: Request) {
     // 2. Determine which items need newly generated IDs vs existing IDs
     const resultIds: string[] = new Array(parsedItems.length);
     const newRowsToInsert = [];
+    const updatesToApply: Array<{ id: string; rowData: Record<string, string> }> = [];
 
     for (const item of parsedItems) {
       if (existingMap.has(item.fingerprint)) {
@@ -169,12 +176,9 @@ export async function POST(request: Request) {
         const existingId = existingMap.get(item.fingerprint)!;
         resultIds[item.index] = existingId;
 
-        // If existing record was missing rowData, update it with current rowData
+        // Queue rowData update if previously missing
         if (existingWithoutRowData.has(item.fingerprint) && item.rowData) {
-          await db
-            .update(certificates)
-            .set({ rowData: item.rowData })
-            .where(eq(certificates.id, existingId));
+          updatesToApply.push({ id: existingId, rowData: item.rowData });
           existingWithoutRowData.delete(item.fingerprint);
         }
       } else {
@@ -197,9 +201,29 @@ export async function POST(request: Request) {
       }
     }
 
-    // 3. Batch insert new records if any
+    // 3. Execute rowData updates in concurrent batches (eliminates sequential N+1 bottleneck)
+    if (updatesToApply.length > 0) {
+      const UPDATE_BATCH_SIZE = 25;
+      for (let i = 0; i < updatesToApply.length; i += UPDATE_BATCH_SIZE) {
+        const batch = updatesToApply.slice(i, i + UPDATE_BATCH_SIZE);
+        await Promise.all(
+          batch.map((u) =>
+            db
+              .update(certificates)
+              .set({ rowData: u.rowData })
+              .where(eq(certificates.id, u.id))
+          )
+        );
+      }
+    }
+
+    // 4. Batch insert new records in chunks (avoids exceeding Neon/PostgreSQL parameter caps)
     if (newRowsToInsert.length > 0) {
-      await db.insert(certificates).values(newRowsToInsert);
+      const INSERT_CHUNK_SIZE = 300;
+      for (let i = 0; i < newRowsToInsert.length; i += INSERT_CHUNK_SIZE) {
+        const chunk = newRowsToInsert.slice(i, i + INSERT_CHUNK_SIZE);
+        await db.insert(certificates).values(chunk);
+      }
     }
 
     return NextResponse.json({

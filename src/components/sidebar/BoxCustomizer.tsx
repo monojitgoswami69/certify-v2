@@ -25,6 +25,19 @@ export function BoxCustomizer() {
   const activeBox = boxes.find((b) => b.id === activeBoxId);
 
   const focusedInputRef = useRef<string | null>(null);
+  const isInputEditingRef = useRef(false);
+
+  const startInputEdit = () => {
+    if (!isInputEditingRef.current) {
+      pushState(boxes, qrZones);
+      isInputEditingRef.current = true;
+    }
+  };
+
+  const finishInputEdit = () => {
+    focusedInputRef.current = null;
+    isInputEditingRef.current = false;
+  };
 
   const [fontSizeInput, setFontSizeInput] = useState<string>(
     activeBox ? String(activeBox.fontSize) : '60'
@@ -90,19 +103,20 @@ export function BoxCustomizer() {
     setFontSizeInput(value);
     const num = parseInt(value);
     if (!isNaN(num) && num >= 10 && num <= 200) {
-      handleUpdate({ fontSize: num });
+      startInputEdit();
+      updateBox(activeBox.id, { fontSize: num });
     }
   };
 
   const handleFontSizeBlur = () => {
-    focusedInputRef.current = null;
+    finishInputEdit();
     const num = parseInt(fontSizeInput);
     if (isNaN(num) || num < 10) {
       setFontSizeInput('10');
-      handleUpdate({ fontSize: 10 });
+      updateBox(activeBox.id, { fontSize: 10 });
     } else if (num > 200) {
       setFontSizeInput('200');
-      handleUpdate({ fontSize: 200 });
+      updateBox(activeBox.id, { fontSize: 200 });
     }
   };
 
@@ -110,20 +124,21 @@ export function BoxCustomizer() {
     setXInput(value);
     const num = parseInt(value);
     if (!isNaN(num)) {
-      handleUpdate({ x: num });
+      startInputEdit();
+      updateBox(activeBox.id, { x: num });
     }
   };
 
   const handleXBlur = () => {
-    focusedInputRef.current = null;
+    finishInputEdit();
     const num = parseInt(xInput);
     if (isNaN(num)) {
       const fallback = Math.round(activeBox.x);
       setXInput(String(fallback));
-      handleUpdate({ x: fallback });
+      updateBox(activeBox.id, { x: fallback });
     } else {
       setXInput(String(num));
-      handleUpdate({ x: num });
+      updateBox(activeBox.id, { x: num });
     }
   };
 
@@ -131,20 +146,21 @@ export function BoxCustomizer() {
     setYInput(value);
     const num = parseInt(value);
     if (!isNaN(num)) {
-      handleUpdate({ y: num });
+      startInputEdit();
+      updateBox(activeBox.id, { y: num });
     }
   };
 
   const handleYBlur = () => {
-    focusedInputRef.current = null;
+    finishInputEdit();
     const num = parseInt(yInput);
     if (isNaN(num)) {
       const fallback = Math.round(activeBox.y);
       setYInput(String(fallback));
-      handleUpdate({ y: fallback });
+      updateBox(activeBox.id, { y: fallback });
     } else {
       setYInput(String(num));
-      handleUpdate({ y: num });
+      updateBox(activeBox.id, { y: num });
     }
   };
 
@@ -152,20 +168,21 @@ export function BoxCustomizer() {
     setWInput(value);
     const num = parseInt(value);
     if (!isNaN(num) && num >= 10) {
-      handleUpdate({ w: num });
+      startInputEdit();
+      updateBox(activeBox.id, { w: num });
     }
   };
 
   const handleWBlur = () => {
-    focusedInputRef.current = null;
+    finishInputEdit();
     const num = parseInt(wInput);
     if (isNaN(num) || num < 10) {
       const fallback = Math.max(10, Math.round(activeBox.w));
       setWInput(String(fallback));
-      handleUpdate({ w: fallback });
+      updateBox(activeBox.id, { w: fallback });
     } else {
       setWInput(String(num));
-      handleUpdate({ w: num });
+      updateBox(activeBox.id, { w: num });
     }
   };
 
@@ -173,20 +190,21 @@ export function BoxCustomizer() {
     setHInput(value);
     const num = parseInt(value);
     if (!isNaN(num) && num >= 10) {
-      handleUpdate({ h: num });
+      startInputEdit();
+      updateBox(activeBox.id, { h: num });
     }
   };
 
   const handleHBlur = () => {
-    focusedInputRef.current = null;
+    finishInputEdit();
     const num = parseInt(hInput);
     if (isNaN(num) || num < 10) {
       const fallback = Math.max(10, Math.round(activeBox.h));
       setHInput(String(fallback));
-      handleUpdate({ h: fallback });
+      updateBox(activeBox.id, { h: fallback });
     } else {
       setHInput(String(num));
-      handleUpdate({ h: num });
+      updateBox(activeBox.id, { h: num });
     }
   };
 
@@ -279,7 +297,12 @@ export function BoxCustomizer() {
           <input
             type="color"
             value={activeBox.fontColor}
-            onChange={(e) => handleUpdate({ fontColor: e.target.value })}
+            onFocus={startInputEdit}
+            onChange={(e) => {
+              startInputEdit();
+              updateBox(activeBox.id, { fontColor: e.target.value });
+            }}
+            onBlur={finishInputEdit}
             className="w-full h-10 border border-slate-200 rounded-lg cursor-pointer"
           />
         </div>

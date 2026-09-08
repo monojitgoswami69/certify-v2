@@ -12,7 +12,7 @@ import {
   type GuideLine,
   type HandleKey,
 } from '../../lib/canvas-snapping';
-import type { TextBox } from '../../types';
+import type { TextBox, QrZone } from '../../types';
 import { useAdaptiveBorder } from './useAdaptiveBorder';
 import { useCanvasZoomPan } from './useCanvasZoomPan';
 import {
@@ -72,6 +72,7 @@ export function CanvasEditor() {
   const [originalQrZone, setOriginalQrZone] = useState<{ id: string; x: number; y: number; size: number } | null>(null);
   const [qrGhostPos, setQrGhostPos] = useState<{ x: number; y: number } | null>(null);
   const [activeGuides, setActiveGuides] = useState<GuideLine[]>([]);
+  const savedPreDragStateRef = useRef<{ boxes: TextBox[]; qrZones: QrZone[] } | null>(null);
 
   // Undo / Redo / Delete callbacks
   const handleUndo = useCallback(() => {
@@ -341,7 +342,10 @@ export function CanvasEditor() {
       const activeBox = boxes.find((b) => b.id === activeBoxId);
       const handle = getHandleAtPoint(imgX, imgY, activeBox, effectiveScale);
       if (handle && activeBox) {
-        pushState(boxes, qrZones);
+        savedPreDragStateRef.current = {
+          boxes: JSON.parse(JSON.stringify(boxes)),
+          qrZones: JSON.parse(JSON.stringify(qrZones)),
+        };
         setDragMode('resize');
         setActiveHandle(handle);
         setOriginalBox({ ...activeBox });
@@ -351,22 +355,25 @@ export function CanvasEditor() {
 
       const clickedBox = getBoxAtPoint(imgX, imgY, boxes);
       if (clickedBox) {
-        if (clickedBox.id === activeBoxId) {
-          pushState(boxes, qrZones);
-          setDragMode('move');
-          setDragStart({ x: imgX, y: imgY });
-          setOriginalBox({ ...clickedBox });
-        } else {
-          setActiveBox(clickedBox.id);
-          setActiveQrId(null);
-        }
+        savedPreDragStateRef.current = {
+          boxes: JSON.parse(JSON.stringify(boxes)),
+          qrZones: JSON.parse(JSON.stringify(qrZones)),
+        };
+        setActiveBox(clickedBox.id);
+        setActiveQrId(null);
+        setDragMode('move');
+        setDragStart({ x: imgX, y: imgY });
+        setOriginalBox({ ...clickedBox });
         return;
       }
 
       const activeZone = qrZones.find((z) => z.id === activeQrId);
       const qrResizeHandle = getQrResizeHandleAtPoint(imgX, imgY, activeZone, effectiveScale);
       if (qrResizeHandle) {
-        pushState(boxes, qrZones);
+        savedPreDragStateRef.current = {
+          boxes: JSON.parse(JSON.stringify(boxes)),
+          qrZones: JSON.parse(JSON.stringify(qrZones)),
+        };
         setDragMode('qr-resize');
         setDragStart({ x: imgX, y: imgY });
         setOriginalQrZone({ ...qrResizeHandle });
@@ -375,15 +382,15 @@ export function CanvasEditor() {
 
       const clickedQr = getQrZoneAtPoint(imgX, imgY, qrZones);
       if (clickedQr) {
-        if (clickedQr.id === activeQrId) {
-          pushState(boxes, qrZones);
-          setDragMode('qr-move');
-          setDragStart({ x: imgX, y: imgY });
-          setOriginalQrZone({ ...clickedQr });
-        } else {
-          setActiveQrId(clickedQr.id);
-          setActiveBox(null);
-        }
+        savedPreDragStateRef.current = {
+          boxes: JSON.parse(JSON.stringify(boxes)),
+          qrZones: JSON.parse(JSON.stringify(qrZones)),
+        };
+        setActiveQrId(clickedQr.id);
+        setActiveBox(null);
+        setDragMode('qr-move');
+        setDragStart({ x: imgX, y: imgY });
+        setOriginalQrZone({ ...clickedQr });
         return;
       }
 
@@ -546,7 +553,34 @@ export function CanvasEditor() {
       if (dragMode === 'draw' && tempBox && tempBox.w > 15 && tempBox.h > 15) {
         pushState(boxes, qrZones);
         addBox(tempBox);
+      } else if (dragMode === 'move' || dragMode === 'resize') {
+        if (originalBox && savedPreDragStateRef.current) {
+          const current = boxes.find((b) => b.id === originalBox.id);
+          if (
+            current &&
+            (current.x !== originalBox.x ||
+              current.y !== originalBox.y ||
+              current.w !== originalBox.w ||
+              current.h !== originalBox.h)
+          ) {
+            pushState(savedPreDragStateRef.current.boxes, savedPreDragStateRef.current.qrZones);
+          }
+        }
+      } else if (dragMode === 'qr-move' || dragMode === 'qr-resize') {
+        if (originalQrZone && savedPreDragStateRef.current) {
+          const current = qrZones.find((z) => z.id === originalQrZone.id);
+          if (
+            current &&
+            (current.x !== originalQrZone.x ||
+              current.y !== originalQrZone.y ||
+              current.size !== originalQrZone.size)
+          ) {
+            pushState(savedPreDragStateRef.current.boxes, savedPreDragStateRef.current.qrZones);
+          }
+        }
       }
+
+      savedPreDragStateRef.current = null;
       setDragMode('none');
       setActiveHandle(null);
       setOriginalBox(null);

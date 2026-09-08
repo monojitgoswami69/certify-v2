@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createHash, timingSafeEqual } from 'crypto';
 import { AUTH_USERNAME, AUTH_PASSWORD, createJwtToken } from '../../../../lib/server-auth';
+import { checkRateLimit, getClientIp } from '../../../../lib/rate-limit';
 
 function safeCompare(a: string, b: string): boolean {
   const hashA = createHash('sha256').update(a).digest();
@@ -9,6 +10,15 @@ function safeCompare(a: string, b: string): boolean {
 }
 
 export async function POST(request: Request) {
+  // Rate limit: Max 10 login attempts per minute per IP to prevent brute-force attacks
+  const ip = getClientIp(request);
+  const rate = checkRateLimit(`login:${ip}`, 10, 60_000);
+  if (!rate.allowed) {
+    return NextResponse.json(
+      { detail: 'Too many login attempts. Please wait a minute and try again.' },
+      { status: 429, headers: { 'Retry-After': String(rate.retryAfterSec) } }
+    );
+  }
   try {
     const body = await request.json();
     const { username, password, rememberMe = true } = body;

@@ -83,19 +83,38 @@ export function drawBoxOnCanvas(
       loadGoogleFont(useFontFamily);
     }
 
-    while (currentFontSize >= minFontSize) {
-      const displayFontSize = currentFontSize * effectiveScale;
-      ctx.font = `${displayFontSize}px ${fontFamily}`;
-      const metrics = ctx.measureText(previewText);
-      const textHeight = displayFontSize * 1.2;
+    // High-performance binary search text fitting (replaces slow linear decrement loop)
+    const maxW = displayBox.w - 10;
+    const maxH = displayBox.h - 10;
+    let displayFontSize = minFontSize * effectiveScale;
 
-      if (metrics.width <= displayBox.w - 10 && textHeight <= displayBox.h - 10) {
-        break;
+    if (maxW > 0 && maxH > 0) {
+      let low = minFontSize;
+      let high = box.fontSize;
+
+      // Fast path: check if maximum font size fits immediately
+      const testMaxDisplay = high * effectiveScale;
+      ctx.font = `${testMaxDisplay}px ${fontFamily}`;
+      if (ctx.measureText(previewText).width <= maxW && testMaxDisplay * 1.2 <= maxH) {
+        displayFontSize = testMaxDisplay;
+      } else {
+        while (low <= high) {
+          const mid = (low + high) >> 1;
+          const testDisplay = mid * effectiveScale;
+          ctx.font = `${testDisplay}px ${fontFamily}`;
+          const textW = ctx.measureText(previewText).width;
+          const textH = testDisplay * 1.2;
+
+          if (textW <= maxW && textH <= maxH) {
+            displayFontSize = testDisplay;
+            low = mid + 1;
+          } else {
+            high = mid - 1;
+          }
+        }
       }
-      currentFontSize -= 2;
     }
 
-    const displayFontSize = currentFontSize * effectiveScale;
     ctx.font = `${displayFontSize}px ${fontFamily}`;
     ctx.fillStyle = box.fontColor;
 

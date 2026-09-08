@@ -11,6 +11,11 @@ export interface ParsedCsv {
 }
 
 export function parseCsv(text: string): ParsedCsv {
+  // Strip leading UTF-8 Byte Order Mark (BOM) if present (standard in Excel exports)
+  if (text.charCodeAt(0) === 0xfeff) {
+    text = text.slice(1);
+  }
+
   const rows: string[][] = [];
   let currentRow: string[] = [];
   let currentField = '';
@@ -78,7 +83,14 @@ export function parseCsv(text: string): ParsedCsv {
   }
 
   const rawHeaders = rows[0];
-  const headers = rawHeaders.map((h) => h.replace(/^"|"$/g, '').trim());
+  const seenHeaders = new Map<string, number>();
+  const headers = rawHeaders.map((h, idx) => {
+    let clean = h.replace(/^\uFEFF/, '').replace(/^"|"$/g, '').trim();
+    if (!clean) clean = `Column_${idx + 1}`;
+    const count = seenHeaders.get(clean) || 0;
+    seenHeaders.set(clean, count + 1);
+    return count > 0 ? `${clean}_${count + 1}` : clean;
+  });
 
   const data: Record<string, string>[] = [];
 

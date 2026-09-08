@@ -174,12 +174,37 @@ export class CertificateWorkerPool {
               totalCount
             );
           } else if (event.data.type === 'batchComplete') {
-            worker.removeEventListener('message', handler);
+            cleanup();
             resolve();
           }
         };
 
+        const errorHandler = (err: ErrorEvent) => {
+          cleanup();
+          console.error(`[WorkerPool] Worker ${workerIndex} encountered an unhandled error:`, err);
+          for (const task of batch) {
+            completedCount++;
+            onResult?.(
+              {
+                id: task.id,
+                rowIndex: task.rowIndex,
+                filename: task.filename,
+                error: err.message || 'Worker thread execution error',
+              },
+              completedCount,
+              totalCount
+            );
+          }
+          resolve();
+        };
+
+        const cleanup = () => {
+          worker.removeEventListener('message', handler);
+          worker.removeEventListener('error', errorHandler);
+        };
+
         worker.addEventListener('message', handler);
+        worker.addEventListener('error', errorHandler);
 
         worker.postMessage({
           type: 'generateBatch',

@@ -109,35 +109,48 @@ export async function GET(request: Request) {
         templateName: eventTemplateName,
       };
 
-      // Find the associated canvas template if available
+      // Find the associated canvas template if available (query metadata first to avoid pulling heavy imageData across all templates)
       let matchedTemplate = null;
       try {
-        const allTemplates = await db
+        const templateHeaders = await db
           .select({
             id: templates.id,
             name: templates.name,
-            imageData: templates.imageData,
-            width: templates.width,
-            height: templates.height,
-            layoutConfig: templates.layoutConfig,
           })
           .from(templates);
 
-        if (allTemplates.length > 0) {
+        if (templateHeaders.length > 0) {
           const tplBase = eventTemplateName
             ? eventTemplateName.replace(/\.[^/.]+$/, '').trim().toLowerCase()
             : '';
           const evBase = decodedEventName.trim().toLowerCase();
 
-          matchedTemplate =
-            allTemplates.find((t) => t.name.trim().toLowerCase() === evBase) ||
-            allTemplates.find((t) => tplBase && t.name.trim().toLowerCase() === tplBase) ||
-            allTemplates.find(
+          const matchMeta =
+            templateHeaders.find((t) => t.name.trim().toLowerCase() === evBase) ||
+            templateHeaders.find((t) => tplBase && t.name.trim().toLowerCase() === tplBase) ||
+            templateHeaders.find(
               (t) =>
                 (evBase && t.name.toLowerCase().includes(evBase)) ||
                 (tplBase && t.name.toLowerCase().includes(tplBase))
             ) ||
-            (allTemplates.length === 1 ? allTemplates[0] : null);
+            (templateHeaders.length === 1 ? templateHeaders[0] : null);
+
+          if (matchMeta) {
+            const [fullTemplate] = await db
+              .select({
+                id: templates.id,
+                name: templates.name,
+                imageData: templates.imageData,
+                width: templates.width,
+                height: templates.height,
+                layoutConfig: templates.layoutConfig,
+              })
+              .from(templates)
+              .where(eq(templates.id, matchMeta.id))
+              .limit(1);
+
+            matchedTemplate = fullTemplate || null;
+          }
         }
       } catch (err) {
         console.warn('[Dashboard] Could not fetch template for event:', err);

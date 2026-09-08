@@ -365,14 +365,23 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setError: (error) => set({ error }),
 
   setFonts: (fonts) => {
-    const defaultFont = fonts.length > 0 ? fonts[0].family : 'Inter';
-    set((state) => ({
-      fonts,
-      defaultFont,
-      boxes: state.boxes.map((box) =>
-        !box.fontFamily && defaultFont ? { ...box, fontFamily: defaultFont } : box
-      ),
-    }));
+    set((state) => {
+      // Preserve current defaultFont if valid; otherwise default to 'Inter' or first font
+      const preferred =
+        state.defaultFont && fonts.some((f) => f.family === state.defaultFont)
+          ? state.defaultFont
+          : fonts.some((f) => f.family === 'Inter')
+          ? 'Inter'
+          : fonts[0]?.family || 'Inter';
+
+      return {
+        fonts,
+        defaultFont: preferred,
+        boxes: state.boxes.map((box) =>
+          !box.fontFamily ? { ...box, fontFamily: preferred } : box
+        ),
+      };
+    });
   },
 
   setEmailSettings: (settings) =>

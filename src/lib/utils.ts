@@ -123,16 +123,17 @@ export function generateErrorReportCsv(
   const headers = type === 'email' ? ['Row', 'Name', 'Email', 'Error'] : ['Row', 'Name', 'Error'];
 
   const rows = errors.map((err) => {
+    const rowNum = (err.rowIndex + 1).toString();
     if (type === 'email') {
       return [
-        err.rowIndex.toString(),
+        rowNum,
         `"${(err.name || '').replace(/"/g, '""')}"`,
         `"${(err.email || '').replace(/"/g, '""')}"`,
         `"${(err.error || '').replace(/"/g, '""')}"`,
       ];
     } else {
       return [
-        err.rowIndex.toString(),
+        rowNum,
         `"${(err.name || '').replace(/"/g, '""')}"`,
         `"${(err.error || '').replace(/"/g, '""')}"`,
       ];
@@ -144,7 +145,7 @@ export function generateErrorReportCsv(
 
 export function downloadErrorReport(errors: ErrorRecord[], type: 'email' | 'generation'): void {
   const csvContent = generateErrorReportCsv(errors, type);
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
   const dateStr = new Date().toISOString().split('T')[0];
   const filename = `failed_${type === 'email' ? 'emails' : 'certificates'}_${dateStr}.csv`;
   downloadBlob(blob, filename);
@@ -156,7 +157,7 @@ export function generateFullDeliveryReportCsv(
 ): string {
   const headers = ['Row', 'Recipient Name', 'Email Address', 'Delivery Status', 'Timestamp', 'Diagnostics / Reason', 'Event'];
   const rows = records.map((rec) => [
-    rec.rowIndex.toString(),
+    (rec.rowIndex + 1).toString(),
     `"${(rec.name || '').replace(/"/g, '""')}"`,
     `"${(rec.email || '').replace(/"/g, '""')}"`,
     `"${rec.status.toUpperCase()}"`,
@@ -173,7 +174,7 @@ export function downloadFullDeliveryReport(
   eventName?: string
 ): void {
   const csvContent = generateFullDeliveryReportCsv(records, eventName);
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
   const dateStr = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const safeEvent = eventName ? `${sanitizeFilename(eventName)}_` : '';
   const filename = `delivery_report_${safeEvent}${dateStr}.csv`;
@@ -198,7 +199,7 @@ export function generateFullGenerationReportCsv(
   ];
 
   const rows = records.map((rec) => [
-    rec.rowIndex.toString(),
+    (rec.rowIndex + 1).toString(),
     `"${(rec.name || '').replace(/"/g, '""')}"`,
     `"${(rec.filename || '').replace(/"/g, '""')}"`,
     `"${rec.status.toUpperCase()}"`,
@@ -218,7 +219,7 @@ export function downloadFullGenerationReport(
   eventName?: string
 ): void {
   const csvContent = generateFullGenerationReportCsv(records, eventName);
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
   const dateStr = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const safeEvent = eventName ? `${sanitizeFilename(eventName)}_` : '';
   const filename = `generation_report_${safeEvent}${dateStr}.csv`;
@@ -266,7 +267,7 @@ export function buildVirtualCsvFile(
     ),
   ];
   const csvContent = csvLines.join('\n');
-  const csvBlob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const csvBlob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
   const filename = `${sanitizeFilename(eventName || 'event')}.csv`;
   const file = new File([csvBlob], filename, { type: 'text/csv' });
 
