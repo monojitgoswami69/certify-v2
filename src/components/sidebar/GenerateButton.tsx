@@ -14,13 +14,26 @@ import {
   FileSpreadsheet,
   Cpu,
   Zap,
+  ShieldCheck,
 } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import { useCertificateBatchGenerator } from './useCertificateBatchGenerator';
+import { useBatchRegistration } from './useBatchRegistration';
 import { CertificateGenerationModal } from '../modals/CertificateGenerationModal';
 
 export function GenerateButton() {
   const { csvData, setViewMode, eventName } = useAppStore();
+
+  const {
+    isBatchRegistered,
+    isBatchRegistering,
+    batchRegistrationError,
+    registeredCertIds,
+    registrationDirty,
+    needsRegistration,
+    canExport,
+    registerBatch,
+  } = useBatchRegistration();
 
   const {
     progress,
@@ -56,18 +69,111 @@ export function GenerateButton() {
     <>
       {progress.status === 'idle' && (
         <div className="space-y-4">
-          {/* Format Selection Switches (PNG, JPG, PDF) */}
-          <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/80 space-y-2.5">
+          {/* Section 1: Event Batch Registry */}
+          <div className="space-y-2.5 pb-3.5 border-b border-slate-200/80">
+            <div className="flex items-baseline justify-between">
+              <div>
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800">
+                  Event Registry
+                </h4>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  {isBatchRegistered
+                    ? registrationDirty
+                      ? 'Canvas layout or dataset modified · Re-sync required'
+                      : `${registeredCertIds.size} certificates registered & active`
+                    : csvData.length > 0
+                    ? `${csvData.length} certificates ready to register in database`
+                    : 'Import data to register certificates'}
+                </p>
+              </div>
+
+              {isBatchRegistered && !registrationDirty && (
+                <span className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                  Registered
+                </span>
+              )}
+            </div>
+
+            {!isBatchRegistered ? (
+              <button
+                type="button"
+                onClick={() => registerBatch(false)}
+                disabled={isBatchRegistering || csvData.length === 0}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-sm font-semibold transition-all shadow-sm disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed cursor-pointer"
+              >
+                {isBatchRegistering ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-white" />
+                    <span>Registering {csvData.length} Certificates...</span>
+                  </>
+                ) : (
+                  <>
+                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                    <span>Register Event Batch ({csvData.length} Certificates)</span>
+                  </>
+                )}
+              </button>
+            ) : registrationDirty ? (
+              <div className="space-y-1.5">
+                <button
+                  type="button"
+                  onClick={() => registerBatch(true)}
+                  disabled={isBatchRegistering}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-semibold transition-all shadow-sm cursor-pointer"
+                >
+                  {isBatchRegistering ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Updating Registry...</span>
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>Update Registry ({csvData.length} Certificates)</span>
+                    </>
+                  )}
+                </button>
+                <p className="text-[10px] text-amber-700 leading-tight">
+                  Template layout or recipient fields were updated. Re-sync to update registry and template.
+                </p>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between text-xs text-slate-500 pt-0.5">
+                <span className="text-[11px] font-mono">
+                  {registeredCertIds.size} / {csvData.length} registered
+                </span>
+                <button
+                  type="button"
+                  onClick={() => registerBatch(true)}
+                  disabled={isBatchRegistering}
+                  className="text-[11px] font-medium text-slate-500 hover:text-slate-800 underline underline-offset-2 transition-colors cursor-pointer"
+                >
+                  Re-sync registry
+                </button>
+              </div>
+            )}
+
+            {batchRegistrationError && (
+              <div className="flex items-start gap-1.5 p-2 text-xs text-red-600 bg-red-50 rounded-lg">
+                <AlertCircle className="w-3.5 h-3.5 text-red-500 shrink-0 mt-0.5" />
+                <p className="leading-snug">{batchRegistrationError}</p>
+              </div>
+            )}
+          </div>
+
+          {/* Section 2: Format Selection Switches (PNG, JPG, PDF) */}
+          <div className="space-y-2">
             <div className="flex items-center justify-between">
               <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
                 Export Formats
               </label>
-              <span className="text-[11px] font-medium text-slate-500">
+              <span className="text-[11px] font-medium text-slate-400">
                 Included in ZIP archive
               </span>
             </div>
 
-            <div className="flex items-center justify-between gap-2 pt-1">
+            <div className="flex items-center justify-between gap-2 pt-0.5">
               {/* PNG Toggle Switch */}
               <button
                 type="button"
@@ -148,23 +254,31 @@ export function GenerateButton() {
             )}
           </div>
 
-          <button
-            onClick={handleGenerate}
-            disabled={!isReady || !hasAnyFormat}
-            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-primary-600 to-indigo-600 text-white rounded-lg font-medium hover:from-primary-700 hover:to-indigo-700 disabled:from-slate-200 disabled:to-slate-200 disabled:text-slate-400 disabled:shadow-none disabled:cursor-not-allowed transition-all shadow-lg shadow-primary-500/25 cursor-pointer"
-          >
-            <Download className="w-5 h-5" />
-            <span>Generate {csvData.length} Certificates (ZIP)</span>
-          </button>
+          <div className="space-y-2 pt-1">
+            <button
+              onClick={handleGenerate}
+              disabled={!canExport || !isReady || !hasAnyFormat}
+              className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-primary-600 to-indigo-600 text-white rounded-lg font-medium hover:from-primary-700 hover:to-indigo-700 disabled:from-slate-200 disabled:to-slate-200 disabled:text-slate-400 disabled:shadow-none disabled:cursor-not-allowed transition-all shadow-lg shadow-primary-500/25 cursor-pointer"
+            >
+              <Download className="w-5 h-5" />
+              <span>Generate {csvData.length} Certificates (ZIP)</span>
+            </button>
 
-          <button
-            onClick={() => setViewMode('email')}
-            disabled={!isReady}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 border border-slate-300 text-slate-700 rounded-lg font-medium hover:bg-slate-50 disabled:border-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed transition-all cursor-pointer"
-          >
-            <Mail className="w-4 h-4 text-primary-600" />
-            <span>Send via Email</span>
-          </button>
+            <button
+              onClick={() => setViewMode('email')}
+              disabled={!canExport || !isReady}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 border border-slate-300 text-slate-700 rounded-lg font-medium hover:bg-slate-50 disabled:border-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed transition-all cursor-pointer"
+            >
+              <Mail className="w-4 h-4 text-primary-600" />
+              <span>Send via Email</span>
+            </button>
+
+            {!isBatchRegistered && (
+              <p className="text-[11px] text-slate-400 text-center leading-relaxed">
+                Register event batch above to lock certificates and enable generation & email delivery.
+              </p>
+            )}
+          </div>
         </div>
       )}
 

@@ -168,7 +168,12 @@ export async function POST(request: Request) {
     // 2. Determine which items need newly generated IDs vs existing IDs
     const resultIds: string[] = new Array(parsedItems.length);
     const newRowsToInsert = [];
-    const updatesToApply: Array<{ id: string; rowData: Record<string, string> }> = [];
+    const updatesToApply: Array<{
+      id: string;
+      rowData?: Record<string, string>;
+      templateName?: string | null;
+      status?: string;
+    }> = [];
 
     for (const item of parsedItems) {
       if (existingMap.has(item.fingerprint)) {
@@ -176,11 +181,13 @@ export async function POST(request: Request) {
         const existingId = existingMap.get(item.fingerprint)!;
         resultIds[item.index] = existingId;
 
-        // Queue rowData update if previously missing
-        if (existingWithoutRowData.has(item.fingerprint) && item.rowData) {
-          updatesToApply.push({ id: existingId, rowData: item.rowData });
-          existingWithoutRowData.delete(item.fingerprint);
-        }
+        // Keep existing record synchronized with current full rowData, templateName, and status
+        updatesToApply.push({
+          id: existingId,
+          ...(item.rowData ? { rowData: item.rowData } : {}),
+          ...(item.templateName ? { templateName: item.templateName } : {}),
+          status: item.isStatic ? 'static' : 'issued',
+        });
       } else {
         // New record: Generate unique certificate ID
         const newId = generateCertificateId();
@@ -201,18 +208,22 @@ export async function POST(request: Request) {
       }
     }
 
-    // 3. Execute rowData updates in concurrent batches (eliminates sequential N+1 bottleneck)
+    // 3. Execute rowData & metadata updates in concurrent batches
     if (updatesToApply.length > 0) {
       const UPDATE_BATCH_SIZE = 25;
       for (let i = 0; i < updatesToApply.length; i += UPDATE_BATCH_SIZE) {
         const batch = updatesToApply.slice(i, i + UPDATE_BATCH_SIZE);
         await Promise.all(
-          batch.map((u) =>
-            db
+          batch.map((u) => {
+            const setValues: Record<string, unknown> = {};
+            if (u.rowData) setValues.rowData = u.rowData;
+            if (u.templateName) setValues.templateName = u.templateName;
+            if (u.status) setValues.status = u.status;
+            return db
               .update(certificates)
-              .set({ rowData: u.rowData })
-              .where(eq(certificates.id, u.id))
-          )
+              .set(setValues)
+              .where(eq(certificates.id, u.id));
+          })
         );
       }
     }

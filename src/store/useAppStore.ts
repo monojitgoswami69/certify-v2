@@ -132,6 +132,19 @@ interface AppStore {
   exportFormats: ExportFormats;
   setExportFormats: (formats: Partial<ExportFormats>) => void;
 
+  // Batch Registration State
+  isBatchRegistered: boolean;
+  registeredCertIds: Map<number, string>;
+  registeredAt: string | null;
+  isBatchRegistering: boolean;
+  batchRegistrationError: string | null;
+  registrationDirty: boolean;
+  setBatchRegistered: (registered: boolean, ids?: Map<number, string>) => void;
+  setIsBatchRegistering: (isRegistering: boolean) => void;
+  setBatchRegistrationError: (error: string | null) => void;
+  setRegistrationDirty: (dirty: boolean) => void;
+  clearBatchRegistration: () => void;
+
   // Global Reset Actions
   reset: () => void;
   resetToDownload: () => void;
@@ -168,6 +181,12 @@ const initialState = {
   emailSettings: DEFAULT_EMAIL_SETTINGS,
   emailProgress: DEFAULT_EMAIL_PROGRESS,
   connectedGoogleAccount: null,
+  isBatchRegistered: false,
+  registeredCertIds: new Map<number, string>(),
+  registeredAt: null as string | null,
+  isBatchRegistering: false,
+  batchRegistrationError: null as string | null,
+  registrationDirty: false,
 };
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -187,6 +206,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
       qrZones: [],
       activeQrId: null,
       isPlacingQr: false,
+      isBatchRegistered: false,
+      registeredCertIds: new Map<number, string>(),
+      registeredAt: null,
+      isBatchRegistering: false,
+      batchRegistrationError: null,
+      registrationDirty: false,
     }),
 
   clearTemplate: () =>
@@ -199,6 +224,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
       qrZones: [],
       activeQrId: null,
       isPlacingQr: false,
+      isBatchRegistered: false,
+      registeredCertIds: new Map<number, string>(),
+      registeredAt: null,
+      isBatchRegistering: false,
+      batchRegistrationError: null,
+      registrationDirty: false,
     }),
 
   addBox: (boxData) => {
@@ -264,12 +295,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
       },
     };
     const updated = [...qrZones, newZone];
-    set({
+    set((state) => ({
       qrZones: updated,
       activeQrId: id,
       isPlacingQr: false,
       activeBoxId: null,
-    });
+      registrationDirty: state.isBatchRegistered ? true : state.registrationDirty,
+    }));
     return id;
   },
 
@@ -284,6 +316,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set((state) => ({
       qrZones: state.qrZones.filter((zone) => zone.id !== id),
       activeQrId: state.activeQrId === id ? null : state.activeQrId,
+      registrationDirty: state.isBatchRegistered ? true : state.registrationDirty,
     })),
 
   setActiveQrId: (activeQrId) =>
@@ -295,11 +328,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setQrZones: (qrZones) => set({ qrZones }),
 
   clearQrZones: () =>
-    set({
+    set((state) => ({
       qrZones: [],
       activeQrId: null,
       isPlacingQr: false,
-    }),
+      registrationDirty: state.isBatchRegistered ? true : state.registrationDirty,
+    })),
 
   setCsvData: (file, headers, data) => {
     const emailCol =
@@ -345,11 +379,21 @@ export const useAppStore = create<AppStore>((set, get) => ({
         eventName: state.eventName || defaultEventName || 'General Event',
         emailColumn: emailCol,
         emailSettings: newEmailSettings,
+        isBatchRegistered: false,
+        registeredCertIds: new Map<number, string>(),
+        registeredAt: null,
+        isBatchRegistering: false,
+        batchRegistrationError: null,
+        registrationDirty: false,
       };
     });
   },
 
-  setEventName: (eventName) => set({ eventName }),
+  setEventName: (eventName) =>
+    set((state) => ({
+      eventName,
+      registrationDirty: state.isBatchRegistered ? true : state.registrationDirty,
+    })),
 
   clearCsvData: () =>
     set({
@@ -358,6 +402,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
       csvData: [],
       eventName: '',
       emailColumn: '',
+      isBatchRegistered: false,
+      registeredCertIds: new Map<number, string>(),
+      registeredAt: null,
+      isBatchRegistering: false,
+      batchRegistrationError: null,
+      registrationDirty: false,
     }),
 
   setEmailColumn: (emailColumn) => set({ emailColumn }),
@@ -408,6 +458,31 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set((state) => ({
       exportFormats: { ...state.exportFormats, ...formats },
     })),
+
+  setBatchRegistered: (isBatchRegistered, ids) =>
+    set((state) => ({
+      isBatchRegistered,
+      registeredCertIds: ids !== undefined ? new Map(ids) : state.registeredCertIds,
+      registeredAt: isBatchRegistered ? new Date().toISOString() : null,
+      registrationDirty: false,
+      batchRegistrationError: null,
+    })),
+
+  setIsBatchRegistering: (isBatchRegistering) => set({ isBatchRegistering }),
+
+  setBatchRegistrationError: (batchRegistrationError) => set({ batchRegistrationError }),
+
+  setRegistrationDirty: (registrationDirty) => set({ registrationDirty }),
+
+  clearBatchRegistration: () =>
+    set({
+      isBatchRegistered: false,
+      registeredCertIds: new Map<number, string>(),
+      registeredAt: null,
+      isBatchRegistering: false,
+      batchRegistrationError: null,
+      registrationDirty: false,
+    }),
 
   reset: () =>
     set((state) => ({

@@ -384,96 +384,78 @@ function DashboardContent() {
         return;
       }
 
-      const res = await fetch('/api/templates', {
-        headers: { Authorization: `Bearer ${activeToken}` },
-      });
-
-      if (!res.ok) {
-        useAppStore.getState().reset();
-        useHistoryStore.getState().clearHistory();
-        router.push(`/editor?event=${encodeURIComponent(evName)}&from=event`);
-        return;
-      }
-
-      const data = await res.json();
-      const templatesList = data.templates || [];
-
-      const evNameLower = evName.toLowerCase();
-      const tplName = (detailedEventSummary?.templateName || '').trim();
-      const tplNameLower = tplName.toLowerCase();
-      const tplBaseNameLower = tplName.replace(/\.[^/.]+$/, '').trim().toLowerCase();
-
-      // Priority 1: Match by exact event name (how autoSaveCurrentTemplate saves it)
-      let match = evNameLower
-        ? templatesList.find((t: { name: string }) => (t.name || '').trim().toLowerCase() === evNameLower)
-        : null;
-
-      // Priority 2: Match by exact template filename (e.g. sample-template.png)
-      if (!match && tplNameLower) {
-        match = templatesList.find((t: { name: string }) => (t.name || '').trim().toLowerCase() === tplNameLower);
-      }
-
-      // Priority 3: Match by template base name (e.g. sample-template)
-      if (!match && tplBaseNameLower) {
-        match = templatesList.find((t: { name: string }) => (t.name || '').trim().toLowerCase() === tplBaseNameLower);
-      }
-
-      // Priority 4: Substring / fuzzy match
-      if (!match) {
-        match = templatesList.find((t: { name: string }) => {
-          const tn = (t.name || '').trim().toLowerCase();
-          return (
-            (evNameLower && (tn.includes(evNameLower) || evNameLower.includes(tn))) ||
-            (tplBaseNameLower && (tn.includes(tplBaseNameLower) || tplBaseNameLower.includes(tn)))
-          );
-        });
-      }
-
-      // Priority 5: If there's only 1 saved template in the entire account, use it
-      if (!match && templatesList.length === 1) {
-        match = templatesList[0];
-      }
-
-      if (!match) {
-        alert(`No saved canvas template layout found for event "${evName}". Opening Studio...`);
-        useAppStore.getState().reset();
-        useHistoryStore.getState().clearHistory();
-        router.push(`/editor?event=${encodeURIComponent(evName)}&from=event`);
-        return;
-      }
-
-      // Fetch the full template detail with imageData
-      const detailRes = await fetch(`/api/templates/${match.id}`, {
-        headers: { Authorization: `Bearer ${activeToken}` },
-      });
-
-      if (!detailRes.ok) {
-        throw new Error('Failed to fetch template details');
-      }
-
-      const detailData = await detailRes.json();
-      const tpl = detailData.template;
-      if (!tpl?.imageData) {
-        throw new Error('Template graphic data is missing');
-      }
-
-      // Ensure participant records have full rowData before auto-populating Studio
+      // 1. Fetch full event details including participants, rowData, and matched template
+      let tpl: { id?: string; name: string; imageData: string; layoutConfig?: any } | null = null;
       let studioParticipants = participants;
-      if (!studioParticipants || studioParticipants.length === 0 || !studioParticipants[0]?.rowData) {
-        try {
-          const partRes = await fetch(
-            `/api/dashboard?event=${encodeURIComponent(evName)}&includeRowData=true`,
-            { headers: { Authorization: `Bearer ${activeToken}` } }
-          );
-          if (partRes.ok) {
-            const partData = await partRes.json();
-            if (partData.participants && partData.participants.length > 0) {
-              studioParticipants = partData.participants;
+
+      const eventRes = await fetch(
+        `/api/dashboard?event=${encodeURIComponent(evName)}&includeRowData=true&includeTemplate=true`,
+        { headers: { Authorization: `Bearer ${activeToken}` } }
+      );
+
+      if (eventRes.ok) {
+        const eventData = await eventRes.json();
+        if (eventData.template) {
+          tpl = eventData.template;
+        }
+        if (eventData.participants && eventData.participants.length > 0) {
+          studioParticipants = eventData.participants;
+        }
+      }
+
+      // 2. If template was not directly resolved by event route, query /api/templates strictly
+      if (!tpl) {
+        const tplRes = await fetch('/api/templates', {
+          headers: { Authorization: `Bearer ${activeToken}` },
+        });
+
+        if (tplRes.ok) {
+          const tplListData = await tplRes.json();
+          const templatesList = tplListData.templates || [];
+          const evNameLower = evName.trim().toLowerCase();
+          const tplName = (detailedEventSummary?.templateName || '').trim().toLowerCase();
+          const tplBase = tplName.replace(/\.[^/.]+$/, '').trim().toLowerCase();
+
+          const match =
+            templatesList.find((t: { name: string }) => (t.name || '').trim().toLowerCase() === evNameLower) ||
+            templatesList.find((t: { name: string }) => (t.name || '').trim().toLowerCase() === tplName) ||
+            templatesList.find((t: { name: string }) => (t.name || '').trim().toLowerCase() === tplBase);
+
+          if (match) {
+            const detailRes = await fetch(`/api/templates/${match.id}`, {
+              headers: { Authorization: `Bearer ${activeToken}` },
+            });
+            if (detailRes.ok) {
+              const detailData = await detailRes.json();
+              if (detailData.template?.imageData) {
+                tpl = detailData.template;
+              }
             }
           }
-        } catch {
-          // Fallback to component participants state
         }
+      }
+
+      // Reset store before populating with this event's layout & template
+      const store = useAppStore.getState();
+      store.reset();
+      useHistoryStore.getState().clearHistory();
+
+      // If no template graphic found, populate CSV data and open Studio gracefully
+      if (!tpl || !tpl.imageData) {
+        if (evName) store.setEventName(evName);
+        if (studioParticipants && studioParticipants.length > 0) {
+          const { file: csvFile, headers, rows } = buildVirtualCsvFile(evName, studioParticipants);
+          store.setCsvData(csvFile, headers, rows);
+          const certIdsMap = new Map<number, string>();
+          studioParticipants.forEach((p, idx) => {
+            if (p.id) certIdsMap.set(idx + 2, p.id);
+          });
+          if (certIdsMap.size > 0) {
+            store.setBatchRegistered(true, certIdsMap);
+          }
+        }
+        router.push(`/editor?event=${encodeURIComponent(evName)}&from=event`);
+        return;
       }
 
       // Convert Base64 data URL to Image and File named after event
@@ -482,39 +464,42 @@ function DashboardContent() {
       const filename = `${sanitizeFilename(evName || tpl.name)}.png`;
       const file = new File([blob], filename, { type: 'image/png' });
 
-      // Reset store before populating with this event's layout & template
-      const store = useAppStore.getState();
-      store.reset();
-      useHistoryStore.getState().clearHistory();
-
       await new Promise<void>((resolve, reject) => {
         const img = new window.Image();
         img.onload = () => {
           const info = `${file.name} (${img.width}×${img.height})`;
           store.setTemplate(file, img, info);
-          if (tpl.layoutConfig?.boxes && Array.isArray(tpl.layoutConfig.boxes)) {
+          if (tpl?.layoutConfig?.boxes && Array.isArray(tpl.layoutConfig.boxes)) {
             store.setBoxes(tpl.layoutConfig.boxes);
           }
-          if (tpl.layoutConfig?.qrZones && Array.isArray(tpl.layoutConfig.qrZones)) {
+          if (tpl?.layoutConfig?.qrZones && Array.isArray(tpl.layoutConfig.qrZones)) {
             store.setQrZones(tpl.layoutConfig.qrZones);
           }
-          if (tpl.layoutConfig?.defaultFont) {
+          if (tpl?.layoutConfig?.defaultFont) {
             store.setDefaultFont(tpl.layoutConfig.defaultFont);
           }
-          if (tpl.layoutConfig?.defaultFontSize) {
+          if (tpl?.layoutConfig?.defaultFontSize) {
             store.setDefaultFontSize(tpl.layoutConfig.defaultFontSize);
           }
-          if (tpl.layoutConfig?.defaultFontColor) {
+          if (tpl?.layoutConfig?.defaultFontColor) {
             store.setDefaultFontColor(tpl.layoutConfig.defaultFontColor);
           }
           if (evName) {
             store.setEventName(evName);
           }
 
-          // Auto-populate CSV data from stored event participants
+          // Auto-populate CSV data and restore batch registration status
           if (studioParticipants && studioParticipants.length > 0) {
             const { file: csvFile, headers, rows } = buildVirtualCsvFile(evName, studioParticipants);
             store.setCsvData(csvFile, headers, rows);
+
+            const certIdsMap = new Map<number, string>();
+            studioParticipants.forEach((p, idx) => {
+              if (p.id) certIdsMap.set(idx + 2, p.id);
+            });
+            if (certIdsMap.size > 0) {
+              store.setBatchRegistered(true, certIdsMap);
+            }
           }
 
           resolve();
@@ -523,12 +508,9 @@ function DashboardContent() {
         img.src = tpl.imageData;
       });
 
-      router.push(`/editor?event=${encodeURIComponent(evName)}&from=event${match?.id ? `&templateId=${match.id}` : ''}`);
+      router.push(`/editor?event=${encodeURIComponent(evName)}&from=event${tpl?.id ? `&templateId=${tpl.id}` : ''}`);
     } catch (err) {
       console.error('[Open in Studio Error]:', err);
-      alert(err instanceof Error ? err.message : 'Error opening event in Studio');
-      useAppStore.getState().reset();
-      useHistoryStore.getState().clearHistory();
       router.push(`/editor?event=${encodeURIComponent(evName)}&from=event`);
     } finally {
       setLoadingStudio(false);

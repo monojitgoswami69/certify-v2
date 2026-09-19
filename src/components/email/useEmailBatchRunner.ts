@@ -14,7 +14,7 @@ import {
 } from '../../lib/utils';
 import { generateCertificate } from '../../lib/certificate-engine';
 import { ensureFontsLoaded } from '../../lib/font-loader';
-import { ensureCertificateIds, buildVerifyUrlFor } from '../../lib/cert-registration';
+import { buildVerifyUrlFor } from '../../lib/cert-registration';
 import { autoSaveCurrentTemplate } from '../../lib/template-autosave';
 import type { CsvRow, EmailProgress, EmailDeliveryRecord } from '../../types';
 
@@ -51,6 +51,8 @@ export function useEmailBatchRunner() {
     defaultFont,
     defaultFontSize,
     defaultFontColor,
+    isBatchRegistered,
+    registeredCertIds,
   } = useAppStore();
 
   const { token } = useAuthStore();
@@ -71,9 +73,6 @@ export function useEmailBatchRunner() {
   // Consecutive network error counter for circuit breaker
   const consecutiveNetworkErrorsRef = useRef(0);
 
-  // rowIndex -> verification id, survives "Retry Failed"
-  const certIdsRef = useRef<Map<number, string>>(new Map());
-
   // Comprehensive tracking map: rowIndex -> EmailDeliveryRecord
   const deliveryRecordsRef = useRef<Map<number, EmailDeliveryRecord>>(new Map());
 
@@ -86,13 +85,15 @@ export function useEmailBatchRunner() {
   const hasMailingAccount = Boolean(connectedGoogleAccount);
   const validBoxes = boxes.filter((b) => b.field);
   const attachImage = Boolean(emailSettings.attachJpg || emailSettings.attachPng);
+  const useQr = qrZones.length > 0;
   const isReady = Boolean(
     templateImage &&
       csvData.length > 0 &&
       validBoxes.length > 0 &&
       emailColumn &&
       hasMailingAccount &&
-      (emailSettings.attachPdf || attachImage)
+      (emailSettings.attachPdf || attachImage) &&
+      (!useQr || isBatchRegistered)
   );
 
   const getDisplayName = useCallback(
@@ -161,48 +162,21 @@ export function useEmailBatchRunner() {
       reconnectRef.current = false;
       setNeedsReconnect(false);
 
-      // Register batch records in database. If useQr is true, verification IDs are created;
-      // if false, static records are stored to indicate the batch is present in DB without verify links.
-      const useQr = qrZones.length > 0;
-      try {
-        setEmailProgress({
-          current: 0,
-          total: records.length,
-          currentRecipient: useQr ? 'Registering certificates...' : 'Saving batch records...',
-          status: 'sending',
-          errors: [],
-          sent: [],
-          records: Array.from(deliveryRecordsRef.current.values()),
-        });
-        const activeFields = Array.from(
-          new Set([
-            ...validBoxes.map((b) => b.field),
-            ...(emailColumn ? [emailColumn] : []),
-          ])
-        ).filter(Boolean);
-
-        certIdsRef.current = await ensureCertificateIds({
-          records,
-          existingIds: certIdsRef.current,
-          getDisplayName: getDisplayName,
-          getEmail: (row) => (row[emailColumn] || '').trim(),
-          templateName: templateFile?.name || 'template',
-          eventName: eventName || 'General Event',
-          isStatic: !useQr,
-          activeFields,
-        });
-      } catch (err) {
-        if (useQr) {
-          setError(
-            `QR registration failed: ${err instanceof Error ? err.message : 'unknown error'}. ` +
-              'Batch aborted — no emails were sent with unverifiable QR codes.'
-          );
-          resetEmailProgress();
-          return;
-        } else {
-          console.warn('[Email Runner] Database registration warning:', err);
-        }
+      if (useQr && !isBatchRegistered) {
+        setError('Batch is not registered. Please register certificates to activate QR verification before sending emails.');
+        resetEmailProgress();
+        return;
       }
+
+      setEmailProgress({
+        current: 0,
+        total: records.length,
+        currentRecipient: 'Preparing dispatch...',
+        status: 'sending',
+        errors: [],
+        sent: [],
+        records: Array.from(deliveryRecordsRef.current.values()),
+      });
 
       const concurrency = Math.min(10, records.length);
       let recordIndex = 0;
@@ -307,7 +281,7 @@ export function useEmailBatchRunner() {
 
           try {
             if (!workerCanvas) workerCanvas = document.createElement('canvas');
-            const certId = certIdsRef.current.get(rowIndex);
+            const certId = registeredCertIds.get(rowIndex);
             const cert = await generateCertificate({
               templateImage,
               boxes: validBoxes,
@@ -526,7 +500,6 @@ export function useEmailBatchRunner() {
     setLogs({ firstSent: null, lastSent: null, totalElapsed: 0 });
     setRetryQueue([]);
     setNeedsReconnect(false);
-    certIdsRef.current = new Map();
     deliveryRecordsRef.current = new Map();
   };
 

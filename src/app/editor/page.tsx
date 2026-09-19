@@ -113,6 +113,8 @@ function WorkspaceContent() {
         }
 
         // 1. If event is specified, query dashboard event details (includes participants & template)
+        let loadedCertIds: Map<number, string> | null = null;
+
         if (eventParam) {
           const res = await fetch(
             `/api/dashboard?event=${encodeURIComponent(eventParam)}&includeRowData=true&includeTemplate=true`,
@@ -124,6 +126,13 @@ function WorkspaceContent() {
           if (res.ok) {
             const data = await res.json();
             if (isCancelled) return;
+
+            if (data.participants && data.participants.length > 0) {
+              loadedCertIds = new Map();
+              data.participants.forEach((p: { id?: string }, idx: number) => {
+                if (p.id) loadedCertIds!.set(idx + 2, p.id);
+              });
+            }
 
             // Auto-populate CSV data from event participants if not already fully hydrated
             const currentCsv = useAppStore.getState().csvData;
@@ -140,6 +149,9 @@ function WorkspaceContent() {
             ) {
               const { file: csvFile, headers, rows } = buildVirtualCsvFile(eventParam, data.participants);
               useAppStore.getState().setCsvData(csvFile, headers, rows);
+              if (loadedCertIds && loadedCertIds.size > 0) {
+                useAppStore.getState().setBatchRegistered(true, loadedCertIds);
+              }
             }
 
             if (data.template) {
@@ -178,23 +190,28 @@ function WorkspaceContent() {
             const info = `${file.name} (${img.width}×${img.height})`;
             const store = useAppStore.getState();
             store.setTemplate(file, img, info);
-            if (tpl.layoutConfig?.boxes && Array.isArray(tpl.layoutConfig.boxes)) {
+            if (tpl?.layoutConfig?.boxes && Array.isArray(tpl.layoutConfig.boxes)) {
               store.setBoxes(tpl.layoutConfig.boxes);
             }
-            if (tpl.layoutConfig?.qrZones && Array.isArray(tpl.layoutConfig.qrZones)) {
+            if (tpl?.layoutConfig?.qrZones && Array.isArray(tpl.layoutConfig.qrZones)) {
               store.setQrZones(tpl.layoutConfig.qrZones);
             }
-            if (tpl.layoutConfig?.defaultFont) {
+            if (tpl?.layoutConfig?.defaultFont) {
               store.setDefaultFont(tpl.layoutConfig.defaultFont);
             }
-            if (tpl.layoutConfig?.defaultFontSize) {
+            if (tpl?.layoutConfig?.defaultFontSize) {
               store.setDefaultFontSize(tpl.layoutConfig.defaultFontSize);
             }
-            if (tpl.layoutConfig?.defaultFontColor) {
+            if (tpl?.layoutConfig?.defaultFontColor) {
               store.setDefaultFontColor(tpl.layoutConfig.defaultFontColor);
             }
             if (eventParam) {
               store.setEventName(eventParam);
+            }
+
+            // Ensure batch registration state is preserved after setTemplate
+            if (loadedCertIds && loadedCertIds.size > 0) {
+              store.setBatchRegistered(true, loadedCertIds);
             }
           };
           img.src = tpl.imageData;

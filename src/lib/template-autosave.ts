@@ -62,11 +62,20 @@ export async function autoSaveCurrentTemplate(
       },
     };
 
+    const activeToken =
+      token ||
+      (typeof window !== 'undefined'
+        ? localStorage.getItem('certify_auth_token') ||
+          sessionStorage.getItem('certify_session_token') ||
+          localStorage.getItem('credify_auth_token') ||
+          sessionStorage.getItem('credify_session_token')
+        : null);
+
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+    if (activeToken) {
+      headers['Authorization'] = `Bearer ${activeToken}`;
     }
 
     const res = await fetch('/api/templates', {

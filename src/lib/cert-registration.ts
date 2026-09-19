@@ -48,12 +48,16 @@ export async function ensureCertificateIds(params: {
 
   const ids = await registerCertificates(
     pending.map(({ row }) => {
-      // If activeFields specified, only persist fields displayed on the certificate
-      const rowData = activeFieldSet
-        ? Object.fromEntries(
-            Object.entries(row).filter(([key]) => activeFieldSet.has(key))
-          )
-        : row;
+      // Preserve full CSV row data so all recipient columns remain intact in database
+      const rowData =
+        activeFieldSet && activeFieldSet.size > 0
+          ? {
+              ...row,
+              ...Object.fromEntries(
+                Object.entries(row).filter(([key]) => activeFieldSet.has(key))
+              ),
+            }
+          : row;
 
       return {
         recipientName: getDisplayName(row) || 'Certificate Holder',

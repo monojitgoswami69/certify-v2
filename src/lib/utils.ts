@@ -346,22 +346,41 @@ export function buildVirtualCsvFile(
       row = { ...p.rowData };
     }
 
-    // Always ensure primary recipient identifiers exist in row
-    const effectiveName =
-      row['Name'] ||
-      row['Full Name'] ||
-      row['recipientName'] ||
-      p.recipientName ||
-      '';
+    // Check if any recipient name key exists in row
+    const existingNameKey = Object.keys(row).find((k) => {
+      const lower = k.trim().toLowerCase();
+      return (
+        lower === 'name' ||
+        lower === 'full name' ||
+        lower === 'fullname' ||
+        lower === 'recipientname' ||
+        lower === 'student name'
+      );
+    });
 
-    if (!row['Name'] && effectiveName) {
+    const effectiveName = (p.recipientName || '').trim();
+    if (!existingNameKey && effectiveName) {
       row['Name'] = effectiveName;
+    } else if (existingNameKey && !row[existingNameKey] && effectiveName) {
+      row[existingNameKey] = effectiveName;
     }
-    if (!row['Full Name'] && effectiveName) {
-      row['Full Name'] = effectiveName;
-    }
-    if (p.recipientEmail && !row['Email']) {
-      row['Email'] = p.recipientEmail;
+
+    // Check if any email key exists in row
+    const existingEmailKey = Object.keys(row).find((k) => {
+      const lower = k.trim().toLowerCase();
+      return (
+        lower === 'email' ||
+        lower === 'mail' ||
+        lower === 'emailaddress' ||
+        lower === 'recipientemail'
+      );
+    });
+
+    const effectiveEmail = (p.recipientEmail || '').trim();
+    if (!existingEmailKey && effectiveEmail) {
+      row['Email'] = effectiveEmail;
+    } else if (existingEmailKey && !row[existingEmailKey] && effectiveEmail) {
+      row[existingEmailKey] = effectiveEmail;
     }
 
     Object.keys(row).forEach((k) => headersSet.add(k));
@@ -370,7 +389,6 @@ export function buildVirtualCsvFile(
 
   if (headersSet.size === 0) {
     headersSet.add('Name');
-    headersSet.add('Full Name');
   }
 
   const headers = Array.from(headersSet);

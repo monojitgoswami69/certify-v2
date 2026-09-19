@@ -14,7 +14,7 @@ import {
 } from '../../lib/utils';
 import { generateCertificate } from '../../lib/certificate-engine';
 import { ensureFontsLoaded, loadFontsForWorker, type WorkerFontData } from '../../lib/font-loader';
-import { ensureCertificateIds, buildVerifyUrlFor } from '../../lib/cert-registration';
+import { buildVerifyUrlFor } from '../../lib/cert-registration';
 import { autoSaveCurrentTemplate } from '../../lib/template-autosave';
 import {
   CertificateWorkerPool,
@@ -87,6 +87,8 @@ export function useCertificateBatchGenerator() {
     exportFormats,
     setExportFormats,
     setError,
+    isBatchRegistered,
+    registeredCertIds,
   } = useAppStore();
 
   const { token } = useAuthStore();
@@ -103,9 +105,6 @@ export function useCertificateBatchGenerator() {
   const [localPaused, setLocalPaused] = useState(false);
   const workerPoolRef = useRef<CertificateWorkerPool | null>(null);
 
-  // rowIndex -> verification id, survives "Retry Failed"
-  const certIdsRef = useRef<Map<number, string>>(new Map());
-
   // Accumulated successful certificates across initial run and retries
   const successfulCertsRef = useRef<Map<number, GeneratedCertItem>>(new Map());
 
@@ -114,7 +113,13 @@ export function useCertificateBatchGenerator() {
   const errorsRef = useRef<FailedRecord[]>([]);
 
   const validBoxes = boxes.filter((b) => b.field);
-  const isReady = Boolean(templateImage && csvData.length > 0 && validBoxes.length > 0);
+  const useQr = qrZones.length > 0;
+  const isReady = Boolean(
+    templateImage &&
+      csvData.length > 0 &&
+      validBoxes.length > 0 &&
+      (!useQr || isBatchRegistered)
+  );
 
   // Clean up workers on unmount
   useEffect(() => {
@@ -278,52 +283,19 @@ export function useCertificateBatchGenerator() {
         console.warn('[Batch Generator] Font preloading error:', fontErr);
       }
 
+      if (useQr && !isBatchRegistered) {
+        setError('Batch is not registered. Please register certificates to activate QR verification before generating.');
+        return;
+      }
+
       if (!isRetry) {
         setLogs({ firstGenerated: new Date(), lastGenerated: null, totalElapsed: 0 });
       }
 
-      // Step 2: Register batch records in database
-      const useQr = qrZones.length > 0;
-      try {
-        setProgress((prev) => ({
-          ...prev,
-          status: 'loading-fonts',
-          currentName: useQr ? 'Registering certificates...' : 'Saving batch records...',
-        }));
-        const activeFields = Array.from(
-          new Set([
-            ...validBoxes.map((b) => b.field),
-            ...(emailColumn ? [emailColumn] : []),
-          ])
-        ).filter(Boolean);
-
-        certIdsRef.current = await ensureCertificateIds({
-          records,
-          existingIds: certIdsRef.current,
-          getDisplayName: getFilenameBasis,
-          getEmail: (row) => (emailColumn ? (row[emailColumn] || '').trim() : ''),
-          templateName: templateFile?.name || 'template',
-          eventName: eventName || 'General Event',
-          isStatic: !useQr,
-          activeFields,
-        });
-      } catch (err) {
-        if (useQr) {
-          setError(
-            `QR registration failed: ${err instanceof Error ? err.message : 'unknown error'}. ` +
-              'Batch aborted — no certificates were generated with unverifiable QR codes.'
-          );
-          setProgress(DEFAULT_PROGRESS);
-          return;
-        } else {
-          console.warn('[Batch Generator] Database registration warning:', err);
-        }
-      }
-
-      // Step 3: Prepare tasks for worker pool
+      // Step 2: Prepare tasks for worker pool
       const tasks: WorkerTask[] = records.map(({ rowIndex, row }, i) => {
         const name = getFilenameBasis(row);
-        const certId = certIdsRef.current.get(rowIndex);
+        const certId = registeredCertIds.get(rowIndex);
         const verificationUrl = useQr && certId ? buildVerifyUrlFor(certId) : undefined;
         return {
           id: i,
@@ -451,7 +423,7 @@ export function useCertificateBatchGenerator() {
           const filename = `${sanitizeFilename(filenameBasis)}_${rowIndex}`;
 
           try {
-            const certId = certIdsRef.current.get(rowIndex);
+            const certId = registeredCertIds.get(rowIndex);
             const verificationUrl = useQr && certId ? buildVerifyUrlFor(certId) : undefined;
 
             const cert = await generateCertificate({
@@ -530,7 +502,7 @@ export function useCertificateBatchGenerator() {
         }
 
         if (successfulCertsRef.current.has(rowIndex) || !abortRef.current) {
-          const certId = certIdsRef.current.get(rowIndex);
+          const certId = registeredCertIds.get(rowIndex);
           const verificationUrl = useQr && certId ? buildVerifyUrlFor(certId) : undefined;
           return {
             rowIndex,
@@ -666,7 +638,6 @@ export function useCertificateBatchGenerator() {
     setProgress(DEFAULT_PROGRESS);
     setLogs(DEFAULT_LOGS);
     setRetryQueue([]);
-    certIdsRef.current = new Map();
     successfulCertsRef.current = new Map();
     failedMapRef.current = new Map();
     errorsRef.current = [];

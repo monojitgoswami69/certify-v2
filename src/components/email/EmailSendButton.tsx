@@ -13,11 +13,20 @@ import {
   Clock,
   AlertTriangle,
   FileSpreadsheet,
+  ShieldCheck,
 } from 'lucide-react';
 import { useEmailBatchRunner } from './useEmailBatchRunner';
+import { useBatchRegistration } from '../sidebar/useBatchRegistration';
 import { EmailDeliveryModal } from '../modals/EmailDeliveryModal';
 
 export function EmailSendButton() {
+  const {
+    isBatchRegistered,
+    needsRegistration,
+    isBatchRegistering,
+    batchRegistrationError,
+    registerBatch,
+  } = useBatchRegistration();
   const {
     emailProgress,
     csvData,
@@ -71,15 +80,46 @@ export function EmailSendButton() {
   return (
     <>
       {emailProgress.status === 'idle' && (
-        <div className="space-y-2">
-          <button
-            onClick={handleSend}
-            disabled={!isReady}
-            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-primary-600 to-indigo-600 text-white rounded-lg font-medium hover:from-primary-700 hover:to-indigo-700 disabled:from-slate-200 disabled:to-slate-200 disabled:text-slate-400 disabled:shadow-none disabled:cursor-not-allowed transition-all shadow-lg shadow-primary-500/25 cursor-pointer"
-          >
-            <Send className="w-5 h-5" />
-            <span>Send to {csvData.length} Recipients</span>
-          </button>
+        <div className="space-y-3">
+          {!isBatchRegistered ? (
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={() => registerBatch(false)}
+                disabled={isBatchRegistering}
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-medium disabled:from-slate-200 disabled:to-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed transition-all shadow-md shadow-slate-900/10 cursor-pointer"
+              >
+                {isBatchRegistering ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-white" />
+                    <span>Registering {csvData.length} Certificates...</span>
+                  </>
+                ) : (
+                  <>
+                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                    <span>Register Event Batch ({csvData.length} Certificates)</span>
+                  </>
+                )}
+              </button>
+              <p className="text-[11px] text-slate-500 text-center">
+                Certificates must be registered to save the event in DB before dispatching emails.
+              </p>
+              {batchRegistrationError && (
+                <p className="text-xs text-red-600 text-center font-medium">
+                  {batchRegistrationError}
+                </p>
+              )}
+            </div>
+          ) : (
+            <button
+              onClick={handleSend}
+              disabled={!isReady}
+              className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-primary-600 to-indigo-600 text-white rounded-lg font-medium hover:from-primary-700 hover:to-indigo-700 disabled:from-slate-200 disabled:to-slate-200 disabled:text-slate-400 disabled:shadow-none disabled:cursor-not-allowed transition-all shadow-lg shadow-primary-500/25 cursor-pointer"
+            >
+              <Send className="w-5 h-5" />
+              <span>Send to {csvData.length} Recipients</span>
+            </button>
+          )}
 
           {allTrackedRecords.length > 0 && (
             <button

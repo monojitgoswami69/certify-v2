@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { desc, eq, or, isNull } from 'drizzle-orm';
+import fs from 'fs';
+import path from 'path';
 import { db } from '../../../lib/db';
 import { certificates, templates } from '../../../db/schema';
 import { getAdminUserFromRequest, unauthorizedResponse } from '../../../lib/server-auth';
@@ -128,41 +130,181 @@ export async function GET(request: Request) {
             })
             .from(templates);
 
-          if (templateHeaders.length > 0) {
-            const tplBase = eventTemplateName
-              ? eventTemplateName.replace(/\.[^/.]+$/, '').trim().toLowerCase()
-              : '';
-            const evBase = decodedEventName.trim().toLowerCase();
+          const tplBase = eventTemplateName
+            ? eventTemplateName.replace(/\.[^/.]+$/, '').trim().toLowerCase()
+            : '';
+          const evBase = decodedEventName.trim().toLowerCase();
 
-            const matchMeta =
+          let matchMeta = null;
+          if (templateHeaders.length > 0) {
+            matchMeta =
               templateHeaders.find((t) => t.name.trim().toLowerCase() === evBase) ||
-              templateHeaders.find((t) => tplBase && t.name.trim().toLowerCase() === tplBase) ||
               templateHeaders.find(
                 (t) =>
-                  (evBase && t.name.toLowerCase().includes(evBase)) ||
-                  (tplBase && t.name.toLowerCase().includes(tplBase))
+                  eventTemplateName &&
+                  t.name.trim().toLowerCase() === eventTemplateName.trim().toLowerCase()
               ) ||
-              (templateHeaders.length === 1 ? templateHeaders[0] : null);
+              templateHeaders.find((t) => tplBase && t.name.trim().toLowerCase() === tplBase);
+          }
 
-            if (matchMeta) {
-              const [fullTemplate] = await db
-                .select({
-                  id: templates.id,
-                  name: templates.name,
-                  imageData: templates.imageData,
-                  width: templates.width,
-                  height: templates.height,
-                  layoutConfig: templates.layoutConfig,
-                })
-                .from(templates)
-                .where(eq(templates.id, matchMeta.id))
-                .limit(1);
+          if (matchMeta) {
+            const [fullTemplate] = await db
+              .select({
+                id: templates.id,
+                name: templates.name,
+                imageData: templates.imageData,
+                width: templates.width,
+                height: templates.height,
+                layoutConfig: templates.layoutConfig,
+              })
+              .from(templates)
+              .where(eq(templates.id, matchMeta.id))
+              .limit(1);
 
-              matchedTemplate = fullTemplate || null;
+            matchedTemplate = fullTemplate || null;
+          }
+
+          // Fallback / Auto-seed for Sample Data if not yet in templates table
+          if (
+            !matchedTemplate &&
+            (evBase === 'sample data' ||
+              tplBase === 'sample-template' ||
+              eventTemplateName?.toLowerCase() === 'sample-template.png')
+          ) {
+            try {
+              const sampleImgPath = path.join(process.cwd(), 'demo-data', 'sample-template.png');
+              if (fs.existsSync(sampleImgPath)) {
+                const buf = fs.readFileSync(sampleImgPath);
+                const base64 = `data:image/png;base64,${buf.toString('base64')}`;
+                const width = buf.readUInt32BE(16);
+                const height = buf.readUInt32BE(20);
+                const layoutConfig = {
+                  boxes: [
+                    {
+                      id: 'sample-box-1',
+                      x: 350,
+                      y: 640,
+                      width: 1300,
+                      height: 75,
+                      field: 'Name',
+                      fontSize: 44,
+                      fontColor: '#0f172a',
+                      fontFamily: 'Inter',
+                      hAlign: 'center',
+                      vAlign: 'bottom',
+                    },
+                    {
+                      id: 'sample-box-2',
+                      x: 400,
+                      y: 770,
+                      width: 1200,
+                      height: 50,
+                      field: 'Course',
+                      fontSize: 22,
+                      fontColor: '#334155',
+                      fontFamily: 'Inter',
+                      hAlign: 'center',
+                      vAlign: 'bottom',
+                    },
+                    {
+                      id: 'sample-box-3',
+                      x: 400,
+                      y: 890,
+                      width: 600,
+                      height: 40,
+                      field: 'Date',
+                      fontSize: 16,
+                      fontColor: '#64748b',
+                      fontFamily: 'Inter',
+                      hAlign: 'center',
+                      vAlign: 'bottom',
+                    },
+                  ],
+                  qrZones: [
+                    {
+                      id: 'sample-qr-1',
+                      x: 1620,
+                      y: 1040,
+                      size: 190,
+                      style: {
+                        bodyShape: 'smooth',
+                        eyeFrameShape: 'rounded',
+                        eyeDotShape: 'rounded',
+                        patternColor: '#000000',
+                        backgroundColor: 'transparent',
+                        centerShape: 'rounded',
+                      },
+                    },
+                  ],
+                  defaultFont: 'Inter',
+                  defaultFontSize: 44,
+                  defaultFontColor: '#0f172a',
+                };
+
+                const [inserted] = await db
+                  .insert(templates)
+                  .values({
+                    name: 'Sample Data',
+                    imageData: base64,
+                    width,
+                    height,
+                    layoutConfig,
+                  })
+                  .returning();
+
+                matchedTemplate = inserted || null;
+              }
+            } catch (seedErr) {
+              console.warn('[Dashboard] Could not auto-seed sample template:', seedErr);
             }
           }
         } catch (err) {
           console.warn('[Dashboard] Could not fetch template for event:', err);
+        }
+      }
+
+      // Auto-repair participants rowData for 'Sample Data' if columns were stripped
+      if (decodedEventName.trim().toLowerCase() === 'sample data') {
+        try {
+          const sampleCsvPath = path.join(process.cwd(), 'demo-data', 'sample_data.csv');
+          if (fs.existsSync(sampleCsvPath)) {
+            const csvContent = fs.readFileSync(sampleCsvPath, 'utf-8');
+            const lines = csvContent.trim().split(/\r?\n/).filter(Boolean);
+            if (lines.length > 1) {
+              const headers = lines[0].split(',').map((h) => h.replace(/^"|"$/g, '').trim());
+              const sampleRows: Array<Record<string, string>> = [];
+              for (let i = 1; i < lines.length; i++) {
+                const parts = lines[i].match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g) || lines[i].split(',');
+                const cleanParts = parts.map((v) => v.replace(/^"|"$/g, '').trim());
+                const r: Record<string, string> = {};
+                headers.forEach((h, idx) => {
+                  r[h] = cleanParts[idx] || '';
+                });
+                sampleRows.push(r);
+              }
+
+              for (let idx = 0; idx < participants.length; idx++) {
+                const p = participants[idx];
+                const matchedSampleRow =
+                  sampleRows.find(
+                    (sr) =>
+                      sr.Name?.toLowerCase() === p.recipientName.toLowerCase() ||
+                      (p.recipientEmail && sr.Email?.toLowerCase() === p.recipientEmail.toLowerCase())
+                  ) || sampleRows[idx];
+
+                if (matchedSampleRow && (!p.rowData || Object.keys(p.rowData).length <= 2)) {
+                  p.rowData = matchedSampleRow;
+                  await db
+                    .update(certificates)
+                    .set({ rowData: matchedSampleRow })
+                    .where(eq(certificates.id, p.id))
+                    .catch(() => {});
+                }
+              }
+            }
+          }
+        } catch (repairErr) {
+          console.warn('[Dashboard] Could not auto-repair sample participant data:', repairErr);
         }
       }
 
