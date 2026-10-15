@@ -25,7 +25,8 @@ import {
 import { useAuthStore } from '../../store/useAuthStore';
 import { useAppStore } from '../../store/useAppStore';
 import { useHistoryStore } from '../../store/useHistoryStore';
-import { downloadBlob, sanitizeFilename, buildVirtualCsvFile } from '../../lib/utils';
+import { downloadBlob, sanitizeFilename } from '../../lib/utils';
+import { loadWorkspace, isWorkspaceLoadedFor } from '../../lib/workspace-loader';
 import type { DashboardEventSummary, DashboardParticipant } from '../api/dashboard/route';
 
 function getStoredToken(): string | null {
@@ -372,148 +373,20 @@ function DashboardContent() {
 
   // Open Event Template in Studio to Add New Records
   const [loadingStudio, setLoadingStudio] = useState(false);
-  const handleOpenEventInStudio = async () => {
-    const evName = (detailedEventSummary?.eventName || selectedEventName || '').trim();
-    if (!evName) return;
+  const handleOpenEventInStudio = async (targetEventName?: string | React.MouseEvent) => {
+    const rawName = typeof targetEventName === 'string' ? targetEventName : null;
+    const evName = (rawName || detailedEventSummary?.eventName || selectedEventName || '').trim();
+    const activeToken = token || getStoredToken();
+    if (!evName || !activeToken || loadingStudio) return;
     setLoadingStudio(true);
-
     try {
-      const activeToken = token || getStoredToken();
-      if (!activeToken) {
-        router.push('/login');
-        return;
+      if (!isWorkspaceLoadedFor(evName)) {
+        await loadWorkspace({ eventName: evName, token: activeToken });
       }
-
-      // 1. Fetch full event details including participants, rowData, and matched template
-      let tpl: { id?: string; name: string; imageData: string; layoutConfig?: any } | null = null;
-      let studioParticipants = participants;
-
-      const eventRes = await fetch(
-        `/api/dashboard?event=${encodeURIComponent(evName)}&includeRowData=true&includeTemplate=true`,
-        { headers: { Authorization: `Bearer ${activeToken}` } }
-      );
-
-      if (eventRes.ok) {
-        const eventData = await eventRes.json();
-        if (eventData.template) {
-          tpl = eventData.template;
-        }
-        if (eventData.participants && eventData.participants.length > 0) {
-          studioParticipants = eventData.participants;
-        }
-      }
-
-      // 2. If template was not directly resolved by event route, query /api/templates strictly
-      if (!tpl) {
-        const tplRes = await fetch('/api/templates', {
-          headers: { Authorization: `Bearer ${activeToken}` },
-        });
-
-        if (tplRes.ok) {
-          const tplListData = await tplRes.json();
-          const templatesList = tplListData.templates || [];
-          const evNameLower = evName.trim().toLowerCase();
-          const tplName = (detailedEventSummary?.templateName || '').trim().toLowerCase();
-          const tplBase = tplName.replace(/\.[^/.]+$/, '').trim().toLowerCase();
-
-          const match =
-            templatesList.find((t: { name: string }) => (t.name || '').trim().toLowerCase() === evNameLower) ||
-            templatesList.find((t: { name: string }) => (t.name || '').trim().toLowerCase() === tplName) ||
-            templatesList.find((t: { name: string }) => (t.name || '').trim().toLowerCase() === tplBase);
-
-          if (match) {
-            const detailRes = await fetch(`/api/templates/${match.id}`, {
-              headers: { Authorization: `Bearer ${activeToken}` },
-            });
-            if (detailRes.ok) {
-              const detailData = await detailRes.json();
-              if (detailData.template?.imageData) {
-                tpl = detailData.template;
-              }
-            }
-          }
-        }
-      }
-
-      // Reset store before populating with this event's layout & template
-      const store = useAppStore.getState();
-      store.reset();
-      useHistoryStore.getState().clearHistory();
-
-      // If no template graphic found, populate CSV data and open Studio gracefully
-      if (!tpl || !tpl.imageData) {
-        if (evName) store.setEventName(evName);
-        if (studioParticipants && studioParticipants.length > 0) {
-          const { file: csvFile, headers, rows } = buildVirtualCsvFile(evName, studioParticipants);
-          store.setCsvData(csvFile, headers, rows);
-          const certIdsMap = new Map<number, string>();
-          studioParticipants.forEach((p, idx) => {
-            if (p.id) certIdsMap.set(idx + 2, p.id);
-          });
-          if (certIdsMap.size > 0) {
-            store.setBatchRegistered(true, certIdsMap);
-          }
-        }
-        router.push(`/editor?event=${encodeURIComponent(evName)}&from=event`);
-        return;
-      }
-
-      // Convert Base64 data URL to Image and File named after event
-      const blobRes = await fetch(tpl.imageData);
-      const blob = await blobRes.blob();
-      const filename = `${sanitizeFilename(evName || tpl.name)}.png`;
-      const file = new File([blob], filename, { type: 'image/png' });
-
-      await new Promise<void>((resolve, reject) => {
-        const img = new window.Image();
-        img.onload = () => {
-          const info = `${file.name} (${img.width}×${img.height})`;
-          store.setTemplate(file, img, info);
-          if (tpl?.layoutConfig?.boxes && Array.isArray(tpl.layoutConfig.boxes)) {
-            store.setBoxes(tpl.layoutConfig.boxes);
-          }
-          if (tpl?.layoutConfig?.qrZones && Array.isArray(tpl.layoutConfig.qrZones)) {
-            store.setQrZones(tpl.layoutConfig.qrZones);
-          }
-          if (tpl?.layoutConfig?.defaultFont) {
-            store.setDefaultFont(tpl.layoutConfig.defaultFont);
-          }
-          if (tpl?.layoutConfig?.defaultFontSize) {
-            store.setDefaultFontSize(tpl.layoutConfig.defaultFontSize);
-          }
-          if (tpl?.layoutConfig?.defaultFontColor) {
-            store.setDefaultFontColor(tpl.layoutConfig.defaultFontColor);
-          }
-          if (evName) {
-            store.setEventName(evName);
-          }
-
-          // Auto-populate CSV data and restore batch registration status
-          if (studioParticipants && studioParticipants.length > 0) {
-            const { file: csvFile, headers, rows } = buildVirtualCsvFile(evName, studioParticipants);
-            store.setCsvData(csvFile, headers, rows);
-
-            const certIdsMap = new Map<number, string>();
-            studioParticipants.forEach((p, idx) => {
-              if (p.id) certIdsMap.set(idx + 2, p.id);
-            });
-            if (certIdsMap.size > 0) {
-              store.setBatchRegistered(true, certIdsMap);
-            }
-          }
-
-          resolve();
-        };
-        img.onerror = () => reject(new Error('Failed to decode template graphic'));
-        img.src = tpl.imageData;
-      });
-
-      router.push(`/editor?event=${encodeURIComponent(evName)}&from=event${tpl?.id ? `&templateId=${tpl.id}` : ''}`);
-    } catch (err) {
-      console.error('[Open in Studio Error]:', err);
       router.push(`/editor?event=${encodeURIComponent(evName)}&from=event`);
-    } finally {
+    } catch (err) {
       setLoadingStudio(false);
+      alert(err instanceof Error ? err.message : 'Failed to open event in Studio');
     }
   };
 
@@ -689,7 +562,11 @@ function DashboardContent() {
                   className="h-9 inline-flex items-center gap-1.5 px-3.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-xs sm:text-sm font-saira font-semibold uppercase tracking-wider transition-all cursor-pointer shadow-2xs hover:shadow-xs active:scale-[0.98] disabled:opacity-50"
                   title="Open this event's template & layout in Canvas Studio to issue new certificates"
                 >
-                  <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                  {loadingStudio ? (
+                    <span className="w-3.5 h-3.5 shrink-0 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                  )}
                   <span>{loadingStudio ? 'Opening...' : 'Open in Studio'}</span>
                 </button>
 

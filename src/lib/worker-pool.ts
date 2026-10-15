@@ -169,10 +169,12 @@ export class CertificateWorkerPool {
         const worker = this.workers[workerIndex];
 
         this.pendingResolves.push(resolve);
+        const reportedTaskIds = new Set<number>();
 
         const handler = (event: MessageEvent) => {
           if (event.data.type === 'itemComplete') {
             const r: BatchResultItem = event.data.result;
+            reportedTaskIds.add(r.id);
             completedCount++;
 
             onResult?.(
@@ -197,6 +199,7 @@ export class CertificateWorkerPool {
           cleanup();
           console.error(`[WorkerPool] Worker ${workerIndex} encountered an unhandled error:`, err);
           for (const task of batch) {
+            if (reportedTaskIds.has(task.id)) continue;
             completedCount++;
             onResult?.(
               {

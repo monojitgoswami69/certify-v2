@@ -1,17 +1,63 @@
 import jwt from 'jsonwebtoken';
 import { NextResponse } from 'next/server';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'certify_super_secret_jwt_key_2026';
-export const AUTH_USERNAME = process.env.AUTH_USERNAME || 'admin';
-export const AUTH_PASSWORD = process.env.AUTH_PASSWORD || 'admin123';
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const DEV_JWT_SECRET = 'certify_dev_only_insecure_jwt_secret';
+const DEV_AUTH_USERNAME = 'admin';
+const DEV_AUTH_PASSWORD = 'admin123';
+const MIN_SECRET_LENGTH = 32;
 
-if (process.env.NODE_ENV !== 'production') {
-  if (!process.env.JWT_SECRET) {
-    console.warn('[security] JWT_SECRET is not set; using an insecure default. Set it in production.');
+let warnedInsecureDefaults = false;
+function warnInsecureDefaultsOnce() {
+  if (warnedInsecureDefaults) return;
+  warnedInsecureDefaults = true;
+  console.warn(
+    '[security] JWT_SECRET / AUTH_USERNAME / AUTH_PASSWORD not fully configured; using insecure development defaults.'
+  );
+}
+
+/**
+ * Resolved lazily (not at module load) so `next build` works without secrets,
+ * while production requests fail closed when the secret is missing or weak.
+ */
+function getJwtSecret(): string {
+  const secret = process.env.JWT_SECRET;
+  if (secret && secret.length >= MIN_SECRET_LENGTH) return secret;
+  if (IS_PRODUCTION) {
+    throw new Error(`JWT_SECRET must be set to at least ${MIN_SECRET_LENGTH} characters in production`);
   }
-  if (!process.env.AUTH_USERNAME || !process.env.AUTH_PASSWORD) {
-    console.warn('[security] AUTH_USERNAME/AUTH_PASSWORD not set; using insecure defaults.');
+  warnInsecureDefaultsOnce();
+  return secret || DEV_JWT_SECRET;
+}
+
+/**
+ * Password-login credentials. Returns null in production when they are unset
+ * or left at the well-known defaults, which disables password login entirely.
+ */
+export function getPasswordCredentials(): { username: string; password: string } | null {
+  const username = process.env.AUTH_USERNAME?.trim();
+  const password = process.env.AUTH_PASSWORD;
+  if (username && password) {
+    if (IS_PRODUCTION && password === DEV_AUTH_PASSWORD) return null;
+    return { username, password };
   }
+  if (IS_PRODUCTION) return null;
+  warnInsecureDefaultsOnce();
+  return { username: username || DEV_AUTH_USERNAME, password: password || DEV_AUTH_PASSWORD };
+}
+
+/** Comma-separated allowlist of Google account emails permitted to use the app. */
+export function getAllowedEmails(): string[] {
+  const raw =
+    process.env.ADMIN_EMAILS ||
+    process.env.ALLOWED_ADMIN_EMAILS ||
+    process.env.ADMIN_USERS ||
+    process.env.ADMIN_EMAIL ||
+    '';
+  return raw
+    .split(',')
+    .map((u) => u.trim().toLowerCase())
+    .filter(Boolean);
 }
 
 export interface JwtPayload {
@@ -22,103 +68,56 @@ export interface JwtPayload {
 
 export function createJwtToken(username: string, rememberMe = true): string {
   const expiresIn = rememberMe ? '30d' : '24h';
-  return jwt.sign({ username }, JWT_SECRET, { expiresIn, algorithm: 'HS256' });
+  return jwt.sign({ username }, getJwtSecret(), { expiresIn, algorithm: 'HS256' });
 }
 
 export function verifyJwtToken(token: string): JwtPayload | null {
   try {
     if (!token || typeof token !== 'string') return null;
-    return jwt.verify(token.trim(), JWT_SECRET, {
+    const payload = jwt.verify(token.trim(), getJwtSecret(), {
       algorithms: ['HS256'],
-    }) as JwtPayload;
+    });
+    if (typeof payload !== 'object' || typeof payload.username !== 'string') return null;
+    return payload as JwtPayload;
   } catch {
     return null;
   }
 }
 
+/**
+ * The app is single-tenant: the configured password user plus any explicitly
+ * allowlisted Google emails are authorized. Anyone else is rejected, even with
+ * a correctly signed token (e.g. after being removed from the allowlist).
+ */
 export function isAdminUser(username: string | null | undefined): boolean {
   if (!username || typeof username !== 'string') return false;
-  const trimmed = username.trim();
-  if (!trimmed) return false;
+  const normalized = username.trim().toLowerCase();
+  if (!normalized) return false;
 
-  // 1. Direct match with configured AUTH_USERNAME
-  if (trimmed.toLowerCase() === AUTH_USERNAME.toLowerCase()) {
-    return true;
-  }
+  const creds = getPasswordCredentials();
+  if (creds && normalized === creds.username.toLowerCase()) return true;
 
-  // 2. Optional admin whitelist via environment variables
-  const allowedAdminEnv =
-    process.env.ADMIN_EMAILS ||
-    process.env.ALLOWED_ADMIN_EMAILS ||
-    process.env.ADMIN_USERS ||
-    process.env.ADMIN_EMAIL;
-
-  if (allowedAdminEnv) {
-    const list = allowedAdminEnv
-      .split(',')
-      .map((u) => u.trim().toLowerCase())
-      .filter(Boolean);
-    return list.includes(trimmed.toLowerCase());
-  }
-
-  // 3. By default in single-tenant setup, any user holding a valid JWT signed by JWT_SECRET is authorized
-  return true;
+  return getAllowedEmails().includes(normalized);
 }
 
+/**
+ * Only the Authorization header is accepted. Cookie-based auth is deliberately
+ * not supported, so cross-site requests can never ride an ambient session (CSRF).
+ */
 export function getAuthUserFromRequest(request: Request): string | null {
-  // 1. Authorization header: Bearer <token>
   const authHeader = request.headers.get('authorization');
-  if (authHeader) {
-    const match = authHeader.match(/^bearer\s+(\S+)$/i);
-    if (match) {
-      const payload = verifyJwtToken(match[1]);
-      if (payload?.username) return payload.username;
-    }
-  }
+  if (!authHeader) return null;
 
-  // 2. Custom header fallbacks
-  const xAuthToken = request.headers.get('x-auth-token') || request.headers.get('x-access-token');
-  if (xAuthToken) {
-    const payload = verifyJwtToken(xAuthToken.trim());
-    if (payload?.username) return payload.username;
-  }
+  const match = authHeader.match(/^bearer\s+(\S+)$/i);
+  if (!match) return null;
 
-  // 3. Cookie headers
-  const cookieHeader = request.headers.get('cookie');
-  if (cookieHeader) {
-    const cookies = cookieHeader.split(';');
-    for (const cookie of cookies) {
-      const [rawKey, ...rawVal] = cookie.trim().split('=');
-      const key = rawKey?.trim();
-      const val = rawVal.join('=')?.trim();
-      if (
-        key === 'certify_auth_token' ||
-        key === 'certify_session_token' ||
-        key === 'auth_token' ||
-        key === 'credify_auth_token' ||
-        key === 'credify_session_token'
-      ) {
-        if (val) {
-          try {
-            const cleanToken = decodeURIComponent(val).replace(/^["']|["']$/g, '');
-            const payload = verifyJwtToken(cleanToken);
-            if (payload?.username) return payload.username;
-          } catch {
-            // Ignore malformed cookie and continue
-          }
-        }
-      }
-    }
-  }
-
-  return null;
+  const payload = verifyJwtToken(match[1]);
+  if (!payload?.username || !isAdminUser(payload.username)) return null;
+  return payload.username;
 }
 
 export function getAdminUserFromRequest(request: Request): string | null {
-  const username = getAuthUserFromRequest(request);
-  if (!username) return null;
-  if (!isAdminUser(username)) return null;
-  return username;
+  return getAuthUserFromRequest(request);
 }
 
 export function unauthorizedResponse(message = 'Unauthorized'): NextResponse {

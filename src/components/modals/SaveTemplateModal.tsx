@@ -28,6 +28,13 @@ export function SaveTemplateModal({ isOpen, onClose, onSaved }: SaveTemplateModa
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    setTemplateName(templateFile?.name ? templateFile.name.replace(/\.[^/.]+$/, '') : 'Certificate Template');
+    setError(null);
+    setSuccess(false);
+  }, [isOpen, templateFile]);
+
   if (!isOpen || !mounted) return null;
 
   const handleSave = async (e: React.FormEvent) => {

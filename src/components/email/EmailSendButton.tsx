@@ -22,6 +22,7 @@ import { EmailDeliveryModal } from '../modals/EmailDeliveryModal';
 export function EmailSendButton() {
   const {
     isBatchRegistered,
+    registrationDirty,
     needsRegistration,
     isBatchRegistering,
     batchRegistrationError,
@@ -81,11 +82,11 @@ export function EmailSendButton() {
     <>
       {emailProgress.status === 'idle' && (
         <div className="space-y-3">
-          {!isBatchRegistered ? (
+          {!isBatchRegistered || registrationDirty ? (
             <div className="space-y-2">
               <button
                 type="button"
-                onClick={() => registerBatch(false)}
+                onClick={() => registerBatch(registrationDirty)}
                 disabled={isBatchRegistering}
                 className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-medium disabled:from-slate-200 disabled:to-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed transition-all shadow-md shadow-slate-900/10 cursor-pointer"
               >
@@ -337,7 +338,7 @@ export function EmailSendButton() {
             </div>
           )}
 
-          {unsentCount > 0 && emailProgress.errors.length === 0 && (
+          {unsentCount > emailProgress.errors.length && (
             <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-2">
               <p className="text-xs font-semibold text-amber-800">
                 Batch stopped with {unsentCount} unsent record{unsentCount > 1 ? 's' : ''}

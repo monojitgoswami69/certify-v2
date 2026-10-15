@@ -5,7 +5,7 @@ import { ArrowLeft, Mail, FileText, Paperclip, CheckCircle2, X } from 'lucide-re
 import { GoogleOAuthProvider, useGoogleLogin } from '@react-oauth/google';
 import { useAppStore } from '../../store/useAppStore';
 import { useAuthStore } from '../../store/useAuthStore';
-import { exchangeGoogleCode } from '../../lib/api-client';
+import { disconnectGoogleAccount, exchangeGoogleCode } from '../../lib/api-client';
 import { EmailSendButton } from './EmailSendButton';
 import { CustomSelect } from '../ui/CustomSelect';
 import { ResizeHandle } from '../ui/ResizeHandle';
@@ -232,7 +232,10 @@ function EmailSidebarContent() {
                     </div>
                   </div>
                   <button
-                    onClick={() => setConnectedGoogleAccount(null)}
+                    onClick={() => {
+                      setConnectedGoogleAccount(null);
+                      void disconnectGoogleAccount();
+                    }}
                     className="p-1 hover:bg-emerald-100 text-slate-400 hover:text-red-500 rounded transition-colors"
                     title="Disconnect Google Account"
                   >

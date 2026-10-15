@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server';
 import { OAuth2Client } from 'google-auth-library';
 import { getAuthUserFromRequest, unauthorizedResponse } from '../../../../../lib/server-auth';
-import { storeGoogleCredentials } from '../../../../../lib/google-token-store';
+import {
+  clearGoogleCredentials,
+  getStoredGoogleCredentials,
+  storeGoogleCredentials,
+} from '../../../../../lib/google-token-store';
 
 const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID || '';
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
@@ -21,7 +25,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ detail: 'Invalid request body' }, { status: 400 });
   }
 
-  if (!code) {
+  if (!code || typeof code !== 'string') {
     return NextResponse.json({ detail: 'Authorization code is required' }, { status: 400 });
   }
 
@@ -85,8 +89,29 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error('[Google token exchange error]:', error);
     return NextResponse.json(
-      { detail: error instanceof Error ? error.message : 'Failed to exchange Google authorization code' },
+      { detail: 'Failed to exchange Google authorization code' },
       { status: 400 }
     );
   }
+}
+
+/** Disconnects Gmail: forgets the server-held tokens and revokes the grant at Google. */
+export async function DELETE(request: Request) {
+  const username = getAuthUserFromRequest(request);
+  if (!username) {
+    return unauthorizedResponse('Invalid or expired token');
+  }
+
+  const creds = getStoredGoogleCredentials(username);
+  clearGoogleCredentials(username);
+
+  const tokenToRevoke = creds?.refresh_token || creds?.access_token;
+  if (tokenToRevoke) {
+    await fetch(`https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(tokenToRevoke)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    }).catch((err) => console.warn('[Google tokens] revoke failed:', err));
+  }
+
+  return NextResponse.json({ success: true });
 }

@@ -78,26 +78,42 @@ function createSampleTemplate(): Promise<{ file: File; img: HTMLImageElement; in
   });
 }
 
+const ALLOWED_TEMPLATE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
+const MAX_TEMPLATE_BYTES = 15 * 1024 * 1024;
+
 export function TemplateUpload() {
-  const { setTemplate } = useAppStore();
+  const { setTemplate, setError } = useAppStore();
 
   const handleFile = useCallback(
     (file: File) => {
-      if (!file || !file.type.startsWith('image/')) return;
+      if (!file) return;
+      const isAllowedType = file.type
+        ? ALLOWED_TEMPLATE_TYPES.includes(file.type)
+        : /\.(png|jpe?g|webp)$/i.test(file.name);
+      if (!isAllowedType) {
+        setError('Template must be a PNG, JPEG or WebP image.');
+        return;
+      }
+      if (file.size > MAX_TEMPLATE_BYTES) {
+        setError('Template image is too large (max 15 MB).');
+        return;
+      }
 
       const objectUrl = URL.createObjectURL(file);
       const img = new Image();
       img.onload = () => {
         URL.revokeObjectURL(objectUrl);
         const info = `${file.name} (${img.width}×${img.height})`;
+        setError(null);
         setTemplate(file, img, info);
       };
       img.onerror = () => {
         URL.revokeObjectURL(objectUrl);
+        setError('Could not read this image. It may be corrupted.');
       };
       img.src = objectUrl;
     },
-    [setTemplate]
+    [setTemplate, setError]
   );
 
   const handleDrop = useCallback(
@@ -141,7 +157,7 @@ export function TemplateUpload() {
       onDragOver={(e) => e.preventDefault()}
       onDrop={handleDrop}
     >
-      <input type="file" accept="image/*" className="hidden" onChange={handleChange} />
+      <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleChange} />
       <Upload className="w-8 h-8 text-slate-400" />
       <div className="text-center">
         <p className="text-sm text-slate-600">

@@ -6,6 +6,15 @@ import { hashToken, isValidCertificateId } from '../../../../lib/verification';
 import { checkRateLimit, getClientIp } from '../../../../lib/rate-limit';
 import { getAdminUserFromRequest } from '../../../../lib/server-auth';
 
+function maskEmail(email: string | null): string | null {
+  if (!email) return null;
+  const at = email.lastIndexOf('@');
+  if (at < 1) return null;
+  const local = email.slice(0, at);
+  const visible = local.length <= 2 ? local[0] : local.slice(0, 2);
+  return `${visible}${'•'.repeat(Math.max(3, local.length - visible.length))}${email.slice(at)}`;
+}
+
 /**
  * Public certificate verification endpoint backing the /verify/[id] page.
  * Malformed and unknown ids share the same neutral not_found response so the
@@ -36,7 +45,7 @@ export async function GET(
     return NextResponse.json({ status: 'not_found' });
   }
 
-  const normalizedId = decodeURIComponent(id).trim().toLowerCase();
+  const normalizedId = id.trim().toLowerCase();
   if (!isValidCertificateId(normalizedId)) {
     return NextResponse.json({ status: 'not_found' });
   }
@@ -111,20 +120,23 @@ export async function GET(
       );
     }
 
-    // Valid certificate: public verification response
+    // Valid certificate: anyone holding the QR link may verify it, but only admins see the full email
+    const isAdmin = Boolean(getAdminUserFromRequest(request));
     return NextResponse.json(
       {
         status: 'valid',
         recipientName: cert.recipientName,
-        recipientEmail: cert.recipientEmail,
+        recipientEmail: isAdmin ? cert.recipientEmail : maskEmail(cert.recipientEmail),
         eventName: cert.eventName,
         issuedAt: cert.issuedAt,
         issuedBy,
       },
       {
         headers: {
-          'Cache-Control': 'public, max-age=15, stale-while-revalidate=30',
-          'Vary': 'Authorization, Cookie',
+          'Cache-Control': isAdmin
+            ? 'private, no-store'
+            : 'public, max-age=15, stale-while-revalidate=30',
+          'Vary': 'Authorization',
         },
       }
     );

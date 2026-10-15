@@ -101,3 +101,10 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
 
   clearHistory: () => set({ past: [], future: [] }),
 }));
+
+// Snapshots hold coordinates for a specific template; undoing them onto a different one corrupts the layout
+useAppStore.subscribe((state, prev) => {
+  if (state.templateImage !== prev.templateImage) {
+    useHistoryStore.getState().clearHistory();
+  }
+});

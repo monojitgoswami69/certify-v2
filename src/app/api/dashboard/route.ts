@@ -5,6 +5,7 @@ import path from 'path';
 import { db } from '../../../lib/db';
 import { certificates, templates } from '../../../db/schema';
 import { getAdminUserFromRequest, unauthorizedResponse } from '../../../lib/server-auth';
+import { parseCsv } from '../../../lib/csv-parser';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -59,8 +60,8 @@ export async function GET(request: Request) {
     // Detailed View Mode: Fetch participants & CSV fields for an event
     // -------------------------------------------------------------
     if (requestedEvent) {
-      const decodedEventName = decodeURIComponent(requestedEvent).trim();
-      
+      const decodedEventName = requestedEvent.trim();
+
       const selectFields: any = {
         id: certificates.id,
         eventName: certificates.eventName,
@@ -75,10 +76,19 @@ export async function GET(request: Request) {
         selectFields.rowData = certificates.rowData;
       }
 
+      const eventCondition =
+        decodedEventName === 'General Event' || decodedEventName === 'Unnamed Event'
+          ? or(
+              eq(certificates.eventName, decodedEventName),
+              isNull(certificates.eventName),
+              eq(certificates.eventName, '')
+            )
+          : eq(certificates.eventName, decodedEventName);
+
       const rows = await db
         .select(selectFields)
         .from(certificates)
-        .where(eq(certificates.eventName, decodedEventName))
+        .where(eventCondition)
         .orderBy(desc(certificates.issuedAt));
 
       let activeCount = 0;
@@ -269,37 +279,25 @@ export async function GET(request: Request) {
           const sampleCsvPath = path.join(process.cwd(), 'demo-data', 'sample_data.csv');
           if (fs.existsSync(sampleCsvPath)) {
             const csvContent = fs.readFileSync(sampleCsvPath, 'utf-8');
-            const lines = csvContent.trim().split(/\r?\n/).filter(Boolean);
-            if (lines.length > 1) {
-              const headers = lines[0].split(',').map((h) => h.replace(/^"|"$/g, '').trim());
-              const sampleRows: Array<Record<string, string>> = [];
-              for (let i = 1; i < lines.length; i++) {
-                const parts = lines[i].match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g) || lines[i].split(',');
-                const cleanParts = parts.map((v) => v.replace(/^"|"$/g, '').trim());
-                const r: Record<string, string> = {};
-                headers.forEach((h, idx) => {
-                  r[h] = cleanParts[idx] || '';
-                });
-                sampleRows.push(r);
-              }
+            const parsed = parseCsv(csvContent);
+            const sampleRows = parsed.data;
 
-              for (let idx = 0; idx < participants.length; idx++) {
-                const p = participants[idx];
-                const matchedSampleRow =
-                  sampleRows.find(
-                    (sr) =>
-                      sr.Name?.toLowerCase() === p.recipientName.toLowerCase() ||
-                      (p.recipientEmail && sr.Email?.toLowerCase() === p.recipientEmail.toLowerCase())
-                  ) || sampleRows[idx];
+            for (let idx = 0; idx < participants.length; idx++) {
+              const p = participants[idx];
+              const matchedSampleRow =
+                sampleRows.find(
+                  (sr) =>
+                    sr.Name?.toLowerCase() === p.recipientName.toLowerCase() ||
+                    (p.recipientEmail && sr.Email?.toLowerCase() === p.recipientEmail.toLowerCase())
+                ) || sampleRows[idx];
 
-                if (matchedSampleRow && (!p.rowData || Object.keys(p.rowData).length <= 2)) {
-                  p.rowData = matchedSampleRow;
-                  await db
-                    .update(certificates)
-                    .set({ rowData: matchedSampleRow })
-                    .where(eq(certificates.id, p.id))
-                    .catch(() => {});
-                }
+              if (matchedSampleRow && (!p.rowData || Object.keys(p.rowData).length <= 2)) {
+                p.rowData = matchedSampleRow;
+                await db
+                  .update(certificates)
+                  .set({ rowData: matchedSampleRow })
+                  .where(eq(certificates.id, p.id))
+                  .catch(() => {});
               }
             }
           }
@@ -430,13 +428,16 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ detail: 'event query parameter is required' }, { status: 400 });
   }
 
-  const decodedEventName = decodeURIComponent(requestedEvent).trim();
+  const decodedEventName = requestedEvent.trim();
+  if (!decodedEventName) {
+    return NextResponse.json({ detail: 'event query parameter is required' }, { status: 400 });
+  }
 
   try {
     const eventCondition =
-      decodedEventName === 'Unnamed Event'
+      decodedEventName === 'Unnamed Event' || decodedEventName === 'General Event'
         ? or(
-            eq(certificates.eventName, 'Unnamed Event'),
+            eq(certificates.eventName, decodedEventName),
             isNull(certificates.eventName),
             eq(certificates.eventName, '')
           )
@@ -461,7 +462,7 @@ export async function DELETE(request: Request) {
   } catch (error) {
     console.error('[Dashboard Event DELETE error]:', error);
     return NextResponse.json(
-      { detail: error instanceof Error ? error.message : 'Failed to delete event and certificates' },
+      { detail: 'Failed to delete event and certificates' },
       { status: 500 }
     );
   }

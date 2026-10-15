@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import { db } from '../../../../lib/db';
 import { templates } from '../../../../db/schema';
 import { getAuthUserFromRequest, unauthorizedResponse } from '../../../../lib/server-auth';
+import { isValidCertificateId as isValidUuid } from '../../../../lib/verification';
 
 export async function GET(
   request: Request,
@@ -14,6 +15,9 @@ export async function GET(
   }
 
   const { id } = await params;
+  if (!isValidUuid(id)) {
+    return NextResponse.json({ detail: 'Template not found' }, { status: 404 });
+  }
 
   try {
     const [template] = await db
@@ -46,6 +50,9 @@ export async function DELETE(
   }
 
   const { id } = await params;
+  if (!isValidUuid(id)) {
+    return NextResponse.json({ detail: 'Template not found' }, { status: 404 });
+  }
 
   try {
     const [deleted] = await db

@@ -21,7 +21,7 @@ export function EmailPreviewPane() {
   const renderedSubject = replaceTemplateVariables(emailSettings.subject, previewData);
   const renderedBodyPlain = replaceTemplateVariables(emailSettings.bodyPlain, previewData);
   const renderedBodyHtml = emailSettings.bodyHtml.trim()
-    ? replaceTemplateVariables(emailSettings.bodyHtml, previewData)
+    ? replaceTemplateVariables(emailSettings.bodyHtml, previewData, { html: true })
     : '';
 
   const hasHtml = renderedBodyHtml.length > 0;
@@ -139,9 +139,11 @@ export function EmailPreviewPane() {
                   {renderedBodyPlain || '(No content)'}
                 </pre>
               ) : hasHtml ? (
-                <div
-                  className="prose prose-slate max-w-none"
-                  dangerouslySetInnerHTML={{ __html: renderedBodyHtml }}
+                <iframe
+                  title="HTML email preview"
+                  sandbox=""
+                  srcDoc={renderedBodyHtml}
+                  className="w-full min-h-[300px] border-0 bg-white"
                 />
               ) : (
                 <div className="flex flex-col items-center justify-center h-full text-center py-12">

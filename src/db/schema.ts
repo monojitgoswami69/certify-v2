@@ -11,8 +11,7 @@ import {
 
 /**
  * One row per issued certificate. The public UUID embedded in the QR code is
- * never stored — only its SHA-256 hash — so a database leak does not expose
- * live verification URLs.
+ * the primary key; public verification looks rows up by its SHA-256 hash.
  */
 export const certificates = pgTable(
   'certificates',

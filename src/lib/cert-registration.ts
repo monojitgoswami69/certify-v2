@@ -9,6 +9,9 @@ export const VERIFY_APP_URL =
   process.env.NEXT_PUBLIC_APP_URL ||
   (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000');
 
+// Must stay at or below the server's MAX_BATCH in /api/certificates/register
+const REGISTER_CHUNK_SIZE = 1000;
+
 export function buildVerifyUrlFor(id: string): string {
   return `${VERIFY_APP_URL.replace(/\/+$/, '')}/verify/${id}`;
 }
@@ -46,8 +49,7 @@ export async function ensureCertificateIds(params: {
   const activeFieldSet =
     activeFields && activeFields.length > 0 ? new Set(activeFields) : null;
 
-  const ids = await registerCertificates(
-    pending.map(({ row }) => {
+  const items = pending.map(({ row }) => {
       // Preserve full CSV row data so all recipient columns remain intact in database
       const rowData =
         activeFieldSet && activeFieldSet.size > 0
@@ -67,10 +69,17 @@ export async function ensureCertificateIds(params: {
         eventName,
         isStatic,
       };
-    }),
-    eventName,
-    isStatic
-  );
+    });
+
+  const ids: string[] = [];
+  for (let i = 0; i < items.length; i += REGISTER_CHUNK_SIZE) {
+    const chunk = items.slice(i, i + REGISTER_CHUNK_SIZE);
+    const chunkIds = await registerCertificates(chunk, eventName, isStatic);
+    if (chunkIds.length !== chunk.length) {
+      throw new Error('Registration response did not match the submitted records. Please retry.');
+    }
+    ids.push(...chunkIds);
+  }
 
   const merged = new Map(existingIds);
   pending.forEach(({ rowIndex }, i) => {

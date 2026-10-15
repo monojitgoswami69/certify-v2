@@ -32,7 +32,7 @@ export interface RegisterCertificateItem {
 
 /**
  * Bulk-registers certificates on the server before QR rendering. Returns the
- * raw verification UUIDs in input order (the DB stores only their hashes).
+ * raw verification UUIDs in input order.
  */
 export async function registerCertificates(
   items: RegisterCertificateItem[],
@@ -52,7 +52,11 @@ export async function registerCertificates(
   if (!response.ok) {
     throw new Error(data.detail || 'Failed to register certificates');
   }
-  return data.ids as string[];
+  const ids: unknown = data.ids;
+  if (!Array.isArray(ids) || ids.length !== items.length || !ids.every((id) => typeof id === 'string' && id)) {
+    throw new Error('Invalid registration response from server');
+  }
+  return ids as string[];
 }
 
 export async function exchangeGoogleCode(code: string): Promise<GoogleAccount> {
@@ -71,6 +75,14 @@ export async function exchangeGoogleCode(code: string): Promise<GoogleAccount> {
   }
 
   return response.json();
+}
+
+/** Best-effort: the local disconnect must still succeed when the server is unreachable. */
+export async function disconnectGoogleAccount(): Promise<void> {
+  await fetch(`${API_BASE}/auth/google/tokens`, {
+    method: 'DELETE',
+    headers: getAuthHeader(),
+  }).catch(() => undefined);
 }
 
 export interface SendEmailV2Params {

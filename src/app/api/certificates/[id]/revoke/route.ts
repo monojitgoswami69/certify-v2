@@ -18,7 +18,12 @@ export async function POST(
   }
 
   const { id } = await params;
-  if (!isValidCertificateId(id)) {
+  if (!id || typeof id !== 'string') {
+    return NextResponse.json({ detail: 'Invalid certificate id' }, { status: 400 });
+  }
+
+  const normalizedId = id.trim().toLowerCase();
+  if (!isValidCertificateId(normalizedId)) {
     return NextResponse.json({ detail: 'Invalid certificate id' }, { status: 400 });
   }
 
@@ -34,7 +39,7 @@ export async function POST(
     const [cert] = await db
       .select({ id: certificates.id, status: certificates.status })
       .from(certificates)
-      .where(or(eq(certificates.tokenHash, hashToken(id)), eq(certificates.id, id)))
+      .where(or(eq(certificates.tokenHash, hashToken(normalizedId)), eq(certificates.id, normalizedId)))
       .limit(1);
 
     if (!cert) {

@@ -1,9 +1,10 @@
 /**
  * Certificate verification primitives (server-only).
  *
- * The QR code embeds the raw UUID, but the database only ever stores its
- * SHA-256 hash, so a full DB dump does not yield a list of live verification
- * URLs (an attacker would need to brute-force 122-bit UUIDs).
+ * The QR code embeds a random v4 UUID (122 bits of entropy), which is also the
+ * row's primary key. Public lookups go through its SHA-256 `token_hash`
+ * column. Treat the `certificates` table as sensitive: a DB dump does expose
+ * live verification URLs.
  */
 import { createHash, randomUUID } from 'crypto';
 

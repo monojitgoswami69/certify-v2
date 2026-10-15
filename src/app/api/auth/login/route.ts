@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createHash, timingSafeEqual } from 'crypto';
-import { AUTH_USERNAME, AUTH_PASSWORD, createJwtToken } from '../../../../lib/server-auth';
+import { createJwtToken, getPasswordCredentials } from '../../../../lib/server-auth';
 import { checkRateLimit, getClientIp } from '../../../../lib/rate-limit';
 
 function safeCompare(a: string, b: string): boolean {
@@ -9,38 +9,52 @@ function safeCompare(a: string, b: string): boolean {
   return timingSafeEqual(hashA, hashB);
 }
 
+function tooManyAttempts(retryAfterSec: number) {
+  return NextResponse.json(
+    { detail: 'Too many login attempts. Please wait a minute and try again.' },
+    { status: 429, headers: { 'Retry-After': String(retryAfterSec) } }
+  );
+}
+
 export async function POST(request: Request) {
-  // Rate limit: Max 10 login attempts per minute per IP to prevent brute-force attacks
-  const ip = getClientIp(request);
-  const rate = checkRateLimit(`login:${ip}`, 10, 60_000);
-  if (!rate.allowed) {
+  // Per-IP limit, plus a global cap that still holds if X-Forwarded-For is spoofed.
+  const ipRate = checkRateLimit(`login:${getClientIp(request)}`, 10, 60_000);
+  if (!ipRate.allowed) return tooManyAttempts(ipRate.retryAfterSec);
+  const globalRate = checkRateLimit('login:global', 30, 60_000);
+  if (!globalRate.allowed) return tooManyAttempts(globalRate.retryAfterSec);
+
+  let body: { username?: unknown; password?: unknown; rememberMe?: unknown };
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ detail: 'Invalid request body' }, { status: 400 });
+  }
+
+  const creds = getPasswordCredentials();
+  if (!creds) {
     return NextResponse.json(
-      { detail: 'Too many login attempts. Please wait a minute and try again.' },
-      { status: 429, headers: { 'Retry-After': String(rate.retryAfterSec) } }
+      { detail: 'Password sign-in is not configured on this server' },
+      { status: 503 }
     );
   }
+
+  const { username, password, rememberMe = true } = body;
+  const userMatch = typeof username === 'string' && safeCompare(username, creds.username);
+  const passMatch = typeof password === 'string' && safeCompare(password, creds.password);
+
+  if (!userMatch || !passMatch) {
+    return NextResponse.json({ detail: 'Invalid username or password' }, { status: 401 });
+  }
+
   try {
-    const body = await request.json();
-    const { username, password, rememberMe = true } = body;
-
-    const userMatch = typeof username === 'string' && safeCompare(username, AUTH_USERNAME);
-    const passMatch = typeof password === 'string' && safeCompare(password, AUTH_PASSWORD);
-
-    if (!userMatch || !passMatch) {
-      return NextResponse.json({ detail: 'Invalid username or password' }, { status: 401 });
-    }
-
-    const token = createJwtToken(username, Boolean(rememberMe));
-
+    const token = createJwtToken(creds.username, Boolean(rememberMe));
     return NextResponse.json({
       token,
-      username,
+      username: creds.username,
       message: 'Login successful',
     });
   } catch (error) {
-    return NextResponse.json(
-      { detail: error instanceof Error ? error.message : 'Invalid request' },
-      { status: 400 }
-    );
+    console.error('[Login error]:', error);
+    return NextResponse.json({ detail: 'Sign-in is temporarily unavailable' }, { status: 500 });
   }
 }

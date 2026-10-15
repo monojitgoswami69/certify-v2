@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import nodemailer, { Transporter } from 'nodemailer';
+import nodemailer, { type SendMailOptions, type Transporter } from 'nodemailer';
 import { Readable } from 'stream';
 import { getAuthUserFromRequest, unauthorizedResponse } from '../../../lib/server-auth';
 import { buildGoogleOAuthClient } from '../../../lib/google-token-store';
@@ -21,7 +21,7 @@ function getMimeTransporter(): Transporter {
   return mimeTransporter;
 }
 
-async function buildRawMimeMessage(mailOptions: nodemailer.SendMailOptions): Promise<Uint8Array> {
+async function buildRawMimeMessage(mailOptions: SendMailOptions): Promise<Uint8Array> {
   const info = await getMimeTransporter().sendMail(mailOptions);
   const msg = info.message;
 
@@ -37,6 +37,14 @@ async function buildRawMimeMessage(mailOptions: nodemailer.SendMailOptions): Pro
     stream.on('end', () => resolve(new Uint8Array(Buffer.concat(chunks))));
     stream.on('error', reject);
   });
+}
+
+const SINGLE_EMAIL_RE = /^[^\s@,;<>"]+@[^\s@,;<>"]+\.[^\s@,;<>"]+$/;
+const MAX_ATTACHMENT_BYTES = 24 * 1024 * 1024;
+
+function sanitizeAttachmentBaseName(name: string): string {
+  const cleaned = name.replace(/[\\/:*?"<>|\r\n\t\x00-\x1f]+/g, '_').trim().slice(0, 150);
+  return cleaned || 'certificate';
 }
 
 interface MailAttachment {
@@ -75,7 +83,7 @@ export async function POST(request: Request) {
       emailSubject = String(form.get('email_subject') || '');
       emailBodyPlain = String(form.get('email_body_plain') || '');
       emailBodyHtml = String(form.get('email_body_html') || '');
-      filename = String(form.get('filename') || 'certificate');
+      filename = sanitizeAttachmentBaseName(String(form.get('filename') || 'certificate'));
       clientAccessToken = form.get('google_access_token')
         ? String(form.get('google_access_token'))
         : undefined;
@@ -94,13 +102,13 @@ export async function POST(request: Request) {
     } else {
       // Legacy JSON + base64 fallback (kept for backward compatibility).
       const body = await request.json();
-      recipientEmail = body.recipient_email || '';
-      emailSubject = body.email_subject || '';
-      emailBodyPlain = body.email_body_plain || '';
-      emailBodyHtml = body.email_body_html || '';
-      filename = body.filename || 'certificate';
+      recipientEmail = String(body.recipient_email || '');
+      emailSubject = String(body.email_subject || '');
+      emailBodyPlain = String(body.email_body_plain || '');
+      emailBodyHtml = String(body.email_body_html || '');
+      filename = sanitizeAttachmentBaseName(String(body.filename || 'certificate'));
       clientAccessToken = body.google_access_token;
-      senderEmail = body.sender_email && body.sender_email.includes('@') ? body.sender_email : undefined;
+      senderEmail = typeof body.sender_email === 'string' ? body.sender_email : undefined;
 
       attachments = [];
       if (body.jpg_base64 || body.jpeg_base64) {
@@ -123,11 +131,30 @@ export async function POST(request: Request) {
       }
     }
 
+    recipientEmail = recipientEmail.trim();
     if (!recipientEmail || attachments.length === 0) {
       return NextResponse.json(
         { detail: 'Recipient email and at least one attachment are required' },
         { status: 400 }
       );
+    }
+
+    // Exactly one address: a CSV cell like "a@x.com, b@y.com" must not fan out to multiple recipients
+    if (!SINGLE_EMAIL_RE.test(recipientEmail)) {
+      return NextResponse.json({ detail: `Invalid recipient email address: ${recipientEmail}` }, { status: 400 });
+    }
+
+    const totalAttachmentBytes = attachments.reduce((sum, a) => sum + a.content.length, 0);
+    if (totalAttachmentBytes > MAX_ATTACHMENT_BYTES) {
+      return NextResponse.json(
+        { detail: 'Attachments exceed the 24 MB Gmail message limit' },
+        { status: 413 }
+      );
+    }
+
+    emailSubject = emailSubject.replace(/[\r\n]+/g, ' ').slice(0, 998);
+    if (senderEmail && !SINGLE_EMAIL_RE.test(senderEmail.trim())) {
+      senderEmail = undefined;
     }
 
     // =========================================================================
@@ -156,7 +183,7 @@ export async function POST(request: Request) {
     if (accessToken) {
       const validSender = senderEmail && senderEmail.includes('@') ? senderEmail : undefined;
 
-      const mailOptions: nodemailer.SendMailOptions = {
+      const mailOptions: SendMailOptions = {
         from: validSender,
         to: recipientEmail,
         subject: emailSubject,

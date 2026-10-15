@@ -19,7 +19,7 @@ import { useAppStore } from '../../store/useAppStore';
 import { useHistoryStore } from '../../store/useHistoryStore';
 import { useAuthStore } from '../../store/useAuthStore';
 import { initializeGoogleFonts } from '../../lib/font-loader';
-import { sanitizeFilename, buildVirtualCsvFile } from '../../lib/utils';
+import { loadWorkspace, isWorkspaceLoadedFor } from '../../lib/workspace-loader';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 function WorkspaceContent() {
@@ -50,6 +50,7 @@ function WorkspaceContent() {
   const [showCsvPreview, setShowCsvPreview] = useState(false);
   const [isNarrowScreen, setIsNarrowScreen] = useState(false);
   const [dismissNarrowWarning, setDismissNarrowWarning] = useState(false);
+  const [isHydrating, setIsHydrating] = useState(false);
 
   useEffect(() => {
     const checkWidth = () => {
@@ -102,138 +103,39 @@ function WorkspaceContent() {
         : null);
     if (!activeToken) return;
 
-    const loadWorkspaceFromQuery = async () => {
-      try {
-        let tpl: { id?: string; name: string; imageData: string; layoutConfig?: any } | null = null;
+    // Already hydrated (e.g. by the dashboard's "Open in Studio" before navigating)
+    if (eventParam && isWorkspaceLoadedFor(eventParam)) {
+      setIsHydrating(false);
+      return;
+    }
 
-        // If loading a new event and current event is different, reset first
-        if (eventParam && useAppStore.getState().eventName !== eventParam) {
-          useAppStore.getState().reset();
-          useHistoryStore.getState().clearHistory();
-        }
-
-        // 1. If event is specified, query dashboard event details (includes participants & template)
-        let loadedCertIds: Map<number, string> | null = null;
-
-        if (eventParam) {
-          const res = await fetch(
-            `/api/dashboard?event=${encodeURIComponent(eventParam)}&includeRowData=true&includeTemplate=true`,
-            {
-              headers: { Authorization: `Bearer ${activeToken}` },
-            }
-          );
-
-          if (res.ok) {
-            const data = await res.json();
-            if (isCancelled) return;
-
-            if (data.participants && data.participants.length > 0) {
-              loadedCertIds = new Map();
-              data.participants.forEach((p: { id?: string }, idx: number) => {
-                if (p.id) loadedCertIds!.set(idx + 2, p.id);
-              });
-            }
-
-            // Auto-populate CSV data from event participants if not already fully hydrated
-            const currentCsv = useAppStore.getState().csvData;
-            const hasCompleteData =
-              currentCsv.length > 0 &&
-              useAppStore.getState().eventName === eventParam &&
-              currentCsv[0] &&
-              (currentCsv[0]['Name'] !== undefined || Object.keys(currentCsv[0]).some((k) => k !== 'Full Name' && k !== 'Email'));
-
-            if (
-              data.participants &&
-              data.participants.length > 0 &&
-              (!hasCompleteData || currentCsv.length === 0 || useAppStore.getState().eventName !== eventParam)
-            ) {
-              const { file: csvFile, headers, rows } = buildVirtualCsvFile(eventParam, data.participants);
-              useAppStore.getState().setCsvData(csvFile, headers, rows);
-              if (loadedCertIds && loadedCertIds.size > 0) {
-                useAppStore.getState().setBatchRegistered(true, loadedCertIds);
-              }
-            }
-
-            if (data.template) {
-              tpl = data.template;
-            }
-
-            useAppStore.getState().setEventName(eventParam);
-          }
-        }
-
-        // 2. If template was not resolved via event, fallback to templateId query
-        if (!tpl && templateIdParam) {
-          const tplRes = await fetch(`/api/templates/${templateIdParam}`, {
-            headers: { Authorization: `Bearer ${activeToken}` },
-          });
-          if (tplRes.ok) {
-            const tplData = await tplRes.json();
-            tpl = tplData.template;
-          }
-        }
-
-        // 3. Apply template graphic and layout configuration if not already loaded for this event
-        if (
-          tpl?.imageData &&
-          (!useAppStore.getState().templateImage || useAppStore.getState().eventName !== eventParam) &&
-          !isCancelled
-        ) {
-          const blobRes = await fetch(tpl.imageData);
-          const blob = await blobRes.blob();
-          const tplFilename = `${sanitizeFilename(eventParam || tpl.name)}.png`;
-          const file = new File([blob], tplFilename, { type: 'image/png' });
-
-          const img = new Image();
-          img.onload = () => {
-            if (isCancelled) return;
-            const info = `${file.name} (${img.width}×${img.height})`;
-            const store = useAppStore.getState();
-            store.setTemplate(file, img, info);
-            if (tpl?.layoutConfig?.boxes && Array.isArray(tpl.layoutConfig.boxes)) {
-              store.setBoxes(tpl.layoutConfig.boxes);
-            }
-            if (tpl?.layoutConfig?.qrZones && Array.isArray(tpl.layoutConfig.qrZones)) {
-              store.setQrZones(tpl.layoutConfig.qrZones);
-            }
-            if (tpl?.layoutConfig?.defaultFont) {
-              store.setDefaultFont(tpl.layoutConfig.defaultFont);
-            }
-            if (tpl?.layoutConfig?.defaultFontSize) {
-              store.setDefaultFontSize(tpl.layoutConfig.defaultFontSize);
-            }
-            if (tpl?.layoutConfig?.defaultFontColor) {
-              store.setDefaultFontColor(tpl.layoutConfig.defaultFontColor);
-            }
-            if (eventParam) {
-              store.setEventName(eventParam);
-            }
-
-            // Ensure batch registration state is preserved after setTemplate
-            if (loadedCertIds && loadedCertIds.size > 0) {
-              store.setBatchRegistered(true, loadedCertIds);
-            }
-          };
-          img.src = tpl.imageData;
-        }
-      } catch (err) {
+    setIsHydrating(true);
+    loadWorkspace({
+      eventName: eventParam,
+      templateId: templateIdParam,
+      token: activeToken,
+      shouldApply: () => !isCancelled,
+    })
+      .catch((err) => {
         console.warn('[Auto-load workspace from query error]:', err);
-      }
-    };
-
-    loadWorkspaceFromQuery();
+      })
+      .finally(() => {
+        if (!isCancelled) setIsHydrating(false);
+      });
 
     return () => {
       isCancelled = true;
     };
   }, [templateIdParam, eventParam, isAuthenticated, token]);
 
-  if (isLoading && !isAuthenticated) {
+  if ((isLoading && !isAuthenticated) || isHydrating) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 animate-smooth-fade">
         <div className="flex flex-col items-center gap-4">
           <div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-slate-500 text-sm font-medium">Initializing workspace...</p>
+          <p className="text-slate-500 text-sm font-medium">
+            {isHydrating ? 'Loading event workspace...' : 'Initializing workspace...'}
+          </p>
         </div>
       </div>
     );

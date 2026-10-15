@@ -174,7 +174,7 @@ const initialState = {
   error: null,
   fonts: [] as Font[],
   exportFormats: {
-    png: false,
+    png: true,
     jpg: false,
     pdf: false,
   } as ExportFormats,
@@ -247,23 +247,34 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set((state) => ({
       boxes: [...state.boxes, newBox],
       activeBoxId: newBox.id,
+      registrationDirty: state.isBatchRegistered ? true : state.registrationDirty,
     }));
   },
 
   updateBox: (id, updates) =>
     set((state) => ({
       boxes: state.boxes.map((box) => (box.id === id ? { ...box, ...updates } : box)),
+      registrationDirty: state.isBatchRegistered ? true : state.registrationDirty,
     })),
 
   deleteBox: (id) =>
     set((state) => ({
       boxes: state.boxes.filter((box) => box.id !== id),
       activeBoxId: state.activeBoxId === id ? null : state.activeBoxId,
+      registrationDirty: state.isBatchRegistered ? true : state.registrationDirty,
     })),
 
-  setActiveBox: (activeBoxId) => set({ activeBoxId }),
+  setActiveBox: (activeBoxId) =>
+    set((state) => ({
+      activeBoxId,
+      activeQrId: activeBoxId ? null : state.activeQrId,
+    })),
 
-  setBoxes: (boxes) => set({ boxes }),
+  setBoxes: (boxes) =>
+    set((state) => ({
+      boxes,
+      registrationDirty: state.isBatchRegistered ? true : state.registrationDirty,
+    })),
 
   setIsPlacingQr: (isPlacingQr) =>
     set({
@@ -310,6 +321,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       qrZones: state.qrZones.map((zone) =>
         zone.id === id ? { ...zone, ...updates } : zone
       ),
+      registrationDirty: state.isBatchRegistered ? true : state.registrationDirty,
     })),
 
   deleteQrZone: (id) =>
@@ -325,7 +337,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
       activeBoxId: activeQrId ? null : state.activeBoxId,
     })),
 
-  setQrZones: (qrZones) => set({ qrZones }),
+  setQrZones: (qrZones) =>
+    set((state) => ({
+      qrZones,
+      registrationDirty: state.isBatchRegistered ? true : state.registrationDirty,
+    })),
 
   clearQrZones: () =>
     set((state) => ({
@@ -336,18 +352,19 @@ export const useAppStore = create<AppStore>((set, get) => ({
     })),
 
   setCsvData: (file, headers, data) => {
+    const lower = (h: string) => h.trim().toLowerCase();
     const emailCol =
-      headers.find((h) => h.toLowerCase().includes('email') || h.toLowerCase().includes('mail')) ||
+      headers.find((h) => ['email', 'e-mail', 'email address'].includes(lower(h))) ||
+      headers.find((h) => lower(h).includes('email')) ||
+      headers.find((h) => lower(h).includes('mail')) ||
       '';
 
-    const nameCol = headers.find(
-      (h) =>
-        h.toLowerCase() === 'name' ||
-        h.toLowerCase().includes('name') ||
-        h.toLowerCase().includes('student') ||
-        h.toLowerCase().includes('participant') ||
-        h.toLowerCase().includes('receiver')
-    );
+    // Prefer exact recipient-name headers; skip look-alikes such as "Filename" or "Event Name"
+    const NON_PERSON_NAME = /(file|base|user|event|course|company|org|school|college|team|host|domain|program)\s*_?name/;
+    const nameCol =
+      headers.find((h) => ['name', 'full name', 'fullname', 'recipient name', 'participant name', 'student name'].includes(lower(h))) ||
+      headers.find((h) => lower(h).includes('name') && !NON_PERSON_NAME.test(lower(h))) ||
+      headers.find((h) => /student|participant|receiver|recipient/.test(lower(h)));
 
     set((state) => {
       const newEmailSettings = { ...state.emailSettings };
@@ -410,7 +427,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
       registrationDirty: false,
     }),
 
-  setEmailColumn: (emailColumn) => set({ emailColumn }),
+  setEmailColumn: (emailColumn) =>
+    set((state) => ({
+      emailColumn,
+      registrationDirty:
+        state.isBatchRegistered && emailColumn !== state.emailColumn ? true : state.registrationDirty,
+    })),
 
   setDefaultFont: (defaultFont) => set({ defaultFont }),
   setDefaultFontSize: (defaultFontSize) => set({ defaultFontSize }),

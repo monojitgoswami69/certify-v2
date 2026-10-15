@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   RotateCcw,
@@ -37,10 +37,14 @@ export function VerifyClient({
   const [state, setState] = useState<'loading' | VerifyResponse>('loading');
   const [confettiComplete, setConfettiComplete] = useState(false);
 
+  const requestSeqRef = useRef(0);
+
   const fetchVerification = () => {
     setState('loading');
     setConfettiComplete(false);
+    const requestSeq = ++requestSeqRef.current;
     let cancelled = false;
+    const isStale = () => cancelled || requestSeq !== requestSeqRef.current;
 
     const token =
       typeof window !== 'undefined'
@@ -55,10 +59,10 @@ export function VerifyClient({
     fetch(`/api/verify/${encodeURIComponent(id)}`, { headers })
       .then(async (res) => {
         const data = (await res.json().catch(() => ({ status: 'error' }))) as VerifyResponse;
-        if (!cancelled) setState(data);
+        if (!isStale()) setState(data);
       })
       .catch(() => {
-        if (!cancelled) setState({ status: 'error' });
+        if (!isStale()) setState({ status: 'error' });
       });
 
     return () => {

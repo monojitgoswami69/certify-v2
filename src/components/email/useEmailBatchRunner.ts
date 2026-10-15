@@ -52,7 +52,7 @@ export function useEmailBatchRunner() {
     defaultFontSize,
     defaultFontColor,
     isBatchRegistered,
-    registeredCertIds,
+    registrationDirty,
   } = useAppStore();
 
   const { token } = useAuthStore();
@@ -93,7 +93,7 @@ export function useEmailBatchRunner() {
       emailColumn &&
       hasMailingAccount &&
       (emailSettings.attachPdf || attachImage) &&
-      (!useQr || isBatchRegistered)
+      (!useQr || (isBatchRegistered && !registrationDirty))
   );
 
   const getDisplayName = useCallback(
@@ -113,6 +113,13 @@ export function useEmailBatchRunner() {
   const sendBatch = useCallback(
     async (records: Array<{ rowIndex: number; row: CsvRow }>, isRetry: boolean = false) => {
       if (!templateImage || validBoxes.length === 0) return;
+
+      // Read registration at call time: registering does not re-create this callback
+      const { isBatchRegistered, registeredCertIds, registrationDirty } = useAppStore.getState();
+      if (useQr && (!isBatchRegistered || registrationDirty)) {
+        setError('Batch is not registered or has changed since registration. Please register certificates to activate QR verification before sending emails.');
+        return;
+      }
 
       abortRef.current = false;
       pauseRef.current = false;
@@ -161,12 +168,6 @@ export function useEmailBatchRunner() {
 
       reconnectRef.current = false;
       setNeedsReconnect(false);
-
-      if (useQr && !isBatchRegistered) {
-        setError('Batch is not registered. Please register certificates to activate QR verification before sending emails.');
-        resetEmailProgress();
-        return;
-      }
 
       setEmailProgress({
         current: 0,
@@ -282,6 +283,9 @@ export function useEmailBatchRunner() {
           try {
             if (!workerCanvas) workerCanvas = document.createElement('canvas');
             const certId = registeredCertIds.get(rowIndex);
+            if (useQr && !certId) {
+              throw new Error('No registered certificate ID for this row. Re-register the batch.');
+            }
             const cert = await generateCertificate({
               templateImage,
               boxes: validBoxes,
@@ -298,7 +302,7 @@ export function useEmailBatchRunner() {
             const subject = replaceTemplateVariables(emailSettings.subject, row);
             const bodyPlain = replaceTemplateVariables(emailSettings.bodyPlain, row);
             const bodyHtml = emailSettings.bodyHtml.trim()
-              ? replaceTemplateVariables(emailSettings.bodyHtml, row)
+              ? replaceTemplateVariables(emailSettings.bodyHtml, row, { html: true })
               : '';
 
             await acquireSendSlot();
@@ -472,15 +476,17 @@ export function useEmailBatchRunner() {
     await sendBatch(records, true);
   }, [retryQueue, sendBatch]);
 
+  // Delivery records span every run in this session, so rows sent by an earlier run or a retry are never re-sent
+  const isRowSent = (rowIndex: number) => deliveryRecordsRef.current.get(rowIndex)?.status === 'sent';
+
   const handleResumeUnsent = useCallback(async () => {
-    const sentSet = new Set(emailProgress.sent.map((s) => s.rowIndex));
     const unsentRecords = csvData
       .map((row, i) => ({ rowIndex: i + 2, row }))
-      .filter((r) => !sentSet.has(r.rowIndex));
+      .filter((r) => deliveryRecordsRef.current.get(r.rowIndex)?.status !== 'sent');
     if (unsentRecords.length > 0) {
       await sendBatch(unsentRecords, false);
     }
-  }, [csvData, emailProgress.sent, sendBatch]);
+  }, [csvData, sendBatch]);
 
   const handlePauseResume = () => {
     pauseRef.current = !pauseRef.current;
@@ -528,7 +534,7 @@ export function useEmailBatchRunner() {
       ? emailProgress.records
       : Array.from(deliveryRecordsRef.current.values());
 
-  const unsentCount = Math.max(0, csvData.length - emailProgress.sent.length);
+  const unsentCount = csvData.reduce((count, _row, i) => (isRowSent(i + 2) ? count : count + 1), 0);
 
   return {
     emailProgress,

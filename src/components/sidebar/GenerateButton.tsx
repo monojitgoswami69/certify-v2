@@ -52,6 +52,7 @@ export function GenerateButton() {
     handleStop,
     handleDone,
     handleDownloadErrorReport,
+    handleDownloadZip,
   } = useCertificateBatchGenerator();
 
   const formatDuration = (ms: number): string => {
@@ -488,6 +489,7 @@ export function GenerateButton() {
         onRetryFailed={progress.errors.length > 0 ? handleRetry : undefined}
         isGenerating={false}
         zipBlob={zipBlob}
+        onDownloadZip={handleDownloadZip}
         exportFormats={exportFormats}
       />
     </>

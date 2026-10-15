@@ -7,6 +7,7 @@ import { certificates } from '../../../../db/schema';
 import { generateCertificateId, hashToken } from '../../../../lib/verification';
 
 const MAX_BATCH = 2000;
+const EMAIL_RE = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/;
 
 interface RegisterItem {
   recipientName?: unknown;
@@ -17,10 +18,14 @@ interface RegisterItem {
   isStatic?: unknown;
 }
 
+const MAX_TEXT_LENGTH = 500;
+const MAX_ROW_FIELDS = 100;
+
 function computeRecordFingerprint(
   eventName: string,
   recipientName: string,
-  recipientEmail: string | null
+  recipientEmail: string | null,
+  scopeEmailByName = false
 ): string {
   const normEvent = eventName.trim().toLowerCase();
   const normEmail = (recipientEmail || '').trim().toLowerCase();
@@ -28,11 +33,26 @@ function computeRecordFingerprint(
 
   // If email exists, eventName + recipientEmail is the canonical unique identity
   if (normEmail && normEmail.includes('@')) {
-    return createHash('sha256').update(`event:${normEvent}|email:${normEmail}`).digest('hex');
+    const nameScope = scopeEmailByName ? `|name:${normName}` : '';
+    return createHash('sha256').update(`event:${normEvent}|email:${normEmail}${nameScope}`).digest('hex');
   }
 
   // If no email, hash eventName + recipientName
   return createHash('sha256').update(`event:${normEvent}|name:${normName}`).digest('hex');
+}
+
+function sanitizeRowData(value: unknown): Record<string, string> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const out: Record<string, string> = {};
+  let count = 0;
+  for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+    if (count >= MAX_ROW_FIELDS) break;
+    if (val === null || val === undefined) continue;
+    if (typeof val !== 'string' && typeof val !== 'number' && typeof val !== 'boolean') continue;
+    out[key.slice(0, 200)] = String(val).slice(0, MAX_TEXT_LENGTH * 4);
+    count++;
+  }
+  return out;
 }
 
 export async function POST(request: Request) {
@@ -57,7 +77,7 @@ export async function POST(request: Request) {
 
   const batchEventName =
     typeof body.eventName === 'string' && body.eventName.trim()
-      ? body.eventName.trim()
+      ? body.eventName.trim().slice(0, MAX_TEXT_LENGTH)
       : 'General Event';
 
   const items = body.certificates;
@@ -77,10 +97,13 @@ export async function POST(request: Request) {
   // Parse items & compute fingerprints
   const parsedItems = [];
   const fingerprintSet = new Set<string>();
+  // Same email + different name within one batch = different people; keep them as separate certificates
+  const namesByEmailFingerprint = new Map<string, string>();
 
   for (let i = 0; i < items.length; i++) {
     const item = items[i] ?? {};
-    const name = typeof item.recipientName === 'string' ? item.recipientName.trim() : '';
+    const name =
+      typeof item.recipientName === 'string' ? item.recipientName.trim().slice(0, MAX_TEXT_LENGTH) : '';
     if (!name) {
       return NextResponse.json(
         { detail: `certificates[${i}].recipientName is required` },
@@ -88,21 +111,17 @@ export async function POST(request: Request) {
       );
     }
     let email =
-      typeof item.recipientEmail === 'string' && item.recipientEmail.includes('@')
-        ? item.recipientEmail.trim()
+      typeof item.recipientEmail === 'string' && EMAIL_RE.test(item.recipientEmail.trim())
+        ? item.recipientEmail.trim().slice(0, 320)
         : null;
 
-    const rowData = (item.rowData ?? null) as Record<string, string> | null;
+    const rowData = sanitizeRowData(item.rowData);
 
     // Fallback: extract email from rowData if not explicitly provided
-    if (!email && rowData && typeof rowData === 'object') {
-      for (const [key, val] of Object.entries(rowData)) {
-        if (
-          typeof val === 'string' &&
-          val.includes('@') &&
-          /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val.trim())
-        ) {
-          email = val.trim();
+    if (!email && rowData) {
+      for (const val of Object.values(rowData)) {
+        if (EMAIL_RE.test(val.trim())) {
+          email = val.trim().slice(0, 320);
           break;
         }
       }
@@ -110,13 +129,22 @@ export async function POST(request: Request) {
 
     const itemEventName =
       typeof item.eventName === 'string' && item.eventName.trim()
-        ? item.eventName.trim()
+        ? item.eventName.trim().slice(0, MAX_TEXT_LENGTH)
         : batchEventName;
 
     const templateName =
       typeof item.templateName === 'string' ? item.templateName.slice(0, 200) : null;
 
-    const fingerprint = computeRecordFingerprint(itemEventName, name, email);
+    let fingerprint = computeRecordFingerprint(itemEventName, name, email);
+    if (email) {
+      const normName = name.toLowerCase();
+      const firstName = namesByEmailFingerprint.get(fingerprint);
+      if (firstName === undefined) {
+        namesByEmailFingerprint.set(fingerprint, normName);
+      } else if (firstName !== normName) {
+        fingerprint = computeRecordFingerprint(itemEventName, name, email, true);
+      }
+    }
     fingerprintSet.add(fingerprint);
 
     const isStatic = Boolean(item.isStatic ?? body.isStatic);
@@ -136,7 +164,15 @@ export async function POST(request: Request) {
   try {
     // 1. Query existing records matching any fingerprint in the batch (chunked to prevent parameter limits)
     const fingerprintsArray = Array.from(fingerprintSet);
-    const existingCerts: Array<{ id: string; recordFingerprint: string | null; rowData: unknown }> = [];
+    interface ExistingCertMeta {
+      id: string;
+      recipientName: string;
+      recipientEmail: string | null;
+      rowData: Record<string, string> | null;
+      templateName: string | null;
+      status: string;
+    }
+    const existingMap = new Map<string, ExistingCertMeta>();
     const FINGERPRINT_CHUNK_SIZE = 500;
 
     for (let i = 0; i < fingerprintsArray.length; i += FINGERPRINT_CHUNK_SIZE) {
@@ -146,21 +182,26 @@ export async function POST(request: Request) {
           .select({
             id: certificates.id,
             recordFingerprint: certificates.recordFingerprint,
+            recipientName: certificates.recipientName,
+            recipientEmail: certificates.recipientEmail,
             rowData: certificates.rowData,
+            templateName: certificates.templateName,
+            status: certificates.status,
           })
           .from(certificates)
           .where(inArray(certificates.recordFingerprint, chunk));
-        existingCerts.push(...chunkResults);
-      }
-    }
 
-    const existingMap = new Map<string, string>();
-    const existingWithoutRowData = new Map<string, string>();
-    for (const cert of existingCerts) {
-      if (cert.recordFingerprint) {
-        existingMap.set(cert.recordFingerprint, cert.id);
-        if (!cert.rowData) {
-          existingWithoutRowData.set(cert.recordFingerprint, cert.id);
+        for (const cert of chunkResults) {
+          if (cert.recordFingerprint) {
+            existingMap.set(cert.recordFingerprint, {
+              id: cert.id,
+              recipientName: cert.recipientName,
+              recipientEmail: cert.recipientEmail,
+              rowData: (cert.rowData as Record<string, string> | null) || null,
+              templateName: cert.templateName,
+              status: cert.status,
+            });
+          }
         }
       }
     }
@@ -170,29 +211,60 @@ export async function POST(request: Request) {
     const newRowsToInsert = [];
     const updatesToApply: Array<{
       id: string;
-      rowData?: Record<string, string>;
+      recipientName?: string;
+      recipientEmail?: string;
+      rowData?: Record<string, string> | null;
       templateName?: string | null;
       status?: string;
     }> = [];
 
     for (const item of parsedItems) {
+      const targetStatus = item.isStatic ? 'static' : 'issued';
+
       if (existingMap.has(item.fingerprint)) {
         // Idempotent hit: Reuse existing certificate ID without inserting duplicate row
-        const existingId = existingMap.get(item.fingerprint)!;
-        resultIds[item.index] = existingId;
+        const existing = existingMap.get(item.fingerprint)!;
+        resultIds[item.index] = existing.id;
 
-        // Keep existing record synchronized with current full rowData, templateName, and status
-        updatesToApply.push({
-          id: existingId,
-          ...(item.rowData ? { rowData: item.rowData } : {}),
-          ...(item.templateName ? { templateName: item.templateName } : {}),
-          status: item.isStatic ? 'static' : 'issued',
-        });
+        // Check if any stored field actually changed. A revoked certificate is never
+        // silently re-instated by re-running a batch; that requires an explicit admin action.
+        const nameChanged = item.name !== existing.recipientName;
+        const emailChanged = Boolean(item.email) && item.email !== existing.recipientEmail;
+        const rowDataChanged =
+          item.rowData &&
+          (!existing.rowData ||
+            JSON.stringify(item.rowData) !== JSON.stringify(existing.rowData));
+        const templateChanged =
+          item.templateName && item.templateName !== existing.templateName;
+        const statusChanged = targetStatus !== existing.status && existing.status !== 'revoked';
+
+        if (nameChanged || emailChanged || rowDataChanged || templateChanged || statusChanged) {
+          updatesToApply.push({
+            id: existing.id,
+            ...(nameChanged ? { recipientName: item.name } : {}),
+            ...(emailChanged && item.email ? { recipientEmail: item.email } : {}),
+            ...(rowDataChanged ? { rowData: item.rowData } : {}),
+            ...(templateChanged ? { templateName: item.templateName } : {}),
+            ...(statusChanged ? { status: targetStatus } : {}),
+          });
+          if (nameChanged) existing.recipientName = item.name;
+          if (emailChanged) existing.recipientEmail = item.email;
+          if (rowDataChanged && item.rowData) existing.rowData = item.rowData;
+          if (templateChanged) existing.templateName = item.templateName;
+          if (statusChanged) existing.status = targetStatus;
+        }
       } else {
         // New record: Generate unique certificate ID
         const newId = generateCertificateId();
         resultIds[item.index] = newId;
-        existingMap.set(item.fingerprint, newId); // Cache in case of duplicates within same CSV
+        existingMap.set(item.fingerprint, {
+          id: newId,
+          recipientName: item.name,
+          recipientEmail: item.email,
+          rowData: item.rowData || null,
+          templateName: item.templateName || null,
+          status: targetStatus,
+        });
 
         newRowsToInsert.push({
           id: newId,
@@ -202,13 +274,22 @@ export async function POST(request: Request) {
           recipientName: item.name,
           recipientEmail: item.email,
           templateName: item.templateName,
-          status: item.isStatic ? 'static' : 'issued',
+          status: targetStatus,
           rowData: item.rowData,
         });
       }
     }
 
-    // 3. Execute rowData & metadata updates in concurrent batches
+    // 3. Batch insert new records FIRST in chunks (avoids parameter caps and ensures rows exist)
+    if (newRowsToInsert.length > 0) {
+      const INSERT_CHUNK_SIZE = 300;
+      for (let i = 0; i < newRowsToInsert.length; i += INSERT_CHUNK_SIZE) {
+        const chunk = newRowsToInsert.slice(i, i + INSERT_CHUNK_SIZE);
+        await db.insert(certificates).values(chunk);
+      }
+    }
+
+    // 4. Execute only changed rowData & metadata updates in concurrent batches
     if (updatesToApply.length > 0) {
       const UPDATE_BATCH_SIZE = 25;
       for (let i = 0; i < updatesToApply.length; i += UPDATE_BATCH_SIZE) {
@@ -216,6 +297,8 @@ export async function POST(request: Request) {
         await Promise.all(
           batch.map((u) => {
             const setValues: Record<string, unknown> = {};
+            if (u.recipientName) setValues.recipientName = u.recipientName;
+            if (u.recipientEmail) setValues.recipientEmail = u.recipientEmail;
             if (u.rowData) setValues.rowData = u.rowData;
             if (u.templateName) setValues.templateName = u.templateName;
             if (u.status) setValues.status = u.status;
@@ -228,15 +311,6 @@ export async function POST(request: Request) {
       }
     }
 
-    // 4. Batch insert new records in chunks (avoids exceeding Neon/PostgreSQL parameter caps)
-    if (newRowsToInsert.length > 0) {
-      const INSERT_CHUNK_SIZE = 300;
-      for (let i = 0; i < newRowsToInsert.length; i += INSERT_CHUNK_SIZE) {
-        const chunk = newRowsToInsert.slice(i, i + INSERT_CHUNK_SIZE);
-        await db.insert(certificates).values(chunk);
-      }
-    }
-
     return NextResponse.json({
       ids: resultIds,
       count: resultIds.length,
@@ -246,7 +320,7 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error('[Certificate registration error]:', error);
     return NextResponse.json(
-      { detail: error instanceof Error ? error.message : 'Failed to register certificates' },
+      { detail: 'Failed to register certificates' },
       { status: 500 }
     );
   }

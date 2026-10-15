@@ -4,6 +4,10 @@ import { db } from '../../../lib/db';
 import { templates } from '../../../db/schema';
 import { getAuthUserFromRequest, unauthorizedResponse } from '../../../lib/server-auth';
 
+const ALLOWED_IMAGE_DATA_URL = /^data:image\/(png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=]+$/;
+const MAX_IMAGE_DATA_LENGTH = 20 * 1024 * 1024;
+const MAX_LAYOUT_LENGTH = 1024 * 1024;
+
 export async function GET(request: Request) {
   const username = getAuthUserFromRequest(request);
   if (!username) {
@@ -58,18 +62,37 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { name, imageData, width, height, layoutConfig } = body;
 
-    if (!name || typeof name !== 'string' || !name.trim()) {
+    if (!name || typeof name !== 'string' || !name.trim() || name.trim().length > 200) {
       return NextResponse.json(
-        { detail: 'Template name is required' },
+        { detail: 'Template name is required (max 200 characters)' },
         { status: 400 }
       );
     }
 
-    if (!imageData || typeof imageData !== 'string' || !imageData.startsWith('data:image/')) {
+    if (!imageData || typeof imageData !== 'string' || !ALLOWED_IMAGE_DATA_URL.test(imageData)) {
       return NextResponse.json(
-        { detail: 'Valid template image data (Base64 data URL) is required' },
+        { detail: 'Valid template image data (PNG, JPEG or WebP Base64 data URL) is required' },
         { status: 400 }
       );
+    }
+
+    if (imageData.length > MAX_IMAGE_DATA_LENGTH) {
+      return NextResponse.json(
+        { detail: 'Template image is too large (max ~15 MB)' },
+        { status: 413 }
+      );
+    }
+
+    if (
+      layoutConfig !== undefined &&
+      layoutConfig !== null &&
+      (typeof layoutConfig !== 'object' ||
+        Array.isArray(layoutConfig) ||
+        (layoutConfig.boxes !== undefined && !Array.isArray(layoutConfig.boxes)) ||
+        (layoutConfig.qrZones !== undefined && !Array.isArray(layoutConfig.qrZones)) ||
+        JSON.stringify(layoutConfig).length > MAX_LAYOUT_LENGTH)
+    ) {
+      return NextResponse.json({ detail: 'Invalid layout configuration' }, { status: 400 });
     }
 
     // Check if a template with this exact name already exists to update it
@@ -122,7 +145,7 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error('[Templates POST error]:', error);
     return NextResponse.json(
-      { detail: error instanceof Error ? error.message : 'Failed to save template' },
+      { detail: 'Failed to save template' },
       { status: 500 }
     );
   }

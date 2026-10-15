@@ -72,6 +72,10 @@ export function parseCsv(text: string): ParsedCsv {
     }
   }
 
+  if (insideQuotes) {
+    throw new Error('Malformed CSV: a quoted field is never closed. Check for a stray " character.');
+  }
+
   // Push remaining field and row if any
   if (currentField || currentRow.length > 0) {
     pushField();

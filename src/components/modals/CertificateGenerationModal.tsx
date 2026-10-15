@@ -29,6 +29,7 @@ interface CertificateGenerationModalProps {
   onRetryFailed?: () => void;
   isGenerating?: boolean;
   zipBlob?: Blob | null;
+  onDownloadZip?: () => void;
   exportFormats?: ExportFormats;
 }
 
@@ -40,6 +41,7 @@ export function CertificateGenerationModal({
   onRetryFailed,
   isGenerating = false,
   zipBlob = null,
+  onDownloadZip,
   exportFormats,
 }: CertificateGenerationModalProps) {
   const [mounted, setMounted] = useState(false);
@@ -131,6 +133,10 @@ export function CertificateGenerationModal({
   };
 
   const handleDownloadZip = () => {
+    if (onDownloadZip) {
+      onDownloadZip();
+      return;
+    }
     if (!zipBlob) return;
     const safeEvent = eventName ? `${sanitizeFilename(eventName)}_` : '';
     const dateStr = new Date().toISOString().split('T')[0];
@@ -431,7 +437,7 @@ export function CertificateGenerationModal({
                 Download Failed Only
               </button>
             )}
-            {zipBlob && (
+            {(zipBlob || onDownloadZip) && (
               <button
                 onClick={handleDownloadZip}
                 className="flex items-center gap-1.5 px-3 py-2 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 rounded-lg text-xs font-semibold transition-colors cursor-pointer shadow-sm"

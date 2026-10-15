@@ -30,6 +30,42 @@ import { CanvasToolbar } from './CanvasToolbar';
 
 type DragMode = 'none' | 'draw' | 'move' | 'resize' | 'qr-move' | 'qr-resize' | 'pan';
 
+const MIN_BOX_SIZE = 20;
+
+/**
+ * Keeps a resized box at least MIN_BOX_SIZE and inside the template, anchoring the edge
+ * opposite the dragged handle so dragging past it cannot produce negative dimensions.
+ */
+function constrainResizedBox(
+  box: { x: number; y: number; w: number; h: number },
+  original: TextBox,
+  handle: HandleKey,
+  templateWidth: number,
+  templateHeight: number
+): { x: number; y: number; w: number; h: number } {
+  let { x, y, w, h } = box;
+
+  if (handle.includes('w')) {
+    const right = original.x + original.w;
+    x = Math.max(0, Math.min(x, right - MIN_BOX_SIZE));
+    w = right - x;
+  } else if (handle.includes('e')) {
+    w = Math.max(MIN_BOX_SIZE, Math.min(w, templateWidth - original.x));
+    x = original.x;
+  }
+
+  if (handle.includes('n')) {
+    const bottom = original.y + original.h;
+    y = Math.max(0, Math.min(y, bottom - MIN_BOX_SIZE));
+    h = bottom - y;
+  } else if (handle.includes('s')) {
+    h = Math.max(MIN_BOX_SIZE, Math.min(h, templateHeight - original.y));
+    y = original.y;
+  }
+
+  return { x, y, w, h };
+}
+
 export function CanvasEditor() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -77,21 +113,32 @@ export function CanvasEditor() {
   const savedPreDragStateRef = useRef<{ boxes: TextBox[]; qrZones: QrZone[] } | null>(null);
 
   // Undo / Redo / Delete callbacks
+  const applySnapshot = useCallback(
+    (snapshot: { boxes: TextBox[]; qrZones?: QrZone[]; qrZone?: QrZone | null }) => {
+      const nextQrZones = snapshot.qrZones || (snapshot.qrZone ? [snapshot.qrZone] : []);
+      setBoxes(snapshot.boxes);
+      setQrZones(nextQrZones);
+      // Drop selections that point at elements the snapshot no longer contains
+      const state = useAppStore.getState();
+      if (state.activeBoxId && !snapshot.boxes.some((b) => b.id === state.activeBoxId)) {
+        state.setActiveBox(null);
+      }
+      if (state.activeQrId && !nextQrZones.some((z) => z.id === state.activeQrId)) {
+        state.setActiveQrId(null);
+      }
+    },
+    [setBoxes, setQrZones]
+  );
+
   const handleUndo = useCallback(() => {
     const snapshot = undo(boxes, qrZones);
-    if (snapshot) {
-      setBoxes(snapshot.boxes);
-      setQrZones(snapshot.qrZones || (snapshot.qrZone ? [snapshot.qrZone] : []));
-    }
-  }, [undo, boxes, qrZones, setBoxes, setQrZones]);
+    if (snapshot) applySnapshot(snapshot);
+  }, [undo, boxes, qrZones, applySnapshot]);
 
   const handleRedo = useCallback(() => {
     const snapshot = redo(boxes, qrZones);
-    if (snapshot) {
-      setBoxes(snapshot.boxes);
-      setQrZones(snapshot.qrZones || (snapshot.qrZone ? [snapshot.qrZone] : []));
-    }
-  }, [redo, boxes, qrZones, setBoxes, setQrZones]);
+    if (snapshot) applySnapshot(snapshot);
+  }, [redo, boxes, qrZones, applySnapshot]);
 
   const handleDeleteActive = useCallback(() => {
     if (activeBoxId) {
@@ -103,12 +150,20 @@ export function CanvasEditor() {
     }
   }, [activeBoxId, activeQrId, boxes, qrZones, pushState, deleteBox, deleteQrZone]);
 
+  // A burst of nudges (held arrow key) is one undo step, not one per pixel
+  const lastNudgeAtRef = useRef(0);
+  const pushNudgeState = useCallback(() => {
+    const now = Date.now();
+    if (now - lastNudgeAtRef.current > 600) pushState(boxes, qrZones);
+    lastNudgeAtRef.current = now;
+  }, [pushState, boxes, qrZones]);
+
   const handleArrowNudge = useCallback(
     (dx: number, dy: number) => {
       if (activeBoxId) {
         const activeBox = boxes.find((b) => b.id === activeBoxId);
         if (activeBox) {
-          pushState(boxes, qrZones);
+          pushNudgeState();
           updateBox(activeBoxId, {
             x: Math.max(0, Math.min(activeBox.x + dx, templateImage ? templateImage.width - activeBox.w : activeBox.x)),
             y: Math.max(0, Math.min(activeBox.y + dy, templateImage ? templateImage.height - activeBox.h : activeBox.y)),
@@ -117,7 +172,7 @@ export function CanvasEditor() {
       } else if (activeQrId) {
         const activeQr = qrZones.find((z) => z.id === activeQrId);
         if (activeQr) {
-          pushState(boxes, qrZones);
+          pushNudgeState();
           updateQrZone(activeQrId, {
             x: Math.max(0, Math.min(activeQr.x + dx, templateImage ? templateImage.width - activeQr.size : activeQr.x)),
             y: Math.max(0, Math.min(activeQr.y + dy, templateImage ? templateImage.height - activeQr.size : activeQr.y)),
@@ -125,8 +180,15 @@ export function CanvasEditor() {
         }
       }
     },
-    [activeBoxId, activeQrId, boxes, qrZones, pushState, updateBox, updateQrZone, templateImage]
+    [activeBoxId, activeQrId, boxes, qrZones, pushNudgeState, updateBox, updateQrZone, templateImage]
   );
+
+  useEffect(() => {
+    return () => {
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, []);
 
   // Viewport Zoom, Pan & Keyboard controls
   const {
@@ -543,15 +605,16 @@ export function CanvasEditor() {
             false,
             8 / zoom
           );
-          updateBox(originalBox.id, { x: snap.x, y: snap.y, w: snap.w, h: snap.h });
+          updateBox(
+            originalBox.id,
+            constrainResizedBox(snap, originalBox, activeHandle, templateImage.width, templateImage.height)
+          );
           setActiveGuides(snap.guides);
         } else {
-          updateBox(originalBox.id, {
-            x: rawBox.x,
-            y: rawBox.y,
-            w: Math.max(20, rawBox.w),
-            h: Math.max(20, rawBox.h),
-          });
+          updateBox(
+            originalBox.id,
+            constrainResizedBox(rawBox, originalBox, activeHandle, templateImage.width, templateImage.height)
+          );
           setActiveGuides([]);
         }
       } else if (dragMode === 'qr-move' && originalQrZone) {

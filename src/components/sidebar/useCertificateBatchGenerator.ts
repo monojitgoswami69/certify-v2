@@ -24,6 +24,8 @@ import {
 import { createRafScheduler } from '../../lib/raf-scheduler';
 import type { CsvRow, CertificateGenerationRecord, ExportFormats } from '../../types';
 
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export interface FailedRecord {
   rowIndex: number;
   name: string;
@@ -88,7 +90,6 @@ export function useCertificateBatchGenerator() {
     setExportFormats,
     setError,
     isBatchRegistered,
-    registeredCertIds,
   } = useAppStore();
 
   const { token } = useAuthStore();
@@ -229,6 +230,13 @@ export function useCertificateBatchGenerator() {
         return;
       }
 
+      // Read registration at call time: registering does not re-create this callback
+      const { isBatchRegistered, registeredCertIds, registrationDirty } = useAppStore.getState();
+      if (useQr && (!isBatchRegistered || registrationDirty)) {
+        setError('Batch is not registered or has changed since registration. Please register certificates to activate QR verification before generating.');
+        return;
+      }
+
       abortRef.current = false;
       pauseRef.current = false;
       setLocalPaused(false);
@@ -283,27 +291,29 @@ export function useCertificateBatchGenerator() {
         console.warn('[Batch Generator] Font preloading error:', fontErr);
       }
 
-      if (useQr && !isBatchRegistered) {
-        setError('Batch is not registered. Please register certificates to activate QR verification before generating.');
-        return;
-      }
-
       if (!isRetry) {
         setLogs({ firstGenerated: new Date(), lastGenerated: null, totalElapsed: 0 });
       }
 
-      // Step 2: Prepare tasks for worker pool
-      const tasks: WorkerTask[] = records.map(({ rowIndex, row }, i) => {
+      // Step 2: Prepare tasks for worker pool. With QR enabled, a row without a registered
+      // ID must fail loudly instead of silently producing a certificate with a blank QR.
+      const tasks: WorkerTask[] = [];
+      records.forEach(({ rowIndex, row }, i) => {
         const name = getFilenameBasis(row);
         const certId = registeredCertIds.get(rowIndex);
-        const verificationUrl = useQr && certId ? buildVerifyUrlFor(certId) : undefined;
-        return {
+        if (useQr && !certId) {
+          const errorMsg = 'No registered certificate ID for this row. Re-register the batch.';
+          failedMapRef.current.set(rowIndex, { error: errorMsg, timestamp: new Date().toLocaleTimeString() });
+          errorsRef.current.push({ rowIndex, name, row, error: errorMsg });
+          return;
+        }
+        tasks.push({
           id: i,
           rowIndex,
           row,
           filename: `${sanitizeFilename(name)}_${rowIndex}`,
-          verificationUrl,
-        };
+          verificationUrl: useQr && certId ? buildVerifyUrlFor(certId) : undefined,
+        });
       });
 
       // Scheduler for lightweight progress UI updates (counters + failure logs)
@@ -352,52 +362,67 @@ export function useCertificateBatchGenerator() {
           });
           const genStartTime = performance.now();
 
-          await pool.processChunk(tasks, (result, completedInChunk) => {
-            if (abortRef.current) return;
+          let totalCompleted = 0;
+          const SUB_BATCH_SIZE = Math.max(workerCount * 2, 8);
 
-            if (result.blobs && !result.error) {
-              // Store successful blob in memory - do NOT stream success log records to React state
-              successfulCertsRef.current.set(result.rowIndex, {
-                rowIndex: result.rowIndex,
-                filename: result.filename,
-                pngBlob: result.blobs.png,
-                jpgBlob: result.blobs.jpg,
-                pdfBlob: result.blobs.pdf,
-              });
-            } else if (result.error) {
-              // Only track and stream failure logs
-              const errorMsg = result.error || 'Generation failed';
-              const rowObj = records.find((r) => r.rowIndex === result.rowIndex)?.row || {};
-              const timestamp = new Date().toLocaleTimeString();
+          for (let chunkIdx = 0; chunkIdx < tasks.length; chunkIdx += SUB_BATCH_SIZE) {
+            if (abortRef.current) break;
 
-              failedMapRef.current.set(result.rowIndex, {
-                error: errorMsg,
-                timestamp,
-              });
-
-              errorsRef.current.push({
-                rowIndex: result.rowIndex,
-                name: result.filename,
-                row: rowObj,
-                error: errorMsg,
-              });
+            while (pauseRef.current && !abortRef.current) {
+              await delay(100);
             }
 
-            const elapsedSec = (performance.now() - genStartTime) / 1000;
-            const speed = elapsedSec > 0.2 ? (completedInChunk / elapsedSec).toFixed(1) : undefined;
+            if (abortRef.current) break;
 
-            // Stream failure logs, live generation speed, and lightweight counters; no success log records
-            progressScheduler.schedule({
-              current: completedInChunk,
-              total: records.length,
-              currentName: result.filename,
-              status: 'generating',
-              errors: [...errorsRef.current],
-              generated: successfulCertsRef.current.size,
-              workerCount,
-              speed,
+            const currentSubTasks = tasks.slice(chunkIdx, chunkIdx + SUB_BATCH_SIZE);
+            await pool.processChunk(currentSubTasks, (result) => {
+              if (abortRef.current) return;
+              totalCompleted++;
+
+              if (result.blobs && !result.error) {
+                // Store successful blob in memory - do NOT stream success log records to React state
+                successfulCertsRef.current.set(result.rowIndex, {
+                  rowIndex: result.rowIndex,
+                  filename: result.filename,
+                  pngBlob: result.blobs.png,
+                  jpgBlob: result.blobs.jpg,
+                  pdfBlob: result.blobs.pdf,
+                });
+              } else if (result.error) {
+                // Only track and stream failure logs
+                const errorMsg = result.error || 'Generation failed';
+                const rowObj = records.find((r) => r.rowIndex === result.rowIndex)?.row || {};
+                const timestamp = new Date().toLocaleTimeString();
+
+                failedMapRef.current.set(result.rowIndex, {
+                  error: errorMsg,
+                  timestamp,
+                });
+
+                errorsRef.current.push({
+                  rowIndex: result.rowIndex,
+                  name: result.filename,
+                  row: rowObj,
+                  error: errorMsg,
+                });
+              }
+
+              const elapsedSec = (performance.now() - genStartTime) / 1000;
+              const speed = elapsedSec > 0.2 ? (totalCompleted / elapsedSec).toFixed(1) : undefined;
+
+              // Stream failure logs, live generation speed, and lightweight counters; no success log records
+              progressScheduler.schedule({
+                current: totalCompleted,
+                total: records.length,
+                currentName: result.filename,
+                status: pauseRef.current ? 'paused' : 'generating',
+                errors: [...errorsRef.current],
+                generated: successfulCertsRef.current.size,
+                workerCount,
+                speed,
+              });
             });
-          });
+          }
 
           pureGenDurationMs = performance.now() - genStartTime;
           workerExecutionSucceeded = true;
@@ -411,11 +436,24 @@ export function useCertificateBatchGenerator() {
 
       if (!workerExecutionSucceeded) {
         // Fallback to main-thread rendering if Web Workers / OffscreenCanvas are unsupported or failed
+        const pendingRowIndexes = new Set(tasks.map((t) => t.rowIndex));
         const remainingRecords = records.filter(
-          (rec) => !successfulCertsRef.current.has(rec.rowIndex)
+          (rec) => pendingRowIndexes.has(rec.rowIndex) && !successfulCertsRef.current.has(rec.rowIndex)
         );
+        for (const rec of remainingRecords) {
+          // A crashed worker may have recorded these rows as failed; the fallback gets a clean retry
+          if (failedMapRef.current.delete(rec.rowIndex)) {
+            errorsRef.current = errorsRef.current.filter((e) => e.rowIndex !== rec.rowIndex);
+          }
+        }
         const fallbackStartTime = performance.now();
         for (let i = 0; i < remainingRecords.length; i++) {
+          if (abortRef.current) break;
+
+          while (pauseRef.current && !abortRef.current) {
+            await delay(100);
+          }
+
           if (abortRef.current) break;
 
           const { rowIndex, row } = remainingRecords[i];
@@ -501,7 +539,7 @@ export function useCertificateBatchGenerator() {
           };
         }
 
-        if (successfulCertsRef.current.has(rowIndex) || !abortRef.current) {
+        if (successfulCertsRef.current.has(rowIndex)) {
           const certId = registeredCertIds.get(rowIndex);
           const verificationUrl = useQr && certId ? buildVerifyUrlFor(certId) : undefined;
           return {
@@ -649,6 +687,19 @@ export function useCertificateBatchGenerator() {
     downloadErrorReport(progress.errors, 'generation');
   };
 
+  const handleDownloadZipArchive = useCallback(async () => {
+    if (zipBlob) {
+      const safeEvent = eventName ? `${sanitizeFilename(eventName)}_` : '';
+      const dateStr = new Date().toISOString().split('T')[0];
+      downloadBlob(zipBlob, `certificates_${safeEvent}${dateStr}.zip`);
+      return;
+    }
+    const allSuccessfulCerts = Array.from(successfulCertsRef.current.values());
+    if (allSuccessfulCerts.length > 0) {
+      await buildZipAndDownload(allSuccessfulCerts, exportFormats);
+    }
+  }, [zipBlob, eventName, buildZipAndDownload, exportFormats]);
+
   return {
     progress,
     logs,
@@ -667,5 +718,7 @@ export function useCertificateBatchGenerator() {
     handleStop,
     handleDone,
     handleDownloadErrorReport,
+    handleDownloadZip: handleDownloadZipArchive,
+    hasZipArchive: Boolean(zipBlob || successfulCertsRef.current.size > 0),
   };
 }

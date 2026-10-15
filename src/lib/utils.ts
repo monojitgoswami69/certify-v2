@@ -41,24 +41,39 @@ function getNormalizedMap(data: Record<string, string>): Record<string, string> 
   return map;
 }
 
+export function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * Substitutes {{field}} placeholders with row values. Pass `{ html: true }` when
+ * the template is HTML: CSV values are untrusted and must not inject markup.
+ */
 export function replaceTemplateVariables(
   template: string,
-  data: Record<string, string>
+  data: Record<string, string>,
+  options: { html?: boolean } = {}
 ): string {
   if (!template) return '';
   const map = getNormalizedMap(data);
+  const format = (value: string) => (options.html ? escapeHtml(String(value)) : String(value));
   return template.replace(/\{\{([^}]+)\}\}/g, (match, rawKey) => {
     const key = rawKey.trim();
 
     // 1. Exact key match
-    if (data[key] !== undefined && data[key] !== null) return data[key];
+    if (data[key] !== undefined && data[key] !== null) return format(data[key]);
 
     // 2. Fuzzy case & space insensitive match
     const normalizedKey = key.toLowerCase().replace(/[\s_\-]/g, '');
     const foundKey = map[normalizedKey];
 
     if (foundKey && data[foundKey] !== undefined && data[foundKey] !== null) {
-      return data[foundKey];
+      return format(data[foundKey]);
     }
 
     return match;
@@ -140,7 +155,7 @@ export function generateErrorReportCsv(
   const headers = type === 'email' ? ['Row', 'Name', 'Email', 'Error'] : ['Row', 'Name', 'Error'];
 
   const rows = errors.map((err) => {
-    const rowNum = (err.rowIndex + 1).toString();
+    const rowNum = String(err.rowIndex);
     if (type === 'email') {
       return [
         rowNum,
@@ -174,7 +189,7 @@ export function generateFullDeliveryReportCsv(
 ): string {
   const headers = ['Row', 'Recipient Name', 'Email Address', 'Delivery Status', 'Timestamp', 'Diagnostics / Reason', 'Event'];
   const rows = records.map((rec) => [
-    (rec.rowIndex + 1).toString(),
+    String(rec.rowIndex),
     `"${(rec.name || '').replace(/"/g, '""')}"`,
     `"${(rec.email || '').replace(/"/g, '""')}"`,
     `"${rec.status.toUpperCase()}"`,
@@ -216,7 +231,7 @@ export function generateFullGenerationReportCsv(
   ];
 
   const rows = records.map((rec) => [
-    (rec.rowIndex + 1).toString(),
+    String(rec.rowIndex),
     `"${(rec.name || '').replace(/"/g, '""')}"`,
     `"${(rec.filename || '').replace(/"/g, '""')}"`,
     `"${rec.status.toUpperCase()}"`,

@@ -4,6 +4,8 @@
  */
 
 import { create } from 'zustand';
+import { useAppStore } from './useAppStore';
+import { useHistoryStore } from './useHistoryStore';
 
 const API_BASE = '/api';
 const TOKEN_KEY = 'certify_auth_token';
@@ -17,7 +19,6 @@ export interface UserProfile {
   username: string;
   email: string;
   picture?: string;
-  googleAccessToken?: string;
 }
 
 interface AuthState {
@@ -93,7 +94,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         username: data.username,
         email: data.email,
         picture: data.picture,
-        googleAccessToken: data.accessToken || accessToken,
       };
 
       if (rememberMe) {
@@ -116,6 +116,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   logout: () => {
+    const sessionToken = get().token;
+    if (sessionToken && useAppStore.getState().connectedGoogleAccount) {
+      fetch(`${API_BASE}/auth/google/tokens`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      }).catch(() => undefined);
+    }
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_INFO_KEY);
     localStorage.removeItem('credify_auth_token');
@@ -125,6 +132,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     sessionStorage.removeItem('credify_session_token');
     sessionStorage.removeItem('credify_user_info');
     // Note: REMEMBERED_USER_KEY is kept so returning users have their username prefilled
+    // Drop the previous user's workspace and Gmail connection so they never leak to the next session
+    useAppStore.getState().reset();
+    useAppStore.getState().setConnectedGoogleAccount(null);
+    useHistoryStore.getState().clearHistory();
     set({ isAuthenticated: false, token: null, user: null, isLoading: false });
   },
 
@@ -154,8 +165,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           return false;
         }
       } catch {
-        set({ isAuthenticated: false, isLoading: false });
-        return false;
+        // Network failure is not proof the session is invalid; every API call still enforces auth
+        set({ isAuthenticated: true, isLoading: false });
+        return true;
       } finally {
         inFlightVerifyPromise = null;
       }
@@ -220,8 +232,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           return false;
         }
       } catch {
-        get().logout();
-        return false;
+        // Network failure is not proof the session is invalid; every API call still enforces auth
+        set({ isAuthenticated: true, isLoading: false });
+        return true;
       } finally {
         inFlightVerifyPromise = null;
       }

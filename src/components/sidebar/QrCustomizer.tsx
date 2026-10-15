@@ -219,7 +219,12 @@ export function QrCustomizer({ activeQr }: QrCustomizerProps) {
 
   const handleCustomLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
+    if (!['image/png', 'image/jpeg', 'image/svg+xml'].includes(file.type) || file.size > 2 * 1024 * 1024) {
+      alert('Logo must be a PNG, JPEG or SVG image up to 2 MB.');
+      return;
+    }
 
     const reader = new FileReader();
     reader.onload = (event) => {
