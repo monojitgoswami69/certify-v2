@@ -3,6 +3,7 @@ import type { QrZone } from '../../store/useAppStore';
 import { isFontLoaded, loadGoogleFont, getFontFamilyCSS } from '../../lib/font-loader';
 import type { HandleKey } from '../../lib/canvas-snapping';
 import { drawStyledQr } from '../../lib/qr-renderer';
+import { getVerifyBaseUrl } from '../../lib/cert-registration';
 
 export const HANDLE_SIZE = 8;
 export const LABEL_HEIGHT = 20;
@@ -200,7 +201,7 @@ export function drawQrZonesOnCanvas(
         x: dx,
         y: dy,
         size: ds,
-        text: 'https://certify.app/verify/DEMO',
+        text: `${getVerifyBaseUrl()}/verify/DEMO`,
         style: zone.style,
       });
     } catch {
@@ -279,7 +280,7 @@ export function drawQrZonesOnCanvas(
         x: gx,
         y: gy,
         size: gs,
-        text: 'https://certify.app/verify/DEMO',
+        text: `${getVerifyBaseUrl()}/verify/DEMO`,
       });
       ctx.restore();
     } catch {
