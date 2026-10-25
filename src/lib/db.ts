@@ -9,6 +9,7 @@
 import { neon } from '@neondatabase/serverless';
 import { drizzle, type NeonHttpDatabase } from 'drizzle-orm/neon-http';
 import * as schema from '../db/schema';
+import { env } from './env';
 
 type CertifyDb = NeonHttpDatabase<typeof schema>;
 
@@ -18,7 +19,7 @@ const globalForDb = globalThis as unknown as {
 };
 
 function getDb(): CertifyDb {
-  const connectionString = process.env.DATABASE_URL;
+  const connectionString = env.DATABASE_URL;
   if (!connectionString) {
     throw new Error('DATABASE_URL is not set. Configure your Neon connection string.');
   }

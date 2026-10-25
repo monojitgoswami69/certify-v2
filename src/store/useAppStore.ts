@@ -125,8 +125,8 @@ interface AppStore {
   resetEmailProgress: () => void;
 
   // Connected Google Account State
-  connectedGoogleAccount: { email: string; name?: string; accessToken?: string } | null;
-  setConnectedGoogleAccount: (account: { email: string; name?: string; accessToken?: string } | null) => void;
+  connectedGoogleAccount: { email: string; name?: string; picture?: string } | null;
+  setConnectedGoogleAccount: (account: { email: string; name?: string; picture?: string } | null) => void;
 
   // Direct Certificate Export Formats
   exportFormats: ExportFormats;

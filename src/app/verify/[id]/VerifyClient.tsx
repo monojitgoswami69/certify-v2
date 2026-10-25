@@ -6,6 +6,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { ConfettiCanvas } from '@/components/verify/ConfettiCanvas';
+import { getAuthToken } from '@/lib/api-client';
 
 type VerifyResponse =
   | {
@@ -46,14 +47,7 @@ export function VerifyClient({
     let cancelled = false;
     const isStale = () => cancelled || requestSeq !== requestSeqRef.current;
 
-    const token =
-      typeof window !== 'undefined'
-        ? localStorage.getItem('certify_auth_token') ||
-          sessionStorage.getItem('certify_session_token') ||
-          localStorage.getItem('credify_auth_token') ||
-          sessionStorage.getItem('credify_session_token')
-        : null;
-
+    const token = getAuthToken();
     const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
 
     fetch(`/api/verify/${encodeURIComponent(id)}`, { headers })

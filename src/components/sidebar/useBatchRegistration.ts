@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { useAuthStore } from '../../store/useAuthStore';
 import { ensureCertificateIds } from '../../lib/cert-registration';
@@ -8,6 +8,9 @@ import { autoSaveCurrentTemplate } from '../../lib/template-autosave';
 import type { CsvRow } from '../../types';
 
 export function useBatchRegistration() {
+  // Synchronous busy flag: React state commits too late to stop a double-click
+  // from firing the batch twice (which would race the server registration).
+  const inFlightRef = useRef(false);
   const {
     csvData,
     eventName,
@@ -84,11 +87,13 @@ export function useBatchRegistration() {
 
   const registerBatch = useCallback(
     async (isUpdate: boolean = false): Promise<boolean> => {
+      if (inFlightRef.current) return false;
       if (!isReadyToRegister) {
         setBatchRegistrationError('Please upload a template and import CSV recipient data.');
         return false;
       }
 
+      inFlightRef.current = true;
       setIsBatchRegistering(true);
       setBatchRegistrationError(null);
 
@@ -133,6 +138,8 @@ export function useBatchRegistration() {
         setBatchRegistrationError(message);
         setIsBatchRegistering(false);
         return false;
+      } finally {
+        inFlightRef.current = false;
       }
     },
     [

@@ -1,7 +1,14 @@
 import { NextResponse } from 'next/server';
+import { mutationAllowed, forbiddenCsrfResponse } from '../../../../lib/server-auth';
 import { createHash, timingSafeEqual } from 'crypto';
-import { createJwtToken, getPasswordCredentials } from '../../../../lib/server-auth';
+import {
+  createSessionToken,
+  getPasswordCredentials,
+  appendSessionCookie,
+} from '../../../../lib/server-auth';
+import { ensureAdminUser, toPublicUser } from '../../../../lib/accounts';
 import { checkRateLimit, getClientIp } from '../../../../lib/rate-limit';
+import { env } from '../../../../lib/env';
 
 function safeCompare(a: string, b: string): boolean {
   const hashA = createHash('sha256').update(a).digest();
@@ -17,13 +24,11 @@ function tooManyAttempts(retryAfterSec: number) {
 }
 
 export async function POST(request: Request) {
-  // Per-IP limit, plus a global cap that still holds if X-Forwarded-For is spoofed.
+  if (!mutationAllowed(request)) return forbiddenCsrfResponse();
   const ipRate = checkRateLimit(`login:${getClientIp(request)}`, 10, 60_000);
   if (!ipRate.allowed) return tooManyAttempts(ipRate.retryAfterSec);
-  const globalRate = checkRateLimit('login:global', 30, 60_000);
-  if (!globalRate.allowed) return tooManyAttempts(globalRate.retryAfterSec);
 
-  let body: { username?: unknown; password?: unknown; rememberMe?: unknown };
+  let body: { email?: unknown; username?: unknown; password?: unknown; rememberMe?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -31,28 +36,37 @@ export async function POST(request: Request) {
   }
 
   const creds = getPasswordCredentials();
-  if (!creds) {
+  if (!creds || !env.DATABASE_URL) {
     return NextResponse.json(
       { detail: 'Password sign-in is not configured on this server' },
       { status: 503 }
     );
   }
 
-  const { username, password, rememberMe = true } = body;
-  const userMatch = typeof username === 'string' && safeCompare(username, creds.username);
-  const passMatch = typeof password === 'string' && safeCompare(password, creds.password);
+  const submitted = typeof body.email === 'string' ? body.email : typeof body.username === 'string' ? body.username : '';
+  const password = typeof body.password === 'string' ? body.password : '';
+  const emailMatch = safeCompare(submitted.trim().toLowerCase(), creds.email);
+  const passMatch = safeCompare(password, creds.password);
 
-  if (!userMatch || !passMatch) {
-    return NextResponse.json({ detail: 'Invalid username or password' }, { status: 401 });
+  if (!emailMatch || !passMatch) {
+    // Only failures consume the shared global budget, so an attacker hammering
+    // garbage credentials can never lock the real admin out of sign-in.
+    const globalFailRate = checkRateLimit('login:global-fail', 30, 60_000);
+    if (!globalFailRate.allowed) return tooManyAttempts(globalFailRate.retryAfterSec);
+    return NextResponse.json({ detail: 'Invalid email or password' }, { status: 401 });
   }
 
   try {
-    const token = createJwtToken(creds.username, Boolean(rememberMe));
-    return NextResponse.json({
-      token,
-      username: creds.username,
-      message: 'Login successful',
-    });
+    const account = await ensureAdminUser();
+    const user = toPublicUser(account);
+    const rememberMe = Boolean(body.rememberMe ?? true);
+    const token = createSessionToken(
+      { userId: user.userId, email: user.email, role: user.role, name: user.name },
+      rememberMe
+    );
+    const response = NextResponse.json({ token, user, message: 'Login successful' });
+    appendSessionCookie(response, token, rememberMe);
+    return response;
   } catch (error) {
     console.error('[Login error]:', error);
     return NextResponse.json({ detail: 'Sign-in is temporarily unavailable' }, { status: 500 });

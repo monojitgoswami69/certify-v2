@@ -13,7 +13,13 @@ import {
   validateEmailAddress,
 } from '../../lib/utils';
 import { generateCertificate } from '../../lib/certificate-engine';
-import { ensureFontsLoaded } from '../../lib/font-loader';
+import { ensureFontsLoaded, loadFontsForWorker } from '../../lib/font-loader';
+import {
+  createPooledRenderer,
+  templateImageToBlob,
+  type PooledCertificateRenderer,
+} from '../../lib/render-service';
+import { CertificateWorkerPool } from '../../lib/worker-pool';
 import { buildVerifyUrlFor } from '../../lib/cert-registration';
 import { autoSaveCurrentTemplate } from '../../lib/template-autosave';
 import type { CsvRow, EmailProgress, EmailDeliveryRecord } from '../../types';
@@ -66,6 +72,9 @@ export function useEmailBatchRunner() {
   const pauseRef = useRef(false);
   const abortRef = useRef(false);
   const reconnectRef = useRef(false);
+  // Synchronous busy flag: the Send button's disabled state commits a render
+  // late, and a second click would double-send the whole batch.
+  const sendInFlightRef = useRef(false);
   const [localPaused, setLocalPaused] = useState(false);
   const startTimeRef = useRef<number>(0);
   const [, setEtaTick] = useState(0);
@@ -112,6 +121,7 @@ export function useEmailBatchRunner() {
 
   const sendBatch = useCallback(
     async (records: Array<{ rowIndex: number; row: CsvRow }>, isRetry: boolean = false) => {
+      if (sendInFlightRef.current) return;
       if (!templateImage || validBoxes.length === 0) return;
 
       // Read registration at call time: registering does not re-create this callback
@@ -121,6 +131,7 @@ export function useEmailBatchRunner() {
         return;
       }
 
+      sendInFlightRef.current = true;
       abortRef.current = false;
       pauseRef.current = false;
       setLocalPaused(false);
@@ -128,6 +139,11 @@ export function useEmailBatchRunner() {
       setNetworkAlert(null);
       consecutiveNetworkErrorsRef.current = 0;
 
+      // Declared outside the try so the finally clause can terminate the pool.
+      let renderer: PooledCertificateRenderer | null = null;
+      let terminateRenderer: (() => void) | null = null;
+
+      try {
       const startTime = Date.now();
       startTimeRef.current = startTime;
       const errors: FailedRecord[] = [];
@@ -160,6 +176,7 @@ export function useEmailBatchRunner() {
       });
 
       const uniqueFonts = new Set(boxes.map((b) => b.fontFamily).filter(Boolean));
+      if (defaultFont) uniqueFonts.add(defaultFont);
       await ensureFontsLoaded(uniqueFonts);
 
       if (!isRetry) {
@@ -168,6 +185,50 @@ export function useEmailBatchRunner() {
 
       reconnectRef.current = false;
       setNeedsReconnect(false);
+
+      // Worker-pool rendering for attachments: renders run off the main
+      // thread (chunk-ahead, overlapping with network-bound sends), so a
+      // 2000-email batch no longer freezes the UI between sends. Falls back
+      // to main-thread rendering when workers are unavailable.
+      if (templateImage && CertificateWorkerPool.isSupported()) {
+        try {
+          const templateBlob = await templateImageToBlob(templateImage, templateFile);
+          if (templateBlob) {
+            const [workerFonts] = await Promise.all([loadFontsForWorker(uniqueFonts)]);
+            const renderTasks = records.map(({ rowIndex, row }) => {
+              const displayName = getDisplayName(row);
+              const certId = registeredCertIds.get(rowIndex);
+              return {
+                id: records.findIndex((r) => r.rowIndex === rowIndex),
+                rowIndex,
+                row,
+                filename: sanitizeFilename(displayName),
+                verificationUrl: useQr && certId ? buildVerifyUrlFor(certId) : undefined,
+              };
+            });
+            const pooled = await createPooledRenderer({
+              templateBlob,
+              templateWidth: templateImage.naturalWidth || templateImage.width,
+              templateHeight: templateImage.naturalHeight || templateImage.height,
+              boxes: validBoxes,
+              qrZones: useQr ? qrZones : [],
+              formats: [
+                ...(emailSettings.attachJpg ? ['jpg'] : []),
+                ...(emailSettings.attachPng ? ['png'] : []),
+                ...(emailSettings.attachPdf ? ['pdf'] : []),
+              ] as Array<'png' | 'jpg' | 'pdf'>,
+              fonts: workerFonts,
+              tasks: renderTasks,
+            });
+            if (pooled) {
+              renderer = pooled.renderer;
+              terminateRenderer = pooled.terminate;
+            }
+          }
+        } catch (err) {
+          console.warn('[Email Batch] pooled rendering unavailable, using main thread:', err);
+        }
+      }
 
       setEmailProgress({
         current: 0,
@@ -281,23 +342,44 @@ export function useEmailBatchRunner() {
           const email = validation.email;
 
           try {
-            if (!workerCanvas) workerCanvas = document.createElement('canvas');
             const certId = registeredCertIds.get(rowIndex);
             if (useQr && !certId) {
               throw new Error('No registered certificate ID for this row. Re-register the batch.');
             }
-            const cert = await generateCertificate({
-              templateImage,
-              boxes: validBoxes,
-              row,
-              filename: sanitizeFilename(displayName),
-              includeJpg: Boolean(emailSettings.attachJpg),
-              includePng: Boolean(emailSettings.attachPng),
-              includePdf: Boolean(emailSettings.attachPdf),
-              canvas: workerCanvas,
-              qrZones: useQr ? qrZones : undefined,
-              verificationUrl: useQr && certId ? buildVerifyUrlFor(certId) : undefined,
-            });
+
+            let cert: { filename: string; jpgBlob?: Blob; pngBlob?: Blob; pdfBlob?: Blob };
+            if (renderer) {
+              const rendered = await renderer.render({
+                id: rowIndex,
+                rowIndex,
+                row,
+                filename: sanitizeFilename(displayName),
+                verificationUrl: useQr && certId ? buildVerifyUrlFor(certId) : undefined,
+              });
+              if (rendered.error || !rendered.blobs) {
+                throw new Error(rendered.error || 'Certificate rendering failed');
+              }
+              cert = {
+                filename: rendered.filename,
+                jpgBlob: rendered.blobs.jpg,
+                pngBlob: rendered.blobs.png,
+                pdfBlob: rendered.blobs.pdf,
+              };
+            } else {
+              if (!workerCanvas) workerCanvas = document.createElement('canvas');
+              cert = await generateCertificate({
+                templateImage,
+                boxes: validBoxes,
+                row,
+                filename: sanitizeFilename(displayName),
+                includeJpg: Boolean(emailSettings.attachJpg),
+                includePng: Boolean(emailSettings.attachPng),
+                includePdf: Boolean(emailSettings.attachPdf),
+                canvas: workerCanvas,
+                qrZones: useQr ? qrZones : undefined,
+                verificationUrl: useQr && certId ? buildVerifyUrlFor(certId) : undefined,
+              });
+            }
 
             const subject = replaceTemplateVariables(emailSettings.subject, row);
             const bodyPlain = replaceTemplateVariables(emailSettings.bodyPlain, row);
@@ -317,7 +399,6 @@ export function useEmailBatchRunner() {
               jpgBlob: cert.jpgBlob,
               pngBlob: cert.pngBlob,
               pdfBlob: cert.pdfBlob,
-              googleAccessToken: connectedGoogleAccount?.accessToken,
               senderEmail: connectedGoogleAccount?.email,
             });
 
@@ -443,6 +524,10 @@ export function useEmailBatchRunner() {
           defaultFontColor,
           token,
         }).catch((err) => console.warn('[AutoSave Template Error]:', err));
+      }
+      } finally {
+        terminateRenderer?.();
+        sendInFlightRef.current = false;
       }
     },
     [

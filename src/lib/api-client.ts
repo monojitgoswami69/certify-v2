@@ -4,21 +4,28 @@
 
 const API_BASE = '/api';
 
+/** The single source of truth for reading the session token client-side. */
+export function getAuthToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem('certify_auth_token') || sessionStorage.getItem('certify_session_token');
+}
+
 function getAuthHeader(): Record<string, string> {
-  if (typeof window === 'undefined') return {};
-  const token =
-    localStorage.getItem('certify_auth_token') ||
-    sessionStorage.getItem('certify_session_token') ||
-    localStorage.getItem('credify_auth_token') ||
-    sessionStorage.getItem('credify_session_token');
+  const token = getAuthToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
+
+/**
+ * Custom header required on every request the browser makes. The session is
+ * an HttpOnly cookie, so this header (which cross-site pages cannot add
+ * without a CORS grant we never issue) is the CSRF defense for mutations.
+ */
+const CSRF_HEADERS = { 'X-Certify-Request': '1' };
 
 export interface GoogleAccount {
   email: string;
   name?: string;
   picture?: string;
-  accessToken?: string;
 }
 
 export interface RegisterCertificateItem {
@@ -43,6 +50,7 @@ export async function registerCertificates(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      ...CSRF_HEADERS,
       ...getAuthHeader(),
     },
     body: JSON.stringify({ certificates: items, eventName, isStatic }),
@@ -64,6 +72,7 @@ export async function exchangeGoogleCode(code: string): Promise<GoogleAccount> {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      ...CSRF_HEADERS,
       ...getAuthHeader(),
     },
     body: JSON.stringify({ code }),
@@ -81,7 +90,7 @@ export async function exchangeGoogleCode(code: string): Promise<GoogleAccount> {
 export async function disconnectGoogleAccount(): Promise<void> {
   await fetch(`${API_BASE}/auth/google/tokens`, {
     method: 'DELETE',
-    headers: getAuthHeader(),
+    headers: { ...CSRF_HEADERS, ...getAuthHeader() },
   }).catch(() => undefined);
 }
 
@@ -94,7 +103,6 @@ export interface SendEmailV2Params {
   jpgBlob?: Blob;
   pngBlob?: Blob;
   pdfBlob?: Blob;
-  googleAccessToken?: string;
   senderEmail?: string;
 }
 
@@ -117,7 +125,6 @@ export async function sendEmailV2(params: SendEmailV2Params): Promise<SendEmailR
   form.append('email_body_plain', params.emailBodyPlain);
   form.append('email_body_html', params.emailBodyHtml);
   form.append('filename', params.filename);
-  if (params.googleAccessToken) form.append('google_access_token', params.googleAccessToken);
   if (params.senderEmail) form.append('sender_email', params.senderEmail);
   if (params.jpgBlob) form.append('jpg', params.jpgBlob, `${params.filename}.jpg`);
   if (params.pngBlob) form.append('png', params.pngBlob, `${params.filename}.png`);
@@ -125,7 +132,8 @@ export async function sendEmailV2(params: SendEmailV2Params): Promise<SendEmailR
 
   const response = await fetch(`${API_BASE}/send-email-v2`, {
     method: 'POST',
-    headers: getAuthHeader(),
+    credentials: 'same-origin',
+    headers: { ...CSRF_HEADERS, ...getAuthHeader() },
     body: form,
   });
 

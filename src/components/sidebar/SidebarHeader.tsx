@@ -3,6 +3,7 @@
 import { ChevronLeft } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Image from 'next/image';
+import { AccountMenu } from '../account/AccountMenu';
 
 export function SidebarHeader() {
   const router = useRouter();
@@ -39,7 +40,7 @@ export function SidebarHeader() {
         </button>
 
         {/* Certify Branding */}
-        <div className="flex items-center gap-1.5 min-w-0">
+        <div className="flex items-center gap-1.5 min-w-0 flex-1">
           <Image
             src="/certify-logo.webp"
             alt="Certify Logo"
@@ -51,6 +52,7 @@ export function SidebarHeader() {
             Certify
           </h1>
         </div>
+        <AccountMenu compact />
       </div>
     </div>
   );

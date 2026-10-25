@@ -1,6 +1,6 @@
 import { useAppStore } from '../store/useAppStore';
 import { useHistoryStore } from '../store/useHistoryStore';
-import { sanitizeFilename, buildVirtualCsvFile } from './utils';
+import { sanitizeFilename, buildVirtualCsvFile, imageSourceToBlob } from './utils';
 
 interface LoadWorkspaceParams {
   eventName?: string | null;
@@ -24,6 +24,7 @@ export function isWorkspaceLoadedFor(eventName: string): boolean {
 function decodeImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
+    img.crossOrigin = 'anonymous';
     img.onload = () => resolve(img);
     img.onerror = () => reject(new Error('Failed to decode template image'));
     img.src = src;
@@ -65,10 +66,10 @@ export async function loadWorkspace({ eventName, templateId, token, shouldApply 
   let templateImage: HTMLImageElement | null = null;
   if (tpl?.imageData) {
     const [blob, img] = await Promise.all([
-      fetch(tpl.imageData).then((r) => r.blob()),
+      imageSourceToBlob(tpl.imageData),
       decodeImage(tpl.imageData),
     ]);
-    templateFile = new File([blob], `${sanitizeFilename(eventName || tpl.name)}.png`, { type: 'image/png' });
+    templateFile = new File([blob], `${sanitizeFilename(eventName || tpl.name)}.png`, { type: blob.type || 'image/png' });
     templateImage = img;
   }
 
@@ -83,7 +84,14 @@ export async function loadWorkspace({ eventName, templateId, token, shouldApply 
   if (templateFile && templateImage) {
     store.setTemplate(templateFile, templateImage, `${templateFile.name} (${templateImage.width}×${templateImage.height})`);
     const layout = tpl?.layoutConfig;
-    if (Array.isArray(layout?.boxes)) store.setBoxes(layout.boxes);
+    if (Array.isArray(layout?.boxes)) {
+      const normalizedBoxes = layout.boxes.map((b: any) => ({
+        ...b,
+        w: b.w ?? b.width ?? 200,
+        h: b.h ?? b.height ?? 50,
+      }));
+      store.setBoxes(normalizedBoxes);
+    }
     if (Array.isArray(layout?.qrZones)) store.setQrZones(layout.qrZones);
     if (layout?.defaultFont) store.setDefaultFont(layout.defaultFont);
     if (layout?.defaultFontSize) store.setDefaultFontSize(layout.defaultFontSize);

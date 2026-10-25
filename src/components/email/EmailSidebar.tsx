@@ -10,14 +10,14 @@ import { EmailSendButton } from './EmailSendButton';
 import { CustomSelect } from '../ui/CustomSelect';
 import { ResizeHandle } from '../ui/ResizeHandle';
 
-const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || 'your-google-client-id.apps.googleusercontent.com';
+const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || '';
 
 function GoogleConnectButton({
   onSuccess,
   onError,
   buttonText = 'Connect Google Account',
 }: {
-  onSuccess: (account: { email: string; name?: string; accessToken?: string }) => void;
+  onSuccess: (account: { email: string; name?: string; picture?: string }) => void;
   onError: (msg: string) => void;
   buttonText?: string;
 }) {
@@ -429,6 +429,11 @@ function EmailSidebarContent() {
 }
 
 export function EmailSidebar() {
+  if (!GOOGLE_CLIENT_ID) {
+    return (
+      <EmailSidebarContent />
+    );
+  }
   return (
     <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
       <EmailSidebarContent />

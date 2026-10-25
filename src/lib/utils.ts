@@ -148,6 +148,19 @@ export interface ErrorRecord {
   error: string;
 }
 
+/**
+ * Escapes one CSV cell. Quote-wraps per RFC 4180 and neutralizes formula
+ * injection: a leading =, +, -, @ (or tab/CR) would otherwise be executed as
+ * a formula/DDE call by Excel or LibreOffice when a recipient opens the export.
+ * Recipient names and emails originate from uploaded spreadsheets, so every
+ * export path must run untrusted values through this helper.
+ */
+export function csvCell(value: string | null | undefined): string {
+  const raw = String(value ?? '');
+  const guarded = /^[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
+  return `"${guarded.replace(/"/g, '""')}"`;
+}
+
 export function generateErrorReportCsv(
   errors: ErrorRecord[],
   type: 'email' | 'generation'
@@ -157,18 +170,9 @@ export function generateErrorReportCsv(
   const rows = errors.map((err) => {
     const rowNum = String(err.rowIndex);
     if (type === 'email') {
-      return [
-        rowNum,
-        `"${(err.name || '').replace(/"/g, '""')}"`,
-        `"${(err.email || '').replace(/"/g, '""')}"`,
-        `"${(err.error || '').replace(/"/g, '""')}"`,
-      ];
+      return [rowNum, csvCell(err.name), csvCell(err.email), csvCell(err.error)];
     } else {
-      return [
-        rowNum,
-        `"${(err.name || '').replace(/"/g, '""')}"`,
-        `"${(err.error || '').replace(/"/g, '""')}"`,
-      ];
+      return [rowNum, csvCell(err.name), csvCell(err.error)];
     }
   });
 
@@ -190,12 +194,12 @@ export function generateFullDeliveryReportCsv(
   const headers = ['Row', 'Recipient Name', 'Email Address', 'Delivery Status', 'Timestamp', 'Diagnostics / Reason', 'Event'];
   const rows = records.map((rec) => [
     String(rec.rowIndex),
-    `"${(rec.name || '').replace(/"/g, '""')}"`,
-    `"${(rec.email || '').replace(/"/g, '""')}"`,
-    `"${rec.status.toUpperCase()}"`,
-    `"${rec.timestamp || ''}"`,
-    `"${(rec.error || (rec.status === 'sent' ? 'Successfully Delivered' : '')).replace(/"/g, '""')}"`,
-    `"${(eventName || '').replace(/"/g, '""')}"`,
+    csvCell(rec.name),
+    csvCell(rec.email),
+    csvCell(rec.status.toUpperCase()),
+    csvCell(rec.timestamp || ''),
+    csvCell(rec.error || (rec.status === 'sent' ? 'Successfully Delivered' : '')),
+    csvCell(eventName || ''),
   ]);
 
   return [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
@@ -232,15 +236,15 @@ export function generateFullGenerationReportCsv(
 
   const rows = records.map((rec) => [
     String(rec.rowIndex),
-    `"${(rec.name || '').replace(/"/g, '""')}"`,
-    `"${(rec.filename || '').replace(/"/g, '""')}"`,
-    `"${rec.status.toUpperCase()}"`,
-    `"${(rec.formats || []).join('+')}"`,
-    `"${(rec.certId || '').replace(/"/g, '""')}"`,
-    `"${(rec.verificationUrl || '').replace(/"/g, '""')}"`,
-    `"${rec.timestamp || ''}"`,
-    `"${(rec.error || (rec.status === 'generated' ? 'Successfully Generated' : '')).replace(/"/g, '""')}"`,
-    `"${(eventName || '').replace(/"/g, '""')}"`,
+    csvCell(rec.name),
+    csvCell(rec.filename),
+    csvCell(rec.status.toUpperCase()),
+    csvCell((rec.formats || []).join('+')),
+    csvCell(rec.certId || ''),
+    csvCell(rec.verificationUrl || ''),
+    csvCell(rec.timestamp || ''),
+    csvCell(rec.error || (rec.status === 'generated' ? 'Successfully Generated' : '')),
+    csvCell(eventName || ''),
   ]);
 
   return [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
@@ -463,5 +467,45 @@ export async function streamToFile(
   const writable = await handle.createWritable();
   await stream.pipeTo(writable);
   return true;
+}
+
+/**
+ * Safely converts an image source (data URL, blob URL, or HTTP URL) into a Blob.
+ * For data: URLs, it decodes base64 in memory without calling window.fetch,
+ * avoiding CSP connect-src restrictions and browser data URL length limits.
+ */
+export async function imageSourceToBlob(source: string): Promise<Blob> {
+  if (source.startsWith('data:')) {
+    const commaIdx = source.indexOf(',');
+    if (commaIdx === -1) {
+      throw new Error('Invalid data URL format: missing comma separator');
+    }
+    const header = source.slice(0, commaIdx);
+    const base64Data = source.slice(commaIdx + 1);
+    const mimeMatch = header.match(/data:([^;]+)/);
+    const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';
+
+    const binaryString = atob(base64Data);
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return new Blob([bytes], { type: mimeType });
+  }
+
+  const res = await fetch(source);
+  if (!res.ok) {
+    throw new Error(`Failed to load image source: ${res.statusText}`);
+  }
+  return await res.blob();
+}
+
+/**
+ * Converts an image source (data URL or regular URL) to a File object.
+ */
+export async function imageSourceToFile(source: string, filename: string): Promise<File> {
+  const blob = await imageSourceToBlob(source);
+  return new File([blob], filename, { type: blob.type || 'image/png' });
 }
 

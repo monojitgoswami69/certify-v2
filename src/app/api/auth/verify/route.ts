@@ -1,14 +1,15 @@
 import { NextResponse } from 'next/server';
-import { getAuthUserFromRequest, unauthorizedResponse } from '../../../../lib/server-auth';
+import { unauthorizedResponse } from '../../../../lib/server-auth';
+import { getAuthenticatedUser } from '../../../../lib/accounts';
 
 export async function GET(request: Request) {
-  const username = getAuthUserFromRequest(request);
-  if (!username) {
+  const user = await getAuthenticatedUser(request);
+  if (!user) {
     return unauthorizedResponse('Invalid or expired token');
   }
 
   return NextResponse.json({
     authenticated: true,
-    username,
+    user,
   });
 }

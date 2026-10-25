@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import { useAuthStore } from '../../store/useAuthStore';
+import { imageSourceToBlob } from '../../lib/utils';
 import type { TextBox, QrZone } from '../../types';
 
 interface TemplateSummary {
@@ -114,10 +115,9 @@ export function TemplateLibraryModal({ isOpen, onClose, onLoaded }: TemplateLibr
       }
 
       // Convert Base64 data URL to Image and File
-      const blobRes = await fetch(template.imageData);
-      const blob = await blobRes.blob();
+      const blob = await imageSourceToBlob(template.imageData);
       const filename = `${template.name.toLowerCase().replace(/[^a-z0-9_-]/g, '_')}.png`;
-      const file = new File([blob], filename, { type: 'image/png' });
+      const file = new File([blob], filename, { type: blob.type || 'image/png' });
 
       await new Promise<void>((resolve, reject) => {
         const img = new Image();

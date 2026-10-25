@@ -2,8 +2,11 @@
 
 import React, { useRef, useEffect, useCallback, useState } from 'react';
 import { Image as ImageIcon } from 'lucide-react';
-import QRCode from 'qrcode';
 import { useAppStore } from '../../store/useAppStore';
+
+// Deterministic QR ('CERTIFY-VERIFY-PLACEHOLDER', 512px, transparent bg) baked at build time.
+const PLACEHOLDER_QR_DATA_URL =
+  '${qr}';
 import { useHistoryStore } from '../../store/useHistoryStore';
 import {
   calculateMoveSnapping,
@@ -221,31 +224,16 @@ export function CanvasEditor() {
     },
   });
 
-  // Placeholder QR shown inside zone while designing
+  // Placeholder QR shown inside zone while designing. Precomputed PNG so the
+  // editor bundle does not need to carry the qrcode encoder at runtime.
   const placeholderImgRef = useRef<HTMLImageElement | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-    QRCode.toDataURL('CERTIFY-VERIFY-PLACEHOLDER', {
-      margin: 1,
-      width: 512,
-      color: {
-        dark: '#000000',
-        light: '#00000000',
-      },
-    })
-      .then((url) => {
-        if (cancelled) return;
-        const img = new Image();
-        img.onload = () => {
-          placeholderImgRef.current = img;
-        };
-        img.src = url;
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
+    const img = new Image();
+    img.onload = () => {
+      placeholderImgRef.current = img;
     };
+    img.src = PLACEHOLDER_QR_DATA_URL;
   }, []);
 
   // Main Canvas Rendering Loop
@@ -749,17 +737,19 @@ export function CanvasEditor() {
     isSpacePressed,
   ]);
 
-  // Hover cursor styling when not dragging
-  const handleCanvasMouseMove = useCallback(
-    (e: React.MouseEvent | React.PointerEvent) => {
-      if (dragMode !== 'none' || !templateImage) return;
+  // Hover cursor styling when not dragging. Coalesced to one pass per
+  // animation frame: pointermove fires at trackpad rate (120-250 Hz) and every
+  // QR-ghost update re-renders the full canvas.
+  const applyHoverUpdate = useCallback(
+    (clientX: number, clientY: number) => {
+      if (!templateImage) return;
 
       if (isSpacePressed) {
         if (canvasRef.current) canvasRef.current.style.cursor = 'grab';
         return;
       }
 
-      const { x: imgX, y: imgY } = screenToImage(e.clientX, e.clientY);
+      const { x: imgX, y: imgY } = screenToImage(clientX, clientY);
 
       if (isPlacingQr) {
         setQrGhostPos({ x: imgX, y: imgY });
@@ -811,7 +801,6 @@ export function CanvasEditor() {
       }
     },
     [
-      dragMode,
       templateImage,
       isSpacePressed,
       screenToImage,
@@ -823,6 +812,29 @@ export function CanvasEditor() {
       boxes,
       activeBoxId,
     ]
+  );
+
+  const hoverRafRef = useRef<number | null>(null);
+  const hoverEventRef = useRef<{ clientX: number; clientY: number } | null>(null);
+  useEffect(() => {
+    return () => {
+      if (hoverRafRef.current !== null) cancelAnimationFrame(hoverRafRef.current);
+    };
+  }, []);
+
+  const handleCanvasMouseMove = useCallback(
+    (e: React.MouseEvent | React.PointerEvent) => {
+      if (dragMode !== 'none' || !templateImage) return;
+      hoverEventRef.current = { clientX: e.clientX, clientY: e.clientY };
+      if (hoverRafRef.current !== null) return;
+      hoverRafRef.current = requestAnimationFrame(() => {
+        hoverRafRef.current = null;
+        const evt = hoverEventRef.current;
+        hoverEventRef.current = null;
+        if (evt) applyHoverUpdate(evt.clientX, evt.clientY);
+      });
+    },
+    [dragMode, templateImage, applyHoverUpdate]
   );
 
   const activeBox = boxes.find((b) => b.id === activeBoxId);

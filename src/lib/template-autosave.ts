@@ -1,4 +1,5 @@
 import type { TextBox, QrZone } from '../types';
+import { getAuthToken } from './api-client';
 
 export interface AutoSaveTemplateParams {
   templateImage: HTMLImageElement | null;
@@ -10,6 +11,77 @@ export interface AutoSaveTemplateParams {
   defaultFontSize?: number;
   defaultFontColor?: string;
   token?: string | null;
+}
+
+const ALLOWED_SAVE_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
+
+interface EncodedImage {
+  dataUrl: string;
+  hash: string;
+  width: number;
+  height: number;
+}
+
+// Re-encoding a full-resolution template costs hundreds of ms and megabytes;
+// autosave runs on every register/generate/email pass with the same image, so
+// cache the encoding keyed by the source object's identity.
+const encodedImageCache = new WeakMap<object, Promise<EncodedImage>>();
+
+async function sha256Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error('Failed to read template file'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function encodeTemplateImage(
+  templateImage: HTMLImageElement,
+  templateFile: File | null
+): Promise<EncodedImage> {
+  const width = templateImage.naturalWidth || templateImage.width;
+  const height = templateImage.naturalHeight || templateImage.height;
+
+  // Prefer the original uploaded bytes: identical pixels, no full-res canvas
+  // re-encode, and JPEG sources stay JPEG instead of ballooning into PNG.
+  if (templateFile && ALLOWED_SAVE_IMAGE_TYPES.includes(templateFile.type)) {
+    try {
+      const dataUrl = await fileToDataUrl(templateFile);
+      return { dataUrl, hash: await sha256Hex(dataUrl), width, height };
+    } catch {
+      // Fall through to canvas encoding.
+    }
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Canvas 2D context unavailable');
+  ctx.drawImage(templateImage, 0, 0);
+  const dataUrl = canvas.toDataURL('image/png', 0.95);
+  return { dataUrl, hash: await sha256Hex(dataUrl), width, height };
+}
+
+function getCachedEncodedImage(
+  templateImage: HTMLImageElement,
+  templateFile: File | null
+): Promise<EncodedImage> {
+  const key = templateFile ?? templateImage;
+  let encoded = encodedImageCache.get(key);
+  if (!encoded) {
+    encoded = encodeTemplateImage(templateImage, templateFile);
+    encodedImageCache.set(key, encoded);
+  }
+  return encoded;
 }
 
 /**
@@ -38,21 +110,14 @@ export async function autoSaveCurrentTemplate(
       eventName?.trim() ||
       (templateFile?.name ? templateFile.name.replace(/\.[^/.]+$/, '').trim() : 'Certificate Template');
 
-    // Convert HTMLImageElement to Base64 PNG data URL
-    const canvas = document.createElement('canvas');
-    canvas.width = templateImage.naturalWidth || templateImage.width;
-    canvas.height = templateImage.naturalHeight || templateImage.height;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return null;
-
-    ctx.drawImage(templateImage, 0, 0);
-    const imageData = canvas.toDataURL('image/png', 0.95);
+    const { dataUrl, hash, width, height } = await getCachedEncodedImage(templateImage, templateFile);
 
     const payload = {
       name,
-      imageData,
-      width: canvas.width,
-      height: canvas.height,
+      imageData: dataUrl,
+      imageHash: hash,
+      width,
+      height,
       layoutConfig: {
         boxes,
         qrZones,
@@ -62,14 +127,7 @@ export async function autoSaveCurrentTemplate(
       },
     };
 
-    const activeToken =
-      token ||
-      (typeof window !== 'undefined'
-        ? localStorage.getItem('certify_auth_token') ||
-          sessionStorage.getItem('certify_session_token') ||
-          localStorage.getItem('credify_auth_token') ||
-          sessionStorage.getItem('credify_session_token')
-        : null);
+    const activeToken = token || (typeof window !== 'undefined' ? getAuthToken() : null);
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',

@@ -1,9 +1,12 @@
 import { NextResponse } from 'next/server';
+import { mutationAllowed, forbiddenCsrfResponse } from '../../../../lib/server-auth';
 import { OAuth2Client } from 'google-auth-library';
-import { createJwtToken, getAllowedEmails } from '../../../../lib/server-auth';
+import { createSessionToken, appendSessionCookie } from '../../../../lib/server-auth';
+import { toPublicUser, upsertGoogleUser } from '../../../../lib/accounts';
 import { checkRateLimit, getClientIp } from '../../../../lib/rate-limit';
+import { env, googleClientId } from '../../../../lib/env';
 
-const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID || '';
+const GOOGLE_CLIENT_ID = googleClientId();
 const client = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 interface GoogleIdentity {
@@ -48,6 +51,7 @@ async function identityFromAccessToken(accessToken: string): Promise<GoogleIdent
 }
 
 export async function POST(request: Request) {
+  if (!mutationAllowed(request)) return forbiddenCsrfResponse();
   const rate = checkRateLimit(`google-login:${getClientIp(request)}`, 20, 60_000);
   if (!rate.allowed) {
     return NextResponse.json(
@@ -60,15 +64,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ detail: 'Google sign-in is not configured' }, { status: 503 });
   }
 
-  const allowedEmails = getAllowedEmails();
-  if (allowedEmails.length === 0) {
-    return NextResponse.json(
-      { detail: 'Google sign-in is disabled: no ADMIN_EMAILS allowlist is configured' },
-      { status: 403 }
-    );
+  if (!env.DATABASE_URL) {
+    return NextResponse.json({ detail: 'Sign-in is not configured' }, { status: 503 });
   }
 
-  let body: { credential?: unknown; accessToken?: unknown };
+  let body: { credential?: unknown; accessToken?: unknown; rememberMe?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -89,20 +89,27 @@ export async function POST(request: Request) {
     if (!identity) {
       return NextResponse.json({ detail: 'Invalid Google credential' }, { status: 401 });
     }
-    if (!allowedEmails.includes(identity.email.toLowerCase())) {
-      return NextResponse.json({ detail: 'This Google account is not authorized' }, { status: 403 });
-    }
 
-    const token = createJwtToken(identity.email);
+    const account = await upsertGoogleUser(identity);
+    const user = toPublicUser(account);
+    const rememberMe = body.rememberMe !== false;
+    const token = createSessionToken(
+      {
+        userId: user.userId,
+        email: user.email,
+        role: user.role,
+        name: user.name,
+      },
+      rememberMe
+    );
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       token,
-      username: identity.name,
-      email: identity.email,
-      picture: identity.picture,
-      accessToken: typeof accessToken === 'string' ? accessToken : null,
+      user,
       message: 'Google Sign-In successful',
     });
+    appendSessionCookie(response, token, rememberMe);
+    return response;
   } catch (error) {
     console.error('[Google OAuth Error]:', error);
     return NextResponse.json({ detail: 'Google authentication failed' }, { status: 401 });

@@ -7,6 +7,33 @@ import type {
   QrCenterShape,
 } from '../types';
 
+/**
+ * LRU cache for QR bit matrices. QRCode.create runs Reed-Solomon ECC —
+ * ~0.5-2ms per call — and the editor redraws QR zones (a constant URL) at
+ * drag frame rate, so memoizing by `text|ecLevel` removes that cost entirely
+ * for repeated paints. Bounded so worker-driven unique URLs can't grow it.
+ */
+const QR_MATRIX_CACHE_LIMIT = 64;
+const qrMatrixCache = new Map<string, ReturnType<typeof QRCode.create>>();
+
+function getCachedQrMatrix(text: string, errorCorrectionLevel: 'H' | 'M') {
+  const key = `${errorCorrectionLevel}|${text}`;
+  const cached = qrMatrixCache.get(key);
+  if (cached) {
+    // refresh recency
+    qrMatrixCache.delete(key);
+    qrMatrixCache.set(key, cached);
+    return cached;
+  }
+  const created = QRCode.create(text, { errorCorrectionLevel });
+  if (qrMatrixCache.size >= QR_MATRIX_CACHE_LIMIT) {
+    const oldest = qrMatrixCache.keys().next().value;
+    if (oldest !== undefined) qrMatrixCache.delete(oldest);
+  }
+  qrMatrixCache.set(key, created);
+  return created;
+}
+
 // Preset verification emblems encoded as crisp SVG Data URIs
 export interface PresetEmblem {
   id: string;
@@ -310,7 +337,7 @@ export function drawStyledQr(
 
   const hasLogo = Boolean(style?.logo || logoImg);
   // Auto-elevate error correction to 'H' when a logo is used so scannability is 100% rock-solid
-  const qr = QRCode.create(text, { errorCorrectionLevel: hasLogo ? 'H' : 'M' });
+  const qr = getCachedQrMatrix(text, hasLogo ? 'H' : 'M');
 
   const moduleCount = qr.modules.size;
   const moduleSize = size / moduleCount;

@@ -1,9 +1,8 @@
 import jwt from 'jsonwebtoken';
 import { NextResponse } from 'next/server';
+import { env, isProduction } from './env';
 
-const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 const DEV_JWT_SECRET = 'certify_dev_only_insecure_jwt_secret';
-const DEV_AUTH_USERNAME = 'admin';
 const DEV_AUTH_PASSWORD = 'admin123';
 const MIN_SECRET_LENGTH = 32;
 
@@ -12,7 +11,7 @@ function warnInsecureDefaultsOnce() {
   if (warnedInsecureDefaults) return;
   warnedInsecureDefaults = true;
   console.warn(
-    '[security] JWT_SECRET / AUTH_USERNAME / AUTH_PASSWORD not fully configured; using insecure development defaults.'
+    '[security] JWT_SECRET or AUTH_PASSWORD is not fully configured; using an insecure development default.'
   );
 }
 
@@ -21,103 +20,161 @@ function warnInsecureDefaultsOnce() {
  * while production requests fail closed when the secret is missing or weak.
  */
 function getJwtSecret(): string {
-  const secret = process.env.JWT_SECRET;
+  const secret = env.JWT_SECRET;
   if (secret && secret.length >= MIN_SECRET_LENGTH) return secret;
-  if (IS_PRODUCTION) {
+  if (isProduction()) {
     throw new Error(`JWT_SECRET must be set to at least ${MIN_SECRET_LENGTH} characters in production`);
   }
   warnInsecureDefaultsOnce();
   return secret || DEV_JWT_SECRET;
 }
 
+/** The one address that is the admin. Compared case-insensitively. */
+export function getAdminEmail(): string | null {
+  const email = env.ADMIN_EMAIL;
+  if (!email || !email.includes('@')) return null;
+  return email;
+}
+
+export function isAdminEmail(email: string | null | undefined): boolean {
+  const admin = getAdminEmail();
+  if (!admin || !email) return false;
+  return email.trim().toLowerCase() === admin;
+}
+
 /**
- * Password-login credentials. Returns null in production when they are unset
- * or left at the well-known defaults, which disables password login entirely.
+ * Password sign-in is only for the admin address. Returns null when it is not
+ * configured, and in production when the password is still the well-known default.
  */
-export function getPasswordCredentials(): { username: string; password: string } | null {
-  const username = process.env.AUTH_USERNAME?.trim();
-  const password = process.env.AUTH_PASSWORD;
-  if (username && password) {
-    if (IS_PRODUCTION && password === DEV_AUTH_PASSWORD) return null;
-    return { username, password };
+export function getPasswordCredentials(): { email: string; password: string } | null {
+  const email = getAdminEmail();
+  if (!email) return null;
+
+  const password = env.AUTH_PASSWORD;
+  if (password) {
+    if (isProduction() && password === DEV_AUTH_PASSWORD) return null;
+    return { email, password };
   }
-  if (IS_PRODUCTION) return null;
+  if (isProduction()) return null;
   warnInsecureDefaultsOnce();
-  return { username: username || DEV_AUTH_USERNAME, password: password || DEV_AUTH_PASSWORD };
+  return { email, password: DEV_AUTH_PASSWORD };
 }
 
-/** Comma-separated allowlist of Google account emails permitted to use the app. */
-export function getAllowedEmails(): string[] {
-  const raw =
-    process.env.ADMIN_EMAILS ||
-    process.env.ALLOWED_ADMIN_EMAILS ||
-    process.env.ADMIN_USERS ||
-    process.env.ADMIN_EMAIL ||
-    '';
-  return raw
-    .split(',')
-    .map((u) => u.trim().toLowerCase())
-    .filter(Boolean);
+export interface SessionClaims {
+  userId: string;
+  email: string;
+  role: 'user' | 'admin';
+  name: string;
 }
 
-export interface JwtPayload {
-  username: string;
-  iat: number;
-  exp: number;
+export function createSessionToken(claims: SessionClaims, rememberMe = true): string {
+  // 7d for "remember me": a stolen localStorage token stays dangerous for its
+  // whole life, so the long-lived window is kept deliberately short. Logout
+  // revokes server-side regardless (see users.sessions_valid_after).
+  const expiresIn = rememberMe ? '7d' : '24h';
+  return jwt.sign(
+    { userId: claims.userId, email: claims.email, role: claims.role, name: claims.name },
+    getJwtSecret(),
+    { expiresIn, algorithm: 'HS256' }
+  );
 }
 
-export function createJwtToken(username: string, rememberMe = true): string {
-  const expiresIn = rememberMe ? '30d' : '24h';
-  return jwt.sign({ username }, getJwtSecret(), { expiresIn, algorithm: 'HS256' });
+export interface VerifiedSession {
+  userId: string;
+  /** Seconds since epoch when the token was issued (jwt `iat`). */
+  issuedAt: number | null;
 }
 
-export function verifyJwtToken(token: string): JwtPayload | null {
+/** Verifies the signature and returns the account id + issue time. Profile data is loaded from the database, not trusted from the token. */
+export function readSession(token: string): VerifiedSession | null {
   try {
     if (!token || typeof token !== 'string') return null;
-    const payload = jwt.verify(token.trim(), getJwtSecret(), {
-      algorithms: ['HS256'],
-    });
-    if (typeof payload !== 'object' || typeof payload.username !== 'string') return null;
-    return payload as JwtPayload;
+    const payload = jwt.verify(token.trim(), getJwtSecret(), { algorithms: ['HS256'] });
+    if (typeof payload !== 'object' || payload === null || typeof payload.userId !== 'string') return null;
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(payload.userId)) {
+      return null;
+    }
+    const issuedAt = typeof payload.iat === 'number' ? payload.iat : null;
+    return { userId: payload.userId, issuedAt };
   } catch {
     return null;
   }
 }
 
-/**
- * The app is single-tenant: the configured password user plus any explicitly
- * allowlisted Google emails are authorized. Anyone else is rejected, even with
- * a correctly signed token (e.g. after being removed from the allowlist).
- */
-export function isAdminUser(username: string | null | undefined): boolean {
-  if (!username || typeof username !== 'string') return false;
-  const normalized = username.trim().toLowerCase();
-  if (!normalized) return false;
+// ---------------------------------------------------------------------------
+// Session transport: HttpOnly cookie (primary) + Authorization bearer
+// (legacy/compat). The cookie is HttpOnly so no script — however it got onto
+// the page — can read the token; the browser attaches it to same-origin
+// requests automatically. SameSite=Lax plus the X-Certify-Request mutation
+// guard below make cross-site request forgery impossible.
+// ---------------------------------------------------------------------------
 
-  const creds = getPasswordCredentials();
-  if (creds && normalized === creds.username.toLowerCase()) return true;
+const SESSION_COOKIE_NAME = 'certify_session';
+const SESSION_COOKIE_MAX_AGE = 7 * 24 * 60 * 60; // matches the "remember me" token life
 
-  return getAllowedEmails().includes(normalized);
+function cookieAttributes(rememberMe: boolean): string {
+  // Secure is omitted in development: Safari rejects Secure cookies over
+  // http://localhost, and dev has no cross-network exposure to protect against.
+  const secure = isProduction() ? '; Secure' : '';
+  const maxAge = rememberMe ? `; Max-Age=${SESSION_COOKIE_MAX_AGE}` : '';
+  return `; Path=/; SameSite=Lax; HttpOnly${secure}${maxAge}`;
+}
+
+export function appendSessionCookie(response: NextResponse, token: string, rememberMe: boolean): void {
+  response.headers.append(
+    'Set-Cookie',
+    `${SESSION_COOKIE_NAME}=${token}${cookieAttributes(rememberMe)}`
+  );
+}
+
+export function clearSessionCookie(response: NextResponse): void {
+  response.headers.append(
+    'Set-Cookie',
+    `${SESSION_COOKIE_NAME}=; Path=/; SameSite=Lax; HttpOnly; Max-Age=0`
+  );
+}
+
+function readSessionCookie(request: Request): string | null {
+  const raw = request.headers.get('cookie');
+  if (!raw) return null;
+  for (const part of raw.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() === SESSION_COOKIE_NAME) {
+      return part.slice(eq + 1).trim() || null;
+    }
+  }
+  return null;
 }
 
 /**
- * Only the Authorization header is accepted. Cookie-based auth is deliberately
- * not supported, so cross-site requests can never ride an ambient session (CSRF).
+ * Resolves the session from the Authorization header (legacy/cli) or the
+ * HttpOnly session cookie (browser).
  */
-export function getAuthUserFromRequest(request: Request): string | null {
+export function getSessionFromRequest(request: Request): VerifiedSession | null {
   const authHeader = request.headers.get('authorization');
-  if (!authHeader) return null;
-
-  const match = authHeader.match(/^bearer\s+(\S+)$/i);
-  if (!match) return null;
-
-  const payload = verifyJwtToken(match[1]);
-  if (!payload?.username || !isAdminUser(payload.username)) return null;
-  return payload.username;
+  if (authHeader) {
+    const match = authHeader.match(/^bearer\s+(\S+)$/i);
+    if (match) return readSession(match[1]);
+  }
+  const cookieToken = readSessionCookie(request);
+  if (cookieToken) return readSession(cookieToken);
+  return null;
 }
 
-export function getAdminUserFromRequest(request: Request): string | null {
-  return getAuthUserFromRequest(request);
+/**
+ * CSRF guard for state-changing requests. Browser callers send the
+ * `X-Certify-Request` custom header, which cross-site pages cannot add
+ * without a CORS preflight this app never grants. Bearer-authenticated
+ * callers carry no ambient credential, so they are inherently CSRF-safe.
+ */
+export function mutationAllowed(request: Request): boolean {
+  if (request.headers.get('x-certify-request') === '1') return true;
+  return Boolean(request.headers.get('authorization')?.match(/^bearer\s+\S+$/i));
+}
+
+export function forbiddenCsrfResponse(): NextResponse {
+  return NextResponse.json({ detail: 'Missing anti-CSRF request header' }, { status: 403 });
 }
 
 export function unauthorizedResponse(message = 'Unauthorized'): NextResponse {

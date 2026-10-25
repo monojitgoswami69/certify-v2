@@ -2,6 +2,9 @@
   "name": "certify-next",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": ">=20.9"
+  },
   "scripts": {
     "predev": "node scripts/build-fonts.mjs",
     "dev": "next dev",
@@ -9,6 +12,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "next typegen && tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "node scripts/e2e-smoke.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
@@ -16,7 +22,12 @@
     "db:studio": "drizzle-kit studio",
     "db:check": "drizzle-kit check",
     "db:drop": "drizzle-kit drop",
-    "generate:benchmark": "node scripts/generate-benchmark-csv.mjs"
+    "db:harden": "node scripts/db-migrate-sql.mjs drizzle/legacy/0001_audit_hardening.sql",
+    "db:backup": "node scripts/backup-db.mjs",
+    "db:restore": "node scripts/restore-db.mjs",
+    "generate:benchmark": "node scripts/generate-benchmark-csv.mjs",
+    "db:events": "node scripts/db-migrate-sql.mjs drizzle/legacy/0002_events.sql",
+    "db:stamp": "node scripts/db-stamp-baseline.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
@@ -25,16 +36,15 @@
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.45.2",
     "google-auth-library": "^11.0.2",
-    "googleapis": "^174.0.1",
     "jsonwebtoken": "^9.0.3",
     "jspdf": "^4.2.1",
-    "jszip": "^3.10.1",
     "lucide-react": "^1.31.0",
-    "next": "^16.3.0",
+    "next": "^16.4.3",
     "nodemailer": "^10.1.1",
     "qrcode": "^1.5.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "zod": "^4.6.7",
     "zustand": "^5.0.15"
   },
   "devDependencies": {
@@ -49,6 +59,7 @@
     "drizzle-kit": "^0.31.10",
     "postcss": "^8.5.26",
     "tailwindcss": "^4.3.3",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
   }
 }

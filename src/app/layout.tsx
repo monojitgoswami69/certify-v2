@@ -1,5 +1,34 @@
 import type { Metadata } from 'next';
+import { Inter, Jura, Plus_Jakarta_Sans, Quicksand, Saira, Tomorrow } from 'next/font/google';
 import './globals.css';
+
+// Self-hosted, subsetted UI fonts (no render-blocking Google CSS request, no
+// third-party font fetches). Certificate-content fonts load dynamically via
+// src/lib/font-loader.ts and are unaffected.
+const inter = Inter({ subsets: ['latin'], display: 'swap', variable: '--gf-inter' });
+const jura = Jura({ subsets: ['latin'], display: 'swap', variable: '--gf-jura' });
+const plusJakarta = Plus_Jakarta_Sans({
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--gf-plus-jakarta',
+});
+const quicksand = Quicksand({ subsets: ['latin'], display: 'swap', variable: '--gf-quicksand' });
+const saira = Saira({ subsets: ['latin'], display: 'swap', variable: '--gf-saira' });
+const tomorrow = Tomorrow({
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700'],
+  display: 'swap',
+  variable: '--gf-tomorrow',
+});
+
+const fontVariables = [
+  inter.variable,
+  jura.variable,
+  plusJakarta.variable,
+  quicksand.variable,
+  saira.variable,
+  tomorrow.variable,
+].join(' ');
 
 export const metadata: Metadata = {
   title: 'Certify | Professional Certificate Manager',
@@ -23,23 +52,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" className={fontVariables}>
       <head>
         <link rel="icon" href="/favicon.ico" sizes="any" />
         <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
         <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
         <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
         <link rel="manifest" href="/site.webmanifest" />
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Jura:wght@500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Quicksand:wght@500;600;700&family=Saira:wght@400;500;600;700;800&family=Tomorrow:wght@400;500;600;700&display=swap"
-          rel="stylesheet"
-        />
-        <link
-          rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200"
-        />
       </head>
       <body className="antialiased bg-[#FBFAF5] text-slate-900 min-h-screen font-sans" style={{ backgroundColor: '#FBFAF5' }}>
         {children}

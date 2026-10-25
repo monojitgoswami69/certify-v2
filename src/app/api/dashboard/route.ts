@@ -1,14 +1,16 @@
 import { NextResponse } from 'next/server';
-import { desc, eq, or, isNull } from 'drizzle-orm';
+import { mutationAllowed, forbiddenCsrfResponse } from '../../../lib/server-auth';
+import { and, desc, eq, isNull, or, sql } from 'drizzle-orm';
 import fs from 'fs';
 import path from 'path';
 import { db } from '../../../lib/db';
-import { certificates, templates } from '../../../db/schema';
-import { getAdminUserFromRequest, unauthorizedResponse } from '../../../lib/server-auth';
-import { parseCsv } from '../../../lib/csv-parser';
+import { certificates, events as eventsTable, templates } from '../../../db/schema';
+import { unauthorizedResponse } from '../../../lib/server-auth';
+import { getAuthenticatedUser } from '../../../lib/accounts';
+import { env } from '../../../lib/env';
+import { log, requestIdOf } from '../../../lib/logger';
 
 export const dynamic = 'force-dynamic';
-export const revalidate = 0;
 
 export interface DashboardParticipant {
   id: string;
@@ -37,13 +39,48 @@ export interface DashboardStats {
   revokedCertificates: number;
 }
 
+/**
+ * Resolves the events row for a requested event name. Returns null when the
+ * account has no event by that name.
+ */
+async function findEventByName(userId: string, eventName: string) {
+  const normalized = eventName.trim();
+  if (!normalized) return null;
+  const [row] = await db
+    .select({ id: eventsTable.id, name: eventsTable.name })
+    .from(eventsTable)
+    .where(and(eq(eventsTable.userId, userId), eq(eventsTable.name, normalized)))
+    .limit(1);
+  return row ?? null;
+}
+
+/**
+ * Certificates belonging to an event: anchored rows via event_id, plus any
+ * pre-migration stragglers still carrying only the legacy event_name string
+ * (blank names always belonged to the "General Event" bucket).
+ */
+function eventCertificatesWhere(userId: string, eventId: string, eventName: string) {
+  const legacyNameMatch =
+    eventName === 'General Event' || eventName === 'Unnamed Event'
+      ? or(
+          eq(certificates.eventName, eventName),
+          isNull(certificates.eventName),
+          eq(certificates.eventName, '')
+        )
+      : eq(certificates.eventName, eventName);
+  return and(
+    eq(certificates.userId, userId),
+    or(eq(certificates.eventId, eventId), and(isNull(certificates.eventId), legacyNameMatch))
+  );
+}
+
 export async function GET(request: Request) {
-  const username = getAdminUserFromRequest(request);
-  if (!username) {
-    return unauthorizedResponse('Admin privilege required');
+  const user = await getAuthenticatedUser(request);
+  if (!user) {
+    return unauthorizedResponse('Invalid or expired token');
   }
 
-  if (!process.env.DATABASE_URL) {
+  if (!env.DATABASE_URL) {
     return NextResponse.json(
       { detail: 'Database is not configured (DATABASE_URL missing)' },
       { status: 503 }
@@ -61,52 +98,42 @@ export async function GET(request: Request) {
     // -------------------------------------------------------------
     if (requestedEvent) {
       const decodedEventName = requestedEvent.trim();
+      const event = await findEventByName(user.userId, decodedEventName);
 
-      const selectFields: any = {
+      const selectFields = {
         id: certificates.id,
-        eventName: certificates.eventName,
         recipientName: certificates.recipientName,
         recipientEmail: certificates.recipientEmail,
         status: certificates.status,
         issuedAt: certificates.issuedAt,
         templateName: certificates.templateName,
+        ...(includeRowData ? { rowData: certificates.rowData } : {}),
       };
 
-      if (includeRowData) {
-        selectFields.rowData = certificates.rowData;
-      }
-
-      const eventCondition =
-        decodedEventName === 'General Event' || decodedEventName === 'Unnamed Event'
-          ? or(
-              eq(certificates.eventName, decodedEventName),
-              isNull(certificates.eventName),
-              eq(certificates.eventName, '')
-            )
-          : eq(certificates.eventName, decodedEventName);
-
-      const rows = await db
-        .select(selectFields)
-        .from(certificates)
-        .where(eventCondition)
-        .orderBy(desc(certificates.issuedAt));
+      const rows = event
+        ? await db
+            .select(selectFields)
+            .from(certificates)
+            .where(eventCertificatesWhere(user.userId, event.id, event.name))
+            .orderBy(desc(certificates.issuedAt))
+        : [];
 
       let activeCount = 0;
       let revokedCount = 0;
-      let firstIssuedAt = rows[0]?.issuedAt ? rows[0].issuedAt.toISOString() : new Date().toISOString();
-      let lastIssuedAt = rows[0]?.issuedAt ? rows[0].issuedAt.toISOString() : new Date().toISOString();
+      // ISO-8601 strings sort lexicographically, so min/max need no Date objects.
+      let firstIssuedAt = rows[0]?.issuedAt.toISOString() ?? new Date().toISOString();
+      let lastIssuedAt = firstIssuedAt;
       const eventTemplateName: string | null =
         rows.find((r) => r.templateName)?.templateName || null;
 
       const participants: DashboardParticipant[] = rows.map((r) => {
         const isActive = r.status === 'issued' || r.status === 'static';
-        const isRevoked = r.status === 'revoked';
         if (isActive) activeCount++;
-        else if (isRevoked) revokedCount++;
+        else if (r.status === 'revoked') revokedCount++;
 
         const isoDate = r.issuedAt.toISOString();
-        if (new Date(isoDate) < new Date(firstIssuedAt)) firstIssuedAt = isoDate;
-        if (new Date(isoDate) > new Date(lastIssuedAt)) lastIssuedAt = isoDate;
+        if (isoDate < firstIssuedAt) firstIssuedAt = isoDate;
+        if (isoDate > lastIssuedAt) lastIssuedAt = isoDate;
 
         return {
           id: r.id,
@@ -138,7 +165,8 @@ export async function GET(request: Request) {
               id: templates.id,
               name: templates.name,
             })
-            .from(templates);
+            .from(templates)
+            .where(eq(templates.userId, user.userId));
 
           const tplBase = eventTemplateName
             ? eventTemplateName.replace(/\.[^/.]+$/, '').trim().toLowerCase()
@@ -251,58 +279,39 @@ export async function GET(request: Request) {
                   defaultFontColor: '#0f172a',
                 };
 
-                const [inserted] = await db
+                // onConflict: a concurrent seed must not 500 on the unique name.
+                await db
                   .insert(templates)
                   .values({
+                    userId: user.userId,
                     name: 'Sample Data',
                     imageData: base64,
                     width,
                     height,
                     layoutConfig,
                   })
-                  .returning();
+                  .onConflictDoNothing({ target: [templates.userId, templates.name] });
+                const [seeded] = await db
+                  .select({
+                    id: templates.id,
+                    name: templates.name,
+                    imageData: templates.imageData,
+                    width: templates.width,
+                    height: templates.height,
+                    layoutConfig: templates.layoutConfig,
+                  })
+                  .from(templates)
+                  .where(and(eq(templates.userId, user.userId), eq(templates.name, 'Sample Data')))
+                  .limit(1);
 
-                matchedTemplate = inserted || null;
+                matchedTemplate = seeded || null;
               }
             } catch (seedErr) {
-              console.warn('[Dashboard] Could not auto-seed sample template:', seedErr);
+              log.warn('dashboard', 'Could not auto-seed sample template', { requestId: requestIdOf(request) }, seedErr);
             }
           }
         } catch (err) {
-          console.warn('[Dashboard] Could not fetch template for event:', err);
-        }
-      }
-
-      // Auto-repair participants rowData for 'Sample Data' if columns were stripped
-      if (decodedEventName.trim().toLowerCase() === 'sample data') {
-        try {
-          const sampleCsvPath = path.join(process.cwd(), 'demo-data', 'sample_data.csv');
-          if (fs.existsSync(sampleCsvPath)) {
-            const csvContent = fs.readFileSync(sampleCsvPath, 'utf-8');
-            const parsed = parseCsv(csvContent);
-            const sampleRows = parsed.data;
-
-            for (let idx = 0; idx < participants.length; idx++) {
-              const p = participants[idx];
-              const matchedSampleRow =
-                sampleRows.find(
-                  (sr) =>
-                    sr.Name?.toLowerCase() === p.recipientName.toLowerCase() ||
-                    (p.recipientEmail && sr.Email?.toLowerCase() === p.recipientEmail.toLowerCase())
-                ) || sampleRows[idx];
-
-              if (matchedSampleRow && (!p.rowData || Object.keys(p.rowData).length <= 2)) {
-                p.rowData = matchedSampleRow;
-                await db
-                  .update(certificates)
-                  .set({ rowData: matchedSampleRow })
-                  .where(eq(certificates.id, p.id))
-                  .catch(() => {});
-              }
-            }
-          }
-        } catch (repairErr) {
-          console.warn('[Dashboard] Could not auto-repair sample participant data:', repairErr);
+          log.warn('dashboard', 'Could not fetch template for event', { requestId: requestIdOf(request) }, err);
         }
       }
 
@@ -321,78 +330,57 @@ export async function GET(request: Request) {
     }
 
     // -------------------------------------------------------------
-    // Overview Mode: Fetch overall stats and registered events list
+    // Overview Mode: one aggregate row per event (events LEFT JOIN
+    // certificates), never one row per certificate. Includes freshly
+    // created events that have no certificates yet.
     // -------------------------------------------------------------
-    const rows = await db
+    const aggregateRows = await db
       .select({
-        id: certificates.id,
-        eventName: certificates.eventName,
-        templateName: certificates.templateName,
-        status: certificates.status,
-        issuedAt: certificates.issuedAt,
+        eventName: eventsTable.name,
+        certificateCount: sql<number>`count(${certificates.id})::int`,
+        activeCount: sql<number>`count(${certificates.id}) filter (where ${certificates.status} in ('issued','static'))::int`,
+        revokedCount: sql<number>`count(${certificates.id}) filter (where ${certificates.status} = 'revoked')::int`,
+        firstIssuedAt: sql<string | null>`min(${certificates.issuedAt})::text`,
+        lastIssuedAt: sql<string | null>`max(${certificates.issuedAt})::text`,
+        templateName: sql<
+          string | null
+        >`max(${certificates.templateName}) filter (where ${certificates.templateName} is not null)`,
+        eventCreatedAt: eventsTable.createdAt,
       })
-      .from(certificates)
-      .orderBy(desc(certificates.issuedAt));
+      .from(eventsTable)
+      .leftJoin(
+        certificates,
+        and(eq(certificates.eventId, eventsTable.id), eq(certificates.userId, eventsTable.userId))
+      )
+      .where(eq(eventsTable.userId, user.userId))
+      .groupBy(eventsTable.id, eventsTable.name, eventsTable.createdAt);
 
-    let activeCertificates = 0;
-    let revokedCertificates = 0;
-
-    const eventMap = new Map<string, DashboardEventSummary>();
-
-    for (const row of rows) {
-      const eventName = (row.eventName || 'General Event').trim();
-      const isActive = row.status === 'issued' || row.status === 'static';
-      const isRevoked = row.status === 'revoked';
-
-      if (isActive) activeCertificates++;
-      if (isRevoked) revokedCertificates++;
-
-      const isoIssuedAt = row.issuedAt.toISOString();
-
-      let eventSummary = eventMap.get(eventName);
-      if (!eventSummary) {
-        eventSummary = {
-          eventName,
-          certificateCount: 0,
-          activeCount: 0,
-          revokedCount: 0,
-          firstIssuedAt: isoIssuedAt,
-          lastIssuedAt: isoIssuedAt,
-          templateName: row.templateName || null,
+    const eventSummaries: DashboardEventSummary[] = aggregateRows
+      .map((row) => {
+        const fallback = row.eventCreatedAt.toISOString();
+        return {
+          eventName: row.eventName,
+          certificateCount: row.certificateCount,
+          activeCount: row.activeCount,
+          revokedCount: row.revokedCount,
+          firstIssuedAt: row.firstIssuedAt ? new Date(row.firstIssuedAt).toISOString() : fallback,
+          lastIssuedAt: row.lastIssuedAt ? new Date(row.lastIssuedAt).toISOString() : fallback,
+          templateName: row.templateName,
         };
-        eventMap.set(eventName, eventSummary);
-      }
-
-      eventSummary.certificateCount++;
-      if (isActive) eventSummary.activeCount++;
-      if (isRevoked) eventSummary.revokedCount++;
-
-      if (new Date(isoIssuedAt) < new Date(eventSummary.firstIssuedAt)) {
-        eventSummary.firstIssuedAt = isoIssuedAt;
-      }
-      if (new Date(isoIssuedAt) > new Date(eventSummary.lastIssuedAt)) {
-        eventSummary.lastIssuedAt = isoIssuedAt;
-      }
-      if (!eventSummary.templateName && row.templateName) {
-        eventSummary.templateName = row.templateName;
-      }
-    }
-
-    const events = Array.from(eventMap.values()).sort(
-      (a, b) => new Date(b.lastIssuedAt).getTime() - new Date(a.lastIssuedAt).getTime()
-    );
+      })
+      .sort((a, b) => (a.lastIssuedAt < b.lastIssuedAt ? 1 : a.lastIssuedAt > b.lastIssuedAt ? -1 : 0));
 
     const stats: DashboardStats = {
-      totalEvents: events.length,
-      totalCertificates: rows.length,
-      activeCertificates,
-      revokedCertificates,
+      totalEvents: eventSummaries.length,
+      totalCertificates: eventSummaries.reduce((sum, e) => sum + e.certificateCount, 0),
+      activeCertificates: eventSummaries.reduce((sum, e) => sum + e.activeCount, 0),
+      revokedCertificates: eventSummaries.reduce((sum, e) => sum + e.revokedCount, 0),
     };
 
     return NextResponse.json(
       {
         stats,
-        events,
+        events: eventSummaries,
       },
       {
         headers: {
@@ -401,7 +389,7 @@ export async function GET(request: Request) {
       }
     );
   } catch (error) {
-    console.error('[Dashboard API Error]:', error);
+    log.error('dashboard', 'Failed to fetch dashboard data', { requestId: requestIdOf(request), userId: user.userId }, error);
     return NextResponse.json(
       { detail: 'Failed to fetch dashboard data' },
       { status: 500 }
@@ -410,12 +398,13 @@ export async function GET(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const username = getAdminUserFromRequest(request);
-  if (!username) {
-    return unauthorizedResponse('Admin privilege required');
+  if (!mutationAllowed(request)) return forbiddenCsrfResponse();
+  const user = await getAuthenticatedUser(request);
+  if (!user) {
+    return unauthorizedResponse('Invalid or expired token');
   }
 
-  if (!process.env.DATABASE_URL) {
+  if (!env.DATABASE_URL) {
     return NextResponse.json(
       { detail: 'Database is not configured (DATABASE_URL missing)' },
       { status: 503 }
@@ -434,37 +423,41 @@ export async function DELETE(request: Request) {
   }
 
   try {
-    const eventCondition =
-      decodedEventName === 'Unnamed Event' || decodedEventName === 'General Event'
-        ? or(
-            eq(certificates.eventName, decodedEventName),
-            isNull(certificates.eventName),
-            eq(certificates.eventName, '')
-          )
-        : eq(certificates.eventName, decodedEventName);
+    const event = await findEventByName(user.userId, decodedEventName);
+    if (!event) {
+      return NextResponse.json({
+        success: true,
+        eventName: decodedEventName,
+        deletedCount: 0,
+      });
+    }
 
-    // 1. Delete all certificates associated with this event
-    const deletedCerts = await db
-      .delete(certificates)
-      .where(eventCondition)
-      .returning({ id: certificates.id });
+    // Single batch = single Neon HTTP call = one transaction, so the event's
+    // certificates, the event row itself (cascading its batch audit records),
+    // and its same-named template disappear (or survive) together.
+    const deleted = await db.batch([
+      db
+        .delete(certificates)
+        .where(eventCertificatesWhere(user.userId, event.id, event.name))
+        .returning({ id: certificates.id }),
+      db.delete(eventsTable).where(and(eq(eventsTable.userId, user.userId), eq(eventsTable.id, event.id))),
+      db
+        .delete(templates)
+        .where(and(eq(templates.userId, user.userId), eq(templates.name, decodedEventName))),
+    ]);
 
-    // 2. Also delete any saved/auto-saved template matching this event name
-    await db
-      .delete(templates)
-      .where(eq(templates.name, decodedEventName));
+    const deletedCount = Array.isArray(deleted[0]) ? deleted[0].length : 0;
 
     return NextResponse.json({
       success: true,
       eventName: decodedEventName,
-      deletedCount: deletedCerts.length,
+      deletedCount,
     });
   } catch (error) {
-    console.error('[Dashboard Event DELETE error]:', error);
+    log.error('dashboard', 'Failed to delete event and certificates', { requestId: requestIdOf(request), userId: user.userId }, error);
     return NextResponse.json(
       { detail: 'Failed to delete event and certificates' },
       { status: 500 }
     );
   }
 }
-

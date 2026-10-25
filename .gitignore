@@ -34,3 +34,6 @@ next-env.d.ts
 
 # generated build assets
 public/google-fonts.json
+
+# database snapshots & client data
+backups/

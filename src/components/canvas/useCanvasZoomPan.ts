@@ -39,6 +39,14 @@ export function useCanvasZoomPan({
 
   const effectiveScale = baseFitScale * zoom;
 
+  // Latest-value refs so the wheel/touch/keyboard listeners stay mounted once
+  // instead of being torn down and re-added on every zoom/pan tick (which
+  // re-registered 8 listeners per animation frame during pinch-zoom).
+  const zoomRef = useRef(zoom);
+  const panRef = useRef(pan);
+  const effectiveScaleRef = useRef(effectiveScale);
+  const handleZoomChangeRef = useRef<(z: number, origin?: { x: number; y: number }) => void>(() => {});
+
   // Screen coordinates to image coordinates
   const screenToImage = useCallback(
     (screenX: number, screenY: number) => {
@@ -113,6 +121,14 @@ export function useCanvasZoomPan({
     [zoom, pan, containerRef]
   );
 
+  // Keep the latest zoom/pan/handler available to the stable listeners below.
+  useEffect(() => {
+    zoomRef.current = zoom;
+    panRef.current = pan;
+    effectiveScaleRef.current = effectiveScale;
+    handleZoomChangeRef.current = handleZoomChange;
+  }, [zoom, pan, effectiveScale, handleZoomChange]);
+
   // Auto-fit on template change
   useEffect(() => {
     if (templateImage) {
@@ -156,13 +172,13 @@ export function useCanvasZoomPan({
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
         const zoomDelta = -normY * 0.003;
-        const targetZoom = zoom * (1 + zoomDelta);
-        handleZoomChange(targetZoom, { x: e.clientX, y: e.clientY });
+        const targetZoom = zoomRef.current * (1 + zoomDelta);
+        handleZoomChangeRef.current(targetZoom, { x: e.clientX, y: e.clientY });
         return;
       }
 
       // 2. If zoom <= 1.0 (certificate is completely visible on screen), disable scrolling
-      if (zoom <= 1.0) {
+      if (zoomRef.current <= 1.0) {
         return;
       }
 
@@ -170,8 +186,8 @@ export function useCanvasZoomPan({
       e.preventDefault();
 
       const containerRect = container.getBoundingClientRect();
-      const cssWidth = templateImage.width * effectiveScale;
-      const cssHeight = templateImage.height * effectiveScale;
+      const cssWidth = templateImage.width * effectiveScaleRef.current;
+      const cssHeight = templateImage.height * effectiveScaleRef.current;
 
       const maxPanX = Math.max(0, (cssWidth - containerRect.width) / 2 + 100);
       const maxPanY = Math.max(0, (cssHeight - containerRect.height) / 2 + 100);
@@ -207,8 +223,8 @@ export function useCanvasZoomPan({
         const t1 = e.touches[0];
         const t2 = e.touches[1];
         initialTouchDist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
-        initialTouchZoom = zoom;
-        initialTouchPan = { ...pan };
+        initialTouchZoom = zoomRef.current;
+        initialTouchPan = { ...panRef.current };
         initialMidpoint = {
           x: (t1.clientX + t2.clientX) / 2,
           y: (t1.clientY + t2.clientY) / 2,
@@ -256,7 +272,7 @@ export function useCanvasZoomPan({
       container.removeEventListener('touchmove', handleTouchMove);
       container.removeEventListener('touchend', handleTouchEnd);
     };
-  }, [zoom, pan, effectiveScale, templateImage, handleZoomChange, containerRef]);
+  }, [templateImage, containerRef]);
 
   // Click outside listener for Zoom Dropdown Menu
   useEffect(() => {
@@ -316,13 +332,13 @@ export function useCanvasZoomPan({
       // Ctrl/Cmd + Plus: Zoom In
       if ((e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+')) {
         e.preventDefault();
-        handleZoomChange(zoom + 0.25);
+        handleZoomChangeRef.current(zoomRef.current + 0.25);
       }
 
       // Ctrl/Cmd + Minus: Zoom Out
       if ((e.ctrlKey || e.metaKey) && (e.key === '-' || e.key === '_')) {
         e.preventDefault();
-        handleZoomChange(zoom - 0.25);
+        handleZoomChangeRef.current(zoomRef.current - 0.25);
       }
 
       // Ctrl/Cmd + Z: Undo (supports international keyboard layouts like QWERTZ / AZERTY)
@@ -385,7 +401,7 @@ export function useCanvasZoomPan({
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [zoom, canvasRef, handleResetFit, handleZoomChange, onUndo, onRedo, onDeleteActive, onEscape, onArrowNudge, isDrawingEnabled]);
+  }, [canvasRef, handleResetFit, onUndo, onRedo, onDeleteActive, onEscape, onArrowNudge, isDrawingEnabled]);
 
   return {
     zoom,

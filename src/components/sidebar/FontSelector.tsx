@@ -10,6 +10,7 @@ import {
   initializeGoogleFonts,
   getAllGoogleFonts,
 } from '../../lib/font-loader';
+import { useAppStore } from '../../store/useAppStore';
 
 interface FontSelectorProps {
   value: string;
@@ -98,18 +99,25 @@ export function FontSelector({ value, onChange, onPreview, className = '' }: Fon
     }
   }, [isOpen]);
 
+  // The 148 KB font catalog is fetched lazily on the FIRST time the dropdown
+  // opens (not on editor mount), then cached module-wide by font-loader.
+  const catalogLoadedRef = useRef(false);
   useEffect(() => {
+    if (!isOpen || catalogLoadedRef.current) return;
+    catalogLoadedRef.current = true;
     let cancelled = false;
     initializeGoogleFonts().then((fonts) => {
       if (!cancelled) {
         setAvailableFonts(fonts);
         setIsLoadingList(false);
+        // Seed the workspace's font list + default font choice once known.
+        useAppStore.getState().setFonts(fonts);
       }
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isOpen]);
 
   useEffect(() => {
     if (value) {

@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server';
 import { eq } from 'drizzle-orm';
 import { db } from '../../../../lib/db';
-import { certificates } from '../../../../db/schema';
+import { certificates, users } from '../../../../db/schema';
 import { hashToken, isValidCertificateId } from '../../../../lib/verification';
 import { checkRateLimit, getClientIp } from '../../../../lib/rate-limit';
-import { getAdminUserFromRequest } from '../../../../lib/server-auth';
+import { getAuthenticatedUser } from '../../../../lib/accounts';
+import { env, isDevelopment } from '../../../../lib/env';
+import { log, requestIdOf } from '../../../../lib/logger';
 
 function maskEmail(email: string | null): string | null {
   if (!email) return null;
@@ -22,8 +24,8 @@ function maskEmail(email: string | null): string | null {
  * Operates purely read-only (zero scan tracking writes).
  *
  * Security & Privacy Policy:
- * Revoked certificates must NEVER leak PII or certificate details to unauthenticated
- * public callers. Only verified admins may inspect revoked certificate details.
+ * Revoked certificates must NEVER leak PII to the public. Only the issuing account
+ * can inspect revoked details, and only that account sees a recipient's full email.
  */
 export async function GET(
   request: Request,
@@ -31,7 +33,7 @@ export async function GET(
 ) {
   const { id } = await params;
 
-  const isDev = process.env.NODE_ENV === 'development';
+  const isDev = isDevelopment();
   const rateLimitMax = isDev ? 300 : 60;
   const rate = checkRateLimit(`verify:${getClientIp(request)}`, rateLimitMax, 60_000);
   if (!rate.allowed) {
@@ -50,7 +52,7 @@ export async function GET(
     return NextResponse.json({ status: 'not_found' });
   }
 
-  if (!process.env.DATABASE_URL) {
+  if (!env.DATABASE_URL) {
     return NextResponse.json(
       { status: 'error', detail: 'Verification service is not configured' },
       { status: 503 }
@@ -62,13 +64,17 @@ export async function GET(
     const [cert] = await db
       .select({
         id: certificates.id,
+        userId: certificates.userId,
         status: certificates.status,
         recipientName: certificates.recipientName,
         recipientEmail: certificates.recipientEmail,
         eventName: certificates.eventName,
         issuedAt: certificates.issuedAt,
+        issuerName: users.issuedByName,
+        issuerAccountName: users.name,
       })
       .from(certificates)
+      .leftJoin(users, eq(users.id, certificates.userId))
       .where(eq(certificates.tokenHash, tokenHash))
       .limit(1);
 
@@ -76,14 +82,18 @@ export async function GET(
       return NextResponse.json({ status: 'not_found' });
     }
 
-    const issuedBy = process.env.ISSUED_BY || process.env.NEXT_PUBLIC_ISSUED_BY || 'Certify';
+    const issuedBy =
+      cert.issuerName?.trim() ||
+      cert.issuerAccountName?.trim() ||
+      env.ISSUED_BY ||
+      env.NEXT_PUBLIC_ISSUED_BY ||
+      'Certify';
+    const viewer = await getAuthenticatedUser(request);
+    const isOwner = viewer?.userId === cert.userId;
 
-    // Security & Privacy Policy: Revoked certificates must NEVER leak PII or certificate
-    // details to unauthenticated public callers. Only verified admins may inspect details.
+    // Revoked certificates never leak details except to the account that issued them.
     if (cert.status === 'revoked') {
-      const adminUser = getAdminUserFromRequest(request);
-
-      if (!adminUser) {
+      if (!isOwner) {
         // Public / unauthenticated caller: strictly return revoked status with zero details.
         // Cache-Control: no-store prevents caching proxies/browsers from caching or leaking information.
         return NextResponse.json(
@@ -100,7 +110,7 @@ export async function GET(
         );
       }
 
-      // Authenticated admin: allow inspection with no-store cache control
+      // The issuing account may inspect the revoked record.
       return NextResponse.json(
         {
           status: 'revoked',
@@ -120,20 +130,19 @@ export async function GET(
       );
     }
 
-    // Valid certificate: anyone holding the QR link may verify it, but only admins see the full email
-    const isAdmin = Boolean(getAdminUserFromRequest(request));
+    // Anyone holding the QR link may verify it. Only the issuing account sees the full email.
     return NextResponse.json(
       {
         status: 'valid',
         recipientName: cert.recipientName,
-        recipientEmail: isAdmin ? cert.recipientEmail : maskEmail(cert.recipientEmail),
+        recipientEmail: isOwner ? cert.recipientEmail : maskEmail(cert.recipientEmail),
         eventName: cert.eventName,
         issuedAt: cert.issuedAt,
         issuedBy,
       },
       {
         headers: {
-          'Cache-Control': isAdmin
+          'Cache-Control': isOwner
             ? 'private, no-store'
             : 'public, max-age=15, stale-while-revalidate=30',
           'Vary': 'Authorization',
@@ -141,7 +150,7 @@ export async function GET(
       }
     );
   } catch (error) {
-    console.error('[Verification error]:', error);
+    log.error('verify', 'Verification temporarily unavailable', { requestId: requestIdOf(request), certId: id }, error);
     return NextResponse.json(
       { status: 'error', detail: 'Verification temporarily unavailable' },
       { status: 500 }

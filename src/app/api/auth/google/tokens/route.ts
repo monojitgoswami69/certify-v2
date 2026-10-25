@@ -1,19 +1,23 @@
 import { NextResponse } from 'next/server';
+import { mutationAllowed, forbiddenCsrfResponse } from '../../../../../lib/server-auth';
 import { OAuth2Client } from 'google-auth-library';
-import { getAuthUserFromRequest, unauthorizedResponse } from '../../../../../lib/server-auth';
+import { unauthorizedResponse } from '../../../../../lib/server-auth';
+import { getAuthenticatedUser } from '../../../../../lib/accounts';
+import { env, googleClientId } from '../../../../../lib/env';
 import {
   clearGoogleCredentials,
   getStoredGoogleCredentials,
   storeGoogleCredentials,
 } from '../../../../../lib/google-token-store';
 
-const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID || '';
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
+const GOOGLE_CLIENT_ID = googleClientId();
+const GOOGLE_CLIENT_SECRET = env.GOOGLE_CLIENT_SECRET || '';
 const REDIRECT_URI = 'postmessage';
 
 export async function POST(request: Request) {
-  const username = getAuthUserFromRequest(request);
-  if (!username) {
+  if (!mutationAllowed(request)) return forbiddenCsrfResponse();
+  const user = await getAuthenticatedUser(request);
+  if (!user) {
     return unauthorizedResponse('Invalid or expired token');
   }
 
@@ -52,8 +56,8 @@ export async function POST(request: Request) {
 
     // Resolve connected account info from Google via the userinfo endpoint
     // (avoids a googleapis typing conflict between the two OAuth2Client types).
-    let email = username;
-    let name = username;
+    let email = user.email;
+    let name = user.name;
     let picture = '';
     try {
       const userRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
@@ -69,7 +73,9 @@ export async function POST(request: Request) {
       console.warn('[Google tokens] userinfo lookup failed:', err);
     }
 
-    storeGoogleCredentials(username, {
+    // Store credentials server-side only. The access token never travels to
+    // the browser: every send resolves its token from this store.
+    await storeGoogleCredentials(user.userId, {
       access_token: tokens.access_token ?? null,
       refresh_token: tokens.refresh_token ?? null,
       expiry_date: tokens.expiry_date ?? null,
@@ -82,7 +88,6 @@ export async function POST(request: Request) {
       email,
       name,
       picture,
-      accessToken: tokens.access_token ?? null,
       hasRefreshToken: Boolean(tokens.refresh_token),
       message: 'Google account connected',
     });
@@ -97,13 +102,14 @@ export async function POST(request: Request) {
 
 /** Disconnects Gmail: forgets the server-held tokens and revokes the grant at Google. */
 export async function DELETE(request: Request) {
-  const username = getAuthUserFromRequest(request);
-  if (!username) {
+  if (!mutationAllowed(request)) return forbiddenCsrfResponse();
+  const user = await getAuthenticatedUser(request);
+  if (!user) {
     return unauthorizedResponse('Invalid or expired token');
   }
 
-  const creds = getStoredGoogleCredentials(username);
-  clearGoogleCredentials(username);
+  const creds = await getStoredGoogleCredentials(user.userId);
+  await clearGoogleCredentials(user.userId);
 
   const tokenToRevoke = creds?.refresh_token || creds?.access_token;
   if (tokenToRevoke) {

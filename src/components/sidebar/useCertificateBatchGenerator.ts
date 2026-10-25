@@ -26,6 +26,124 @@ import type { CsvRow, CertificateGenerationRecord, ExportFormats } from '../../t
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** One archive entry to feed into client-zip. */
+interface ZipEntry {
+  name: string;
+  lastModified: Date;
+  input: Blob;
+}
+
+/**
+ * Bounded producer/consumer queue feeding client-zip's async-iterable input.
+ * Generation pushes finished certificate files; the ZIP stream (piping to a
+ * File System Access writable) pulls them. Backpressure keeps only a handful
+ * of entries resident, so a 2000-certificate batch never holds every blob in
+ * memory at once.
+ */
+class BoundedZipQueue implements AsyncIterable<ZipEntry> {
+  private items: ZipEntry[] = [];
+  private itemWaiters: Array<(result: IteratorResult<ZipEntry>) => void> = [];
+  private drainWaiters: Array<() => void> = [];
+  private closed = false;
+
+  push(entry: ZipEntry): void {
+    if (this.closed) return;
+    const waiter = this.itemWaiters.shift();
+    if (waiter) waiter({ value: entry, done: false });
+    else this.items.push(entry);
+  }
+
+  pushAll(entries: ZipEntry[]): void {
+    for (const entry of entries) this.push(entry);
+  }
+
+  /** Producer waits until the buffered item count falls back under `bound`. */
+  async waitForDrain(bound: number): Promise<void> {
+    while (!this.closed && this.items.length > bound) {
+      await new Promise<void>((resolve) => this.drainWaiters.push(resolve));
+    }
+  }
+
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    for (const waiter of this.itemWaiters) waiter({ value: undefined, done: true });
+    this.itemWaiters = [];
+  }
+
+  next(): Promise<IteratorResult<ZipEntry>> {
+    const item = this.items.shift();
+    if (item) {
+      this.wakeDrainWaiters();
+      return Promise.resolve({ value: item, done: false });
+    }
+    if (this.closed) return Promise.resolve({ value: undefined, done: true });
+    return new Promise<IteratorResult<ZipEntry>>((resolve) => this.itemWaiters.push(resolve));
+  }
+
+  private wakeDrainWaiters(): void {
+    const waiters = this.drainWaiters;
+    this.drainWaiters = [];
+    for (const resolve of waiters) resolve();
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<ZipEntry> {
+    return this;
+  }
+}
+
+type SaveWritable = WritableStream<Uint8Array> & { abort?: (reason?: unknown) => Promise<void> };
+
+interface SavePickerHandle {
+  createWritable: () => Promise<SaveWritable>;
+}
+
+/**
+ * Opens the save picker BEFORE generation starts (so the ZIP can stream while
+ * certificates render). Returns null when the user cancelled or the browser
+ * has no File System Access API — callers then use the accumulate-then-zip path.
+ */
+async function openSavePicker(filename: string): Promise<SaveWritable | null> {
+  if (!hasFileSystemAccess()) return null;
+  type ShowPicker = (opts: unknown) => Promise<SavePickerHandle>;
+  const picker = (window as unknown as { showSaveFilePicker?: ShowPicker }).showSaveFilePicker;
+  if (!picker) return null;
+  try {
+    const handle = await picker({
+      suggestedName: filename,
+      types: [{ description: 'ZIP archive', accept: { 'application/zip': ['.zip'] } }],
+    });
+    return await handle.createWritable();
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') return null;
+    console.warn('[Streamed ZIP] picker failed, falling back to in-memory archive:', err);
+    return null;
+  }
+}
+
+function buildZipFilename(eventName: string | undefined): string {
+  const safeEvent = eventName ? `${sanitizeFilename(eventName)}_` : '';
+  return `certificates_${safeEvent}${new Date().toISOString().split('T')[0]}.zip`;
+}
+
+function certZipEntries(
+  cert: { filename: string; pngBlob?: Blob; jpgBlob?: Blob; pdfBlob?: Blob },
+  formats: ExportFormats,
+  timestamp: Date
+): ZipEntry[] {
+  const entries: ZipEntry[] = [];
+  if (formats.png && cert.pngBlob) {
+    entries.push({ name: `png/${cert.filename}.png`, lastModified: timestamp, input: cert.pngBlob });
+  }
+  if (formats.jpg && cert.jpgBlob) {
+    entries.push({ name: `jpg/${cert.filename}.jpg`, lastModified: timestamp, input: cert.jpgBlob });
+  }
+  if (formats.pdf && cert.pdfBlob) {
+    entries.push({ name: `pdf/${cert.filename}.pdf`, lastModified: timestamp, input: cert.pdfBlob });
+  }
+  return entries;
+}
+
 export interface FailedRecord {
   rowIndex: number;
   name: string;
@@ -103,6 +221,9 @@ export function useCertificateBatchGenerator() {
 
   const pauseRef = useRef(false);
   const abortRef = useRef(false);
+  // Synchronous busy flag: double-clicking Generate must not run two pools
+  // over the same batch (the second run would wipe the first run's results).
+  const generateInFlightRef = useRef(false);
   const [localPaused, setLocalPaused] = useState(false);
   const workerPoolRef = useRef<CertificateWorkerPool | null>(null);
 
@@ -148,40 +269,19 @@ export function useCertificateBatchGenerator() {
   /**
    * Package certificates into a streaming ZIP archive using client-zip.
    * Direct disk streaming via File System Access API avoids in-memory heap spikes.
+   * Entries without blobs (already streamed to disk during generation) are skipped.
    */
   const buildZipAndDownload = useCallback(
     async (certs: GeneratedCertItem[], formats: ExportFormats) => {
-      if (certs.length === 0) return null;
-
-      const zipFiles: Array<{ name: string; lastModified: Date; input: Blob }> = [];
+      const zipFiles: ZipEntry[] = [];
       const timestamp = new Date();
 
       for (const cert of certs) {
-        if (formats.png && cert.pngBlob) {
-          zipFiles.push({
-            name: `png/${cert.filename}.png`,
-            lastModified: timestamp,
-            input: cert.pngBlob,
-          });
-        }
-        if (formats.jpg && cert.jpgBlob) {
-          zipFiles.push({
-            name: `jpg/${cert.filename}.jpg`,
-            lastModified: timestamp,
-            input: cert.jpgBlob,
-          });
-        }
-        if (formats.pdf && cert.pdfBlob) {
-          zipFiles.push({
-            name: `pdf/${cert.filename}.pdf`,
-            lastModified: timestamp,
-            input: cert.pdfBlob,
-          });
-        }
+        zipFiles.push(...certZipEntries(cert, formats, timestamp));
       }
 
-      const safeEvent = eventName ? `${sanitizeFilename(eventName)}_` : '';
-      const zipFilename = `certificates_${safeEvent}${new Date().toISOString().split('T')[0]}.zip`;
+      if (zipFiles.length === 0) return null;
+      const zipFilename = buildZipFilename(eventName);
 
       let finalBlob: Blob | null = null;
 
@@ -217,6 +317,7 @@ export function useCertificateBatchGenerator() {
 
   const generateBatch = useCallback(
     async (records: Array<{ rowIndex: number; row: CsvRow }>, isRetry: boolean = false) => {
+      if (generateInFlightRef.current) return;
       if (!templateImage || records.length === 0) return;
 
       const activeFormatsList = [
@@ -239,6 +340,8 @@ export function useCertificateBatchGenerator() {
 
       abortRef.current = false;
       pauseRef.current = false;
+      generateInFlightRef.current = true;
+      try {
       setLocalPaused(false);
       setError(null);
       setIsReportOpen(false);
@@ -265,6 +368,58 @@ export function useCertificateBatchGenerator() {
         errorsRef.current = errorsRef.current.filter(
           (e) => !records.some((r) => r.rowIndex === e.rowIndex)
         );
+      }
+
+      // ---------------------------------------------------------------
+      // Streaming ZIP sink (worker path, first run, FSA browsers): the save
+      // picker opens now and finished certificates stream into the archive as
+      // they render, so peak memory stays bounded regardless of batch size.
+      // Retries, pool fallback and non-FSA browsers use the accumulate path.
+      // ---------------------------------------------------------------
+      const ZIP_STREAM_FAIL_MESSAGE =
+        'Streaming ZIP failed — the archive on disk is incomplete. Check disk space and re-run the batch.';
+      let zipQueue: BoundedZipQueue | null = null;
+      let zipWritable: SaveWritable | null = null;
+      let zipPipe: Promise<void> | null = null;
+      let zipStreamError: unknown = null;
+      const streamedRowIndexes = new Set<number>();
+      const streamTimestamp = new Date();
+
+      const revertStreamedRows = () => {
+        // Forget rows whose blobs were already streamed so the accumulate
+        // path (or a retry) regenerates them from scratch.
+        for (const rowIndex of streamedRowIndexes) {
+          successfulCertsRef.current.delete(rowIndex);
+        }
+        streamedRowIndexes.clear();
+      };
+      const discardStream = async () => {
+        zipQueue?.close();
+        zipQueue = null;
+        if (zipWritable) {
+          const discarded = zipWritable.abort?.('discarded');
+          await discarded?.catch(() => undefined);
+        }
+        zipWritable = null;
+        zipPipe = null;
+        zipStreamError = null;
+      };
+
+      if (!isRetry && CertificateWorkerPool.isSupported()) {
+        const writable = await openSavePicker(buildZipFilename(eventName));
+        if (writable) {
+          zipWritable = writable;
+          zipQueue = new BoundedZipQueue();
+          const zipResponse = downloadZip(zipQueue);
+          zipPipe = (
+            zipResponse.body
+              ? zipResponse.body.pipeTo(writable)
+              : Promise.reject(new Error('ZIP stream unavailable'))
+          ).catch((err: unknown) => {
+            zipStreamError = err;
+            zipQueue?.close();
+          });
+        }
       }
 
       // Step 1: Preload web fonts for both DOM and Web Workers
@@ -378,16 +533,27 @@ export function useCertificateBatchGenerator() {
             await pool.processChunk(currentSubTasks, (result) => {
               if (abortRef.current) return;
               totalCompleted++;
-
               if (result.blobs && !result.error) {
-                // Store successful blob in memory - do NOT stream success log records to React state
-                successfulCertsRef.current.set(result.rowIndex, {
+                const certItem: GeneratedCertItem = {
                   rowIndex: result.rowIndex,
                   filename: result.filename,
                   pngBlob: result.blobs.png,
                   jpgBlob: result.blobs.jpg,
                   pdfBlob: result.blobs.pdf,
-                });
+                };
+                if (zipQueue) {
+                  // Streamed straight to disk: keep the row for the report and
+                  // retry bookkeeping, but drop the blob references immediately.
+                  zipQueue.pushAll(certZipEntries(certItem, exportFormats, streamTimestamp));
+                  streamedRowIndexes.add(result.rowIndex);
+                  successfulCertsRef.current.set(result.rowIndex, {
+                    rowIndex: result.rowIndex,
+                    filename: result.filename,
+                  });
+                } else {
+                  // Store successful blob in memory - do NOT stream success log records to React state
+                  successfulCertsRef.current.set(result.rowIndex, certItem);
+                }
               } else if (result.error) {
                 // Only track and stream failure logs
                 const errorMsg = result.error || 'Generation failed';
@@ -422,12 +588,57 @@ export function useCertificateBatchGenerator() {
                 speed,
               });
             });
+
+            // Backpressure: let the ZIP stream drain before rendering more.
+            if (zipQueue) await zipQueue.waitForDrain(SUB_BATCH_SIZE * 3);
+            if (zipStreamError) {
+              // Disk/stream failure mid-run: regenerate everything already
+              // streamed via the accumulate path instead.
+              revertStreamedRows();
+              await discardStream();
+            }
+          }
+
+          // Finalize the streaming archive.
+          if (zipQueue) {
+            if (abortRef.current) {
+              // Match non-streaming behavior: an aborted run leaves no archive.
+              zipQueue.close();
+              const discarded = zipWritable?.abort?.('Generation aborted');
+              await discarded?.catch(() => undefined);
+            } else {
+              zipQueue.close();
+              if (zipPipe) await zipPipe;
+              if (zipStreamError) {
+                // The archive on disk is incomplete: mark streamed rows failed
+                // so they land in the retry queue.
+                const timestamp = new Date().toLocaleTimeString();
+                for (const rowIndex of streamedRowIndexes) {
+                  const rec = records.find((r) => r.rowIndex === rowIndex);
+                  failedMapRef.current.set(rowIndex, { error: ZIP_STREAM_FAIL_MESSAGE, timestamp });
+                  errorsRef.current.push({
+                    rowIndex,
+                    name: rec ? getFilenameBasis(rec.row) : `row ${rowIndex}`,
+                    row: rec?.row ?? {},
+                    error: ZIP_STREAM_FAIL_MESSAGE,
+                  });
+                  successfulCertsRef.current.delete(rowIndex);
+                }
+                setError(ZIP_STREAM_FAIL_MESSAGE);
+              }
+            }
+            zipQueue = null;
+            zipWritable = null;
           }
 
           pureGenDurationMs = performance.now() - genStartTime;
           workerExecutionSucceeded = true;
         } catch (poolErr) {
           console.warn('[Worker Pool Warning, seamlessly falling back to main thread]:', poolErr);
+          // The stream may already hold some files; discard the partial archive
+          // and let the main-thread fallback regenerate every pending row.
+          revertStreamedRows();
+          await discardStream();
         } finally {
           pool.terminate();
           workerPoolRef.current = null;
@@ -572,9 +783,11 @@ export function useCertificateBatchGenerator() {
         setGenerationRecords(assembledRecords);
       }
 
-      // Step 6: Build ZIP Archive via client-zip
+      // Step 6: Build ZIP Archive via client-zip (skipped when the streaming
+      // archive already delivered every file straight to disk).
       const allSuccessfulCerts = Array.from(successfulCertsRef.current.values());
-      if (allSuccessfulCerts.length > 0 && !abortRef.current) {
+      const streamedArchiveDelivered = streamedRowIndexes.size > 0 && !abortRef.current;
+      if (allSuccessfulCerts.length > 0 && !abortRef.current && !streamedArchiveDelivered) {
         setProgress((prev) => ({
           ...prev,
           status: 'zipping',
@@ -582,6 +795,14 @@ export function useCertificateBatchGenerator() {
         }));
 
         await buildZipAndDownload(allSuccessfulCerts, exportFormats);
+
+        // The archive is on disk; drop the blob references so the completed
+        // state doesn't pin the whole batch in heap until the user closes it.
+        for (const cert of successfulCertsRef.current.values()) {
+          cert.pngBlob = undefined;
+          cert.jpgBlob = undefined;
+          cert.pdfBlob = undefined;
+        }
       }
 
       const totalElapsed = Date.now() - startTime;
@@ -619,6 +840,9 @@ export function useCertificateBatchGenerator() {
           defaultFontColor,
           token,
         }).catch((err) => console.warn('[AutoSave Template Error]:', err));
+      }
+      } finally {
+        generateInFlightRef.current = false;
       }
     },
     [

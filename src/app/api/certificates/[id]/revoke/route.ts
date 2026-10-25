@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server';
-import { eq, or } from 'drizzle-orm';
+import { mutationAllowed, forbiddenCsrfResponse } from '../../../../../lib/server-auth';
+import { and, eq, ne, or } from 'drizzle-orm';
 import { db } from '../../../../../lib/db';
 import { certificates } from '../../../../../db/schema';
-import { getAdminUserFromRequest, unauthorizedResponse } from '../../../../../lib/server-auth';
+import { unauthorizedResponse } from '../../../../../lib/server-auth';
+import { getAuthenticatedUser } from '../../../../../lib/accounts';
 import { hashToken, isValidCertificateId } from '../../../../../lib/verification';
 
 /**
@@ -12,9 +14,10 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const username = getAdminUserFromRequest(request);
-  if (!username) {
-    return unauthorizedResponse('Admin privilege required');
+  if (!mutationAllowed(request)) return forbiddenCsrfResponse();
+  const user = await getAuthenticatedUser(request);
+  if (!user) {
+    return unauthorizedResponse('Invalid or expired token');
   }
 
   const { id } = await params;
@@ -39,7 +42,12 @@ export async function POST(
     const [cert] = await db
       .select({ id: certificates.id, status: certificates.status })
       .from(certificates)
-      .where(or(eq(certificates.tokenHash, hashToken(normalizedId)), eq(certificates.id, normalizedId)))
+      .where(
+        and(
+          eq(certificates.userId, user.userId),
+          or(eq(certificates.tokenHash, hashToken(normalizedId)), eq(certificates.id, normalizedId))
+        )
+      )
       .limit(1);
 
     if (!cert) {
@@ -53,11 +61,21 @@ export async function POST(
       );
     }
 
+    // The status guard is folded into the write itself, so a concurrent
+    // register-batch flipping a row to/from 'static' between our read and
+    // write cannot produce a contradictory transition.
     const [updated] = await db
       .update(certificates)
       .set({ status: reinstated ? 'issued' : 'revoked' })
-      .where(eq(certificates.id, cert.id))
+      .where(and(eq(certificates.id, cert.id), ne(certificates.status, 'static')))
       .returning({ id: certificates.id, status: certificates.status });
+
+    if (!updated) {
+      return NextResponse.json(
+        { detail: 'Static certificates cannot be revoked or reinstated' },
+        { status: 400 }
+      );
+    }
 
     return NextResponse.json({
       id,

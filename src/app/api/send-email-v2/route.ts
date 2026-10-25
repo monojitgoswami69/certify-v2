@@ -1,8 +1,15 @@
 import { NextResponse } from 'next/server';
+import { mutationAllowed, forbiddenCsrfResponse } from '../../../lib/server-auth';
 import nodemailer, { type SendMailOptions, type Transporter } from 'nodemailer';
 import { Readable } from 'stream';
-import { getAuthUserFromRequest, unauthorizedResponse } from '../../../lib/server-auth';
-import { buildGoogleOAuthClient } from '../../../lib/google-token-store';
+import { unauthorizedResponse } from '../../../lib/server-auth';
+import { getAuthenticatedUser } from '../../../lib/accounts';
+import { getFreshAccessToken } from '../../../lib/google-token-store';
+import { checkRateLimit } from '../../../lib/rate-limit';
+import { log, requestIdOf } from '../../../lib/logger';
+
+/** Per-account cap slightly above the Gmail per-user send quota. */
+const SEND_RATE_LIMIT = 200; // sends per minute
 
 // =========================================================================
 // Shared MIME builder (streamTransport never opens a socket, so a single
@@ -59,9 +66,18 @@ async function readAttachment(file: File | null, filename: string): Promise<Mail
 }
 
 export async function POST(request: Request) {
-  const username = getAuthUserFromRequest(request);
-  if (!username) {
+  if (!mutationAllowed(request)) return forbiddenCsrfResponse();
+  const user = await getAuthenticatedUser(request);
+  if (!user) {
     return unauthorizedResponse('Invalid or expired token');
+  }
+
+  const rate = checkRateLimit(`send:user:${user.userId}`, SEND_RATE_LIMIT, 60_000);
+  if (!rate.allowed) {
+    return NextResponse.json(
+      { status: 'rate_limited', detail: 'Sending too fast — pausing briefly to respect the Gmail quota.' },
+      { status: 429, headers: { 'Retry-After': String(rate.retryAfterSec) } }
+    );
   }
 
   try {
@@ -71,7 +87,6 @@ export async function POST(request: Request) {
     let emailBodyHtml: string;
     let filename: string;
     let attachments: MailAttachment[];
-    let clientAccessToken: string | undefined;
     let senderEmail: string | undefined;
 
     const contentType = request.headers.get('content-type') || '';
@@ -84,9 +99,6 @@ export async function POST(request: Request) {
       emailBodyPlain = String(form.get('email_body_plain') || '');
       emailBodyHtml = String(form.get('email_body_html') || '');
       filename = sanitizeAttachmentBaseName(String(form.get('filename') || 'certificate'));
-      clientAccessToken = form.get('google_access_token')
-        ? String(form.get('google_access_token'))
-        : undefined;
       senderEmail = form.get('sender_email') ? String(form.get('sender_email')) : undefined;
 
       attachments = [];
@@ -107,7 +119,6 @@ export async function POST(request: Request) {
       emailBodyPlain = String(body.email_body_plain || '');
       emailBodyHtml = String(body.email_body_html || '');
       filename = sanitizeAttachmentBaseName(String(body.filename || 'certificate'));
-      clientAccessToken = body.google_access_token;
       senderEmail = typeof body.sender_email === 'string' ? body.sender_email : undefined;
 
       attachments = [];
@@ -158,27 +169,12 @@ export async function POST(request: Request) {
     }
 
     // =========================================================================
-    // Resolve a Gmail access token. Prefer server-stored credentials (which
-    // auto-refresh via the refresh token); fall back to the client-supplied
-    // token if the server store is empty (e.g. after a server restart).
+    // Resolve a Gmail access token from the server-side credential store
+    // (Postgres-backed, auto-refreshed and persisted by the store; refreshes
+    // are single-flight per account so a parallel batch cannot stampede
+    // Google's token endpoint).
     // =========================================================================
-    let accessToken: string | null | undefined = null;
-    let usedServerCreds = false;
-
-    const oauthClient = buildGoogleOAuthClient(username);
-    if (oauthClient) {
-      try {
-        const { token } = await oauthClient.getAccessToken();
-        accessToken = token;
-        usedServerCreds = true;
-      } catch (err) {
-        console.warn('[Gmail dispatch] server credential refresh failed:', err);
-      }
-    }
-
-    if (!accessToken && clientAccessToken) {
-      accessToken = clientAccessToken;
-    }
+    const accessToken = await getFreshAccessToken(user.userId);
 
     if (accessToken) {
       const validSender = senderEmail && senderEmail.includes('@') ? senderEmail : undefined;
@@ -248,9 +244,7 @@ export async function POST(request: Request) {
         return NextResponse.json(
           {
             status: 'reconnect_required',
-            detail: usedServerCreds
-              ? 'Google session expired. Please reconnect your Google account.'
-              : lastErrorMessage,
+            detail: 'Google session expired. Please reconnect your Google account.',
           },
           { status: 401 }
         );
@@ -270,7 +264,7 @@ export async function POST(request: Request) {
       { status: 401 }
     );
   } catch (error) {
-    console.error('[Email Dispatch Error]:', error);
+    log.error('email', 'Failed to send email', { requestId: requestIdOf(request), userId: user.userId }, error);
     return NextResponse.json(
       { detail: error instanceof Error ? error.message : 'Failed to send email' },
       { status: 500 }

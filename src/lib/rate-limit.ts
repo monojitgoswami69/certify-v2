@@ -6,6 +6,8 @@
  * instances, swap this for a shared store (e.g. a Neon table or Upstash).
  */
 
+import { env } from './env';
+
 interface WindowState {
   count: number;
   resetAt: number;
@@ -51,9 +53,41 @@ export function checkRateLimit(
   return { allowed: true, retryAfterSec: 0 };
 }
 
-/** First hop of x-forwarded-for, or a fallback marker when no proxy header. */
+/**
+ * How many proxies in front of the app append trustworthy entries to
+ * X-Forwarded-For. 0 = directly exposed (header fully client-controlled);
+ * 1 = one trusted proxy (nginx/managed platform) appends the real client IP
+ * as the LAST entry.
+ *
+ * X-Forwarded-For is `client, proxy1, proxy2, ...` — every hop APPENDS. The
+ * client controls the beginning of the list, so only entries added by our own
+ * trusted proxies (counting from the END) may be used for rate limiting.
+ * Taking the first entry would let anyone bypass every IP rate limit
+ * (including login brute-force) by rotating a spoofed header value.
+ */
+function trustedProxyCount(): number {
+  return env.TRUSTED_PROXY_COUNT;
+}
+
 export function getClientIp(request: Request): string {
+  const proxyCount = trustedProxyCount();
   const fwd = request.headers.get('x-forwarded-for');
-  if (fwd) return fwd.split(',')[0].trim();
-  return request.headers.get('x-real-ip') || 'unknown';
+  if (fwd && proxyCount > 0) {
+    const hops = fwd.split(',').map((h) => h.trim()).filter(Boolean);
+    // The hop `proxyCount` positions from the end was appended by our
+    // outermost trusted proxy and is the address it received the request
+    // from. Anything before it was supplied by untrusted parties.
+    const trustedIndex = hops.length - proxyCount;
+    if (trustedIndex >= 0) return hops[trustedIndex];
+    // Fewer hops than expected: fall through to the platform-supplied header.
+  }
+  if (proxyCount > 0) {
+    const realIp = request.headers.get('x-real-ip');
+    if (realIp) return realIp.trim();
+    return 'unknown-proxy';
+  }
+  // Directly exposed (no proxy): the socket address is not visible to route
+  // handlers, and XFF/X-Real-IP are client-spoofable, so bucket everyone
+  // together rather than trusting attacker-chosen keys.
+  return 'direct';
 }

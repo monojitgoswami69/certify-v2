@@ -1,12 +1,17 @@
 @import "tailwindcss";
 
+/*
+ * UI chrome fonts are self-hosted via next/font (layout.tsx) and exposed as
+ * --gf-* variables. Certificate-content fonts (Electrolize, Quantico, and any
+ * family picked in the FontSelector) stay dynamic Google Fonts by design.
+ */
 @theme {
-  --font-sans: 'Quicksand', 'Inter', 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'Tomorrow', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  --font-jura: 'Jura', sans-serif;
-  --font-quicksand: 'Quicksand', sans-serif;
-  --font-saira: 'Saira', sans-serif;
-  --font-tomorrow: 'Tomorrow', sans-serif;
+  --font-sans: var(--gf-quicksand), var(--gf-inter), var(--gf-plus-jakarta), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: var(--gf-tomorrow), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-jura: var(--gf-jura), sans-serif;
+  --font-quicksand: var(--gf-quicksand), sans-serif;
+  --font-saira: var(--gf-saira), sans-serif;
+  --font-tomorrow: var(--gf-tomorrow), sans-serif;
   --font-electrolize: 'Electrolize', sans-serif;
 
   --color-primary-50: #eef2ff;
@@ -194,7 +199,7 @@ button:focus-visible {
 
 /* Login Card & Form Styling */
 .login-page {
-  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+  font-family: var(--gf-plus-jakarta), system-ui, sans-serif;
 }
 
 .login-mountain-bg {
@@ -546,15 +551,15 @@ button:focus-visible {
 }
 
 .font-jura {
-  font-family: 'Jura', sans-serif;
+  font-family: var(--gf-jura), sans-serif;
 }
 
 .font-quicksand {
-  font-family: 'Quicksand', sans-serif;
+  font-family: var(--gf-quicksand), sans-serif;
 }
 
 .font-tomorrow {
-  font-family: 'Tomorrow', sans-serif;
+  font-family: var(--gf-tomorrow), sans-serif;
 }
 
 .font-electrolize {
