@@ -24,8 +24,9 @@ export default async function VerifyPage({
         aria-hidden="true"
       />
 
-      {/* Perfectly centered certificate inspection content */}
-      <main className="w-full max-w-2xl mx-auto flex flex-col items-center justify-center relative z-10">
+      {/* Centered certificate inspection content (wide enough for the
+          two-column valid layout; other states self-constrain) */}
+      <main className="w-full max-w-5xl mx-auto flex flex-col items-center justify-center relative z-10">
         <VerifyClient id={id} defaultIssuedBy={issuedBy} />
       </main>
 

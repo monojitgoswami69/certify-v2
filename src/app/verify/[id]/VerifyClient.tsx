@@ -6,6 +6,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { ConfettiCanvas } from '@/components/verify/ConfettiCanvas';
+import { CertificatePreview } from '@/components/verify/CertificatePreview';
 import { getAuthToken } from '@/lib/api-client';
 
 type VerifyResponse =
@@ -31,6 +32,7 @@ type VerifyResponse =
 
 export function VerifyClient({
   id,
+  defaultIssuedBy,
 }: {
   id: string;
   defaultIssuedBy?: string;
@@ -261,10 +263,13 @@ export function VerifyClient({
         </div>
 
         {/* ----------------------------------------------------------- */}
-        {/* Architectural Editorial Layout (Strictly NO Cards/Boxes)   */}
-        {/* Harmonious Typography (Jura Values & Quicksand Labels)     */}
+        {/* Editorial two-column layout: certificate sheet (left) and   */}
+        {/* the verification record (right). Hairline rules only.       */}
         {/* ----------------------------------------------------------- */}
-        <div className="w-full mt-8 sm:mt-10 border-y border-stone-300/80 divide-y divide-stone-200/80 text-center sm:text-left">
+        <div className="w-full mt-8 sm:mt-10 grid gap-10 lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)] lg:gap-14 items-start text-center lg:text-left">
+          <CertificatePreview certificateId={id} recipientName={state.recipientName} />
+
+          <div className="w-full border-y border-stone-300/80 divide-y divide-stone-200/80 text-center sm:text-left">
           {/* Certificate Holder */}
           <div
             className="py-3.5 sm:py-4 flex flex-col items-center sm:flex-row sm:items-center justify-between gap-1 sm:gap-4 verify-row-animate text-center sm:text-left"
@@ -289,6 +294,21 @@ export function VerifyClient({
               </span>
               <span className="font-jura font-bold text-base sm:text-lg text-stone-900 break-words text-center sm:text-right font-[700]">
                 {state.eventName}
+              </span>
+            </div>
+          )}
+
+          {/* Issued By (account-level issuer name) */}
+          {(state.issuedBy || defaultIssuedBy) && (
+            <div
+              className="py-3.5 sm:py-4 flex flex-col items-center sm:flex-row sm:items-center justify-between gap-1 sm:gap-4 verify-row-animate text-center sm:text-left"
+              style={{ animationDelay: '360ms' }}
+            >
+              <span className="font-quicksand font-bold text-xs tracking-[0.14em] uppercase text-stone-500 shrink-0 sm:w-44 select-none font-[700] text-center sm:text-left">
+                Issued By
+              </span>
+              <span className="font-jura font-bold text-base sm:text-lg text-stone-900 break-words text-center sm:text-right font-[700]">
+                {state.issuedBy || defaultIssuedBy}
               </span>
             </div>
           )}
@@ -319,6 +339,7 @@ export function VerifyClient({
             <span className="font-jura font-bold text-base sm:text-lg text-stone-900 text-center sm:text-right font-[700]">
               {formatDate(state.issuedAt)}
             </span>
+          </div>
           </div>
         </div>
       </div>

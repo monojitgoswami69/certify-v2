@@ -169,6 +169,49 @@ try {
     renameBatch?.inserted_count === 1 && renameBatch?.reused_count === 1,
     `rename=${JSON.stringify(renameBatch)}`);
 
+  // 7c. Verify-page asset endpoint: render spec for valid certificates with
+  //     strict field filtering, 404 for revoked/unknown, template resolution.
+  //     Attach a real template (1x1 PNG, one box printing "Name") to Alice's
+  //     certificate so the full path is exercised.
+  const TINY_PNG =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+  await sql`
+    INSERT INTO templates (user_id, name, image_data, width, height, layout_config)
+    VALUES (${user.id}, ${EVENT}, ${TINY_PNG}, 1, 1,
+      ${JSON.stringify({
+        boxes: [{ id: 'b1', field: 'Name', x: 0, y: 0, width: 1, height: 1 }],
+        qrZones: [],
+      })}::jsonb)
+    ON CONFLICT (user_id, name) DO NOTHING`;
+  await sql`
+    UPDATE certificates SET template_name = ${EVENT}
+    WHERE id = ${r1.data.ids[0]} AND user_id = ${user.id}`;
+
+  const assetOk = await fetch(`${BASE}/api/verify/${r1.data.ids[0]}/asset`);
+  const assetData = await assetOk.json().catch(() => ({}));
+  check('asset endpoint returns render spec for valid cert (200)', assetOk.status === 200 && assetData.status === 'ok',
+    `status=${assetOk.status}`);
+  check('asset resolves the template', Boolean(assetData.template?.imageData),
+    `template=${Boolean(assetData.template)}`);
+  check('asset returns only template-referenced fields',
+    assetData.fields?.Name === 'Alice Smith' && !('Roll' in (assetData.fields ?? {})) &&
+      Object.keys(assetData.fields ?? {}).length === 1,
+    `fields=${JSON.stringify(assetData.fields)}`);
+
+  // Revoke Alice's certificate, then the asset must stop resolving.
+  const rv = await fetch(`${BASE}/api/certificates/${r1.data.ids[0]}/revoke`, {
+    method: 'POST', headers: auth, body: '{}',
+  });
+  check('revoke succeeds (200)', rv.status === 200, `status=${rv.status}`);
+  const assetRevoked = await fetch(`${BASE}/api/verify/${r1.data.ids[0]}/asset`);
+  check('asset for revoked cert is 404', assetRevoked.status === 404, `status=${assetRevoked.status}`);
+  const mainRevoked = await fetch(`${BASE}/api/verify/${r1.data.ids[0]}`);
+  const mainRevokedData = await mainRevoked.json().catch(() => ({}));
+  check('revoked verify page leaks no PII', mainRevoked.status === 200 && mainRevokedData.status === 'revoked' &&
+    !mainRevokedData.recipientName, `status=${mainRevokedData.status}`);
+  const assetMalformed = await fetch(`${BASE}/api/verify/not-a-uuid/asset`);
+  check('asset for malformed id is 404', assetMalformed.status === 404, `status=${assetMalformed.status}`);
+
   // 8. Logout (via the cookie path) revokes the session server-side and
   //    instructs the browser to drop the cookie.
   const lo = await fetch(`${BASE}/api/auth/logout`, { method: 'POST', headers: cookieAuth });
