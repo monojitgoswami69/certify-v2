@@ -5,7 +5,7 @@
  * Workers remain warm across chunks, sharing the template Blob with zero-copy.
  */
 
-import type { TextBox, CsvRow } from '../types';
+import type { TextBox, CsvRow, ImageElement } from '../types';
 import type { QrPlacement, OutputFormat, BatchResultItem } from './certificate-worker';
 import type { WorkerFontData } from './font-loader';
 
@@ -69,7 +69,8 @@ export class CertificateWorkerPool {
     qrZones: QrPlacement[],
     formats: OutputFormat[],
     fonts?: WorkerFontData[],
-    maxWorkers?: number
+    maxWorkers?: number,
+    images?: ImageElement[]
   ): Promise<number> {
     const workerCount = maxWorkers ?? CertificateWorkerPool.getOptimalWorkerCount();
     const initPromises: Promise<void>[] = [];
@@ -122,6 +123,7 @@ export class CertificateWorkerPool {
         templateHeight,
         boxes,
         qrZones,
+        images,
         formats,
         jpegQuality: 0.92,
         fonts: fonts

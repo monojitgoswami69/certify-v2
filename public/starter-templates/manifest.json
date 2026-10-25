@@ -1,0 +1,346 @@
+[
+  {
+    "id": "classic-gold",
+    "name": "Classic Gold",
+    "category": "formal",
+    "file": "/starter-templates/classic-gold.svg",
+    "accent": "#b8860b",
+    "seed": {
+      "name": {
+        "x": 300,
+        "y": 660,
+        "w": 1400,
+        "h": 110,
+        "fontSize": 60,
+        "fontColor": "#3d3320",
+        "fontFamily": "Playfair Display",
+        "hAlign": "center",
+        "vAlign": "bottom"
+      },
+      "course": {
+        "x": 350,
+        "y": 830,
+        "w": 1300,
+        "h": 60,
+        "fontSize": 30,
+        "fontColor": "#6b5d3f",
+        "fontFamily": "Inter",
+        "hAlign": "center",
+        "vAlign": "bottom"
+      },
+      "date": {
+        "x": 700,
+        "y": 960,
+        "w": 600,
+        "h": 50,
+        "fontSize": 26,
+        "fontColor": "#8a7a55",
+        "fontFamily": "Inter",
+        "hAlign": "center",
+        "vAlign": "bottom"
+      }
+    },
+    "defaultFont": "Playfair Display"
+  },
+  {
+    "id": "modern-slate",
+    "name": "Modern Slate",
+    "category": "professional",
+    "file": "/starter-templates/modern-slate.svg",
+    "accent": "#334155",
+    "seed": {
+      "name": {
+        "x": 300,
+        "y": 660,
+        "w": 1400,
+        "h": 110,
+        "fontSize": 60,
+        "fontColor": "#0f172a",
+        "fontFamily": "Plus Jakarta Sans",
+        "hAlign": "center",
+        "vAlign": "bottom"
+      },
+      "course": {
+        "x": 350,
+        "y": 830,
+        "w": 1300,
+        "h": 60,
+        "fontSize": 30,
+        "fontColor": "#475569",
+        "fontFamily": "Inter",
+        "hAlign": "center",
+        "vAlign": "bottom"
+      },
+      "date": {
+        "x": 700,
+        "y": 960,
+        "w": 600,
+        "h": 50,
+        "fontSize": 26,
+        "fontColor": "#64748b",
+        "fontFamily": "Inter",
+        "hAlign": "center",
+        "vAlign": "bottom"
+      }
+    },
+    "defaultFont": "Plus Jakarta Sans"
+  },
+  {
+    "id": "emerald-academic",
+    "name": "Emerald Academic",
+    "category": "academic",
+    "file": "/starter-templates/emerald-academic.svg",
+    "accent": "#047857",
+    "seed": {
+      "name": {
+        "x": 300,
+        "y": 660,
+        "w": 1400,
+        "h": 110,
+        "fontSize": 60,
+        "fontColor": "#064e3b",
+        "fontFamily": "Playfair Display",
+        "hAlign": "center",
+        "vAlign": "bottom"
+      },
+      "course": {
+        "x": 350,
+        "y": 830,
+        "w": 1300,
+        "h": 60,
+        "fontSize": 30,
+        "fontColor": "#047857",
+        "fontFamily": "Inter",
+        "hAlign": "center",
+        "vAlign": "bottom"
+      },
+      "date": {
+        "x": 700,
+        "y": 960,
+        "w": 600,
+        "h": 50,
+        "fontSize": 26,
+        "fontColor": "#4b7c6b",
+        "fontFamily": "Inter",
+        "hAlign": "center",
+        "vAlign": "bottom"
+      }
+    },
+    "defaultFont": "Playfair Display"
+  },
+  {
+    "id": "royal-indigo",
+    "name": "Royal Indigo",
+    "category": "professional",
+    "file": "/starter-templates/royal-indigo.svg",
+    "accent": "#4f46e5",
+    "seed": {
+      "name": {
+        "x": 300,
+        "y": 660,
+        "w": 1400,
+        "h": 110,
+        "fontSize": 60,
+        "fontColor": "#1e1b4b",
+        "fontFamily": "Plus Jakarta Sans",
+        "hAlign": "center",
+        "vAlign": "bottom"
+      },
+      "course": {
+        "x": 350,
+        "y": 830,
+        "w": 1300,
+        "h": 60,
+        "fontSize": 30,
+        "fontColor": "#4338ca",
+        "fontFamily": "Inter",
+        "hAlign": "center",
+        "vAlign": "bottom"
+      },
+      "date": {
+        "x": 700,
+        "y": 960,
+        "w": 600,
+        "h": 50,
+        "fontSize": 26,
+        "fontColor": "#6366f1",
+        "fontFamily": "Inter",
+        "hAlign": "center",
+        "vAlign": "bottom"
+      }
+    },
+    "defaultFont": "Plus Jakarta Sans"
+  },
+  {
+    "id": "dark-elegance",
+    "name": "Dark Elegance",
+    "category": "formal",
+    "file": "/starter-templates/dark-elegance.svg",
+    "accent": "#d4af37",
+    "seed": {
+      "name": {
+        "x": 300,
+        "y": 660,
+        "w": 1400,
+        "h": 110,
+        "fontSize": 60,
+        "fontColor": "#f5f0e1",
+        "fontFamily": "Playfair Display",
+        "hAlign": "center",
+        "vAlign": "bottom"
+      },
+      "course": {
+        "x": 350,
+        "y": 830,
+        "w": 1300,
+        "h": 60,
+        "fontSize": 30,
+        "fontColor": "#d6c9a8",
+        "fontFamily": "Inter",
+        "hAlign": "center",
+        "vAlign": "bottom"
+      },
+      "date": {
+        "x": 700,
+        "y": 960,
+        "w": 600,
+        "h": 50,
+        "fontSize": 26,
+        "fontColor": "#a8a29e",
+        "fontFamily": "Inter",
+        "hAlign": "center",
+        "vAlign": "bottom"
+      }
+    },
+    "defaultFont": "Playfair Display"
+  },
+  {
+    "id": "warm-participation",
+    "name": "Warm Participation",
+    "category": "participation",
+    "file": "/starter-templates/warm-participation.svg",
+    "accent": "#ea580c",
+    "seed": {
+      "name": {
+        "x": 300,
+        "y": 660,
+        "w": 1400,
+        "h": 110,
+        "fontSize": 60,
+        "fontColor": "#7c2d12",
+        "fontFamily": "Quicksand",
+        "hAlign": "center",
+        "vAlign": "bottom"
+      },
+      "course": {
+        "x": 350,
+        "y": 830,
+        "w": 1300,
+        "h": 60,
+        "fontSize": 30,
+        "fontColor": "#c2410c",
+        "fontFamily": "Quicksand",
+        "hAlign": "center",
+        "vAlign": "bottom"
+      },
+      "date": {
+        "x": 700,
+        "y": 960,
+        "w": 600,
+        "h": 50,
+        "fontSize": 26,
+        "fontColor": "#9a6b4f",
+        "fontFamily": "Inter",
+        "hAlign": "center",
+        "vAlign": "bottom"
+      }
+    },
+    "defaultFont": "Quicksand"
+  },
+  {
+    "id": "hackathon-bold",
+    "name": "Hackathon Bold",
+    "category": "tech",
+    "file": "/starter-templates/hackathon-bold.svg",
+    "accent": "#10b981",
+    "seed": {
+      "name": {
+        "x": 300,
+        "y": 660,
+        "w": 1400,
+        "h": 110,
+        "fontSize": 60,
+        "fontColor": "#ecfdf5",
+        "fontFamily": "Saira",
+        "hAlign": "center",
+        "vAlign": "bottom"
+      },
+      "course": {
+        "x": 350,
+        "y": 830,
+        "w": 1300,
+        "h": 60,
+        "fontSize": 30,
+        "fontColor": "#34d399",
+        "fontFamily": "Inter",
+        "hAlign": "center",
+        "vAlign": "bottom"
+      },
+      "date": {
+        "x": 700,
+        "y": 960,
+        "w": 600,
+        "h": 50,
+        "fontSize": 26,
+        "fontColor": "#9ca3af",
+        "fontFamily": "Inter",
+        "hAlign": "center",
+        "vAlign": "bottom"
+      }
+    },
+    "defaultFont": "Saira"
+  },
+  {
+    "id": "floral-rose",
+    "name": "Floral Rose",
+    "category": "participation",
+    "file": "/starter-templates/floral-rose.svg",
+    "accent": "#be185d",
+    "seed": {
+      "name": {
+        "x": 300,
+        "y": 660,
+        "w": 1400,
+        "h": 110,
+        "fontSize": 60,
+        "fontColor": "#831843",
+        "fontFamily": "Playfair Display",
+        "hAlign": "center",
+        "vAlign": "bottom"
+      },
+      "course": {
+        "x": 350,
+        "y": 830,
+        "w": 1300,
+        "h": 60,
+        "fontSize": 30,
+        "fontColor": "#be185d",
+        "fontFamily": "Inter",
+        "hAlign": "center",
+        "vAlign": "bottom"
+      },
+      "date": {
+        "x": 700,
+        "y": 960,
+        "w": 600,
+        "h": 50,
+        "fontSize": 26,
+        "fontColor": "#b06a87",
+        "fontFamily": "Inter",
+        "hAlign": "center",
+        "vAlign": "bottom"
+      }
+    },
+    "defaultFont": "Playfair Display"
+  }
+]

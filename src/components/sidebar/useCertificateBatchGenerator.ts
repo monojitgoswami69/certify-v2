@@ -199,6 +199,7 @@ export function useCertificateBatchGenerator() {
     csvData,
     boxes,
     qrZones,
+    images,
     eventName,
     emailColumn,
     defaultFont,
@@ -503,7 +504,9 @@ export function useCertificateBatchGenerator() {
             validBoxes,
             qrZones,
             activeFormatsList,
-            workerFonts
+            workerFonts,
+            undefined,
+            images
           );
 
           progressScheduler.schedule({
@@ -684,6 +687,7 @@ export function useCertificateBatchGenerator() {
               includeJpg: exportFormats.jpg,
               includePdf: exportFormats.pdf,
               qrZones: useQr ? qrZones : undefined,
+              images,
               verificationUrl,
             });
 
@@ -835,6 +839,7 @@ export function useCertificateBatchGenerator() {
           eventName,
           boxes,
           qrZones,
+          images,
           defaultFont,
           defaultFontSize,
           defaultFontColor,

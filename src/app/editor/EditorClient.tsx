@@ -1,13 +1,15 @@
 'use client';
 
 import { useEffect, useState, Suspense } from 'react';
-import { FileSpreadsheet, X, Image as ImageIcon, CalendarDays, Monitor } from 'lucide-react';
+import { FileSpreadsheet, X, Image as ImageIcon, CalendarDays, Monitor, Sparkles } from 'lucide-react';
 import { ErrorBoundary } from '../../components/ui/ErrorBoundary';
 import { SidebarHeader } from '../../components/sidebar/SidebarHeader';
 import { StepCard } from '../../components/sidebar/StepCard';
 import { TemplateUpload } from '../../components/sidebar/TemplateUpload';
+import { StarterGalleryModal } from '../../components/modals/StarterGalleryModal';
 import { CsvUpload } from '../../components/sidebar/CsvUpload';
 import { BoxCustomizer } from '../../components/sidebar/BoxCustomizer';
+import { ImagesCard } from '../../components/sidebar/ImagesCard';
 import { QrZoneCard } from '../../components/sidebar/QrZoneCard';
 import { CanvasEditor } from '../../components/canvas/CanvasEditor';
 import { GenerateButton } from '../../components/sidebar/GenerateButton';
@@ -47,6 +49,7 @@ function WorkspaceContent() {
   const templateIdParam = searchParams.get('templateId');
   const eventParam = searchParams.get('event');
   const [showCsvPreview, setShowCsvPreview] = useState(false);
+  const [showStarterGallery, setShowStarterGallery] = useState(false);
   const [isNarrowScreen, setIsNarrowScreen] = useState(false);
   const [dismissNarrowWarning, setDismissNarrowWarning] = useState(false);
   const [isHydrating, setIsHydrating] = useState(false);
@@ -184,7 +187,17 @@ function WorkspaceContent() {
                 </button>
               </div>
             ) : (
-              <TemplateUpload />
+              <div className="space-y-2">
+                <TemplateUpload />
+                <button
+                  type="button"
+                  onClick={() => setShowStarterGallery(true)}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 px-3 text-xs font-semibold text-stone-700 bg-white border border-stone-200 rounded-lg hover:border-stone-400 hover:bg-stone-50 transition-colors cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-primary-600" />
+                  Browse starter templates
+                </button>
+              </div>
             )}
           </StepCard>
 
@@ -271,6 +284,7 @@ function WorkspaceContent() {
           {/* Step 4 */}
           <StepCard number={4} title="Customize Box" status={step4Status}>
             <BoxCustomizer />
+          <ImagesCard />
           </StepCard>
 
           {/* Step 5 */}
@@ -287,6 +301,7 @@ function WorkspaceContent() {
 
       <CanvasEditor />
 
+      <StarterGalleryModal open={showStarterGallery} onClose={() => setShowStarterGallery(false)} />
       <CsvPreviewModal isOpen={showCsvPreview} onClose={() => setShowCsvPreview(false)} />
 
       {/* Small Screen / Mobile Warning Modal */}

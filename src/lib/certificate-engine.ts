@@ -7,7 +7,7 @@
 
 import { jsPDF } from 'jspdf';
 import QRCode from 'qrcode';
-import type { TextBox, CsvRow, HorizontalAlign, VerticalAlign, QrStyleConfig } from '../types';
+import type { TextBox, CsvRow, HorizontalAlign, VerticalAlign, QrStyleConfig, ImageElement } from '../types';
 import { getFontFamilyCSS } from './font-loader';
 import { resolveFieldValue } from './utils';
 import { drawStyledQr } from './qr-renderer';
@@ -64,6 +64,8 @@ export interface GenerateParams {
   /** QR zone positions on the template (supports multiple QRs). */
   qrZones?: QrPlacement[];
   qrZone?: QrPlacement;
+  /** Decorative bitmap elements (logos, signatures) drawn above the background. */
+  images?: ImageElement[];
   /** Fully-qualified verification URL encoded into the QR (per record). */
   verificationUrl?: string;
   /**
@@ -195,6 +197,25 @@ function drawVerificationQr(
   });
 }
 
+// Decoded image elements, cached by src so repeated renders (batches,
+// previews) do not re-decode the same logo/signature.
+const imageElementCache = new Map<string, HTMLImageElement>();
+
+function decodeImageElement(src: string): Promise<HTMLImageElement | null> {
+  const cached = imageElementCache.get(src);
+  if (cached) return Promise.resolve(cached);
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      if (imageElementCache.size > 100) imageElementCache.clear();
+      imageElementCache.set(src, img);
+      resolve(img);
+    };
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
+}
+
 /**
  * Generate certificate as JPG / PNG / PDF blobs and (optionally) base64 strings.
  */
@@ -212,6 +233,7 @@ export async function generateCertificate(
     includeBase64,
     qrZone,
     qrZones,
+    images,
     verificationUrl,
     canvas: provided,
   } = params;
@@ -227,6 +249,18 @@ export async function generateCertificate(
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(templateImage, 0, 0);
 
+  // Decorative elements (logos, signatures) sit above the background, below text.
+  if (images && images.length > 0) {
+    for (const el of images) {
+      const decoded = await decodeImageElement(el.src);
+      if (!decoded) continue;
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, Math.min(1, el.opacity ?? 1));
+      ctx.drawImage(decoded, el.x, el.y, el.w, el.h);
+      ctx.restore();
+    }
+  }
+
   const zonesToDraw = qrZones && qrZones.length > 0 ? qrZones : qrZone ? [qrZone] : [];
   if (zonesToDraw.length > 0 && verificationUrl) {
     for (const zone of zonesToDraw) {
@@ -241,6 +275,10 @@ export async function generateCertificate(
   }
 
   for (const box of boxes) {
+    if (box.kind === 'static') {
+      drawTextBox(ctx, box.staticText ?? '', box);
+      continue;
+    }
     if (!box.field) continue;
     const text = resolveFieldValue(box.field, row);
     drawTextBox(ctx, text, box);

@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="1414" viewBox="0 0 2000 1414">
+    <rect width="2000" height="1414" fill="#fffdf5"/>
+  <rect x="60" y="60" width="1880" height="1294" fill="none" stroke="#b8860b" stroke-width="6"/>
+  <rect x="84" y="84" width="1832" height="1246" fill="none" stroke="#d4af37" stroke-width="2"/>
+  <g transform=" " fill="none" stroke="#b8860b" stroke-width="4" stroke-linecap="round">
+    <path d="M 130 96 C 90 96 96 136 96 136 C 96 136 60 130 60 170" />
+    <circle cx="96" cy="136" r="7" fill="#b8860b" stroke="none" />
+  </g>
+  <g transform="translate(2000 0) scale(-1 1) " fill="none" stroke="#b8860b" stroke-width="4" stroke-linecap="round">
+    <path d="M 130 96 C 90 96 96 136 96 136 C 96 136 60 130 60 170" />
+    <circle cx="96" cy="136" r="7" fill="#b8860b" stroke="none" />
+  </g>
+  <g transform="translate(2000 0) scale(-1 1) translate(0 1414) scale(1 -1)" fill="none" stroke="#b8860b" stroke-width="4" stroke-linecap="round">
+    <path d="M 130 96 C 90 96 96 136 96 136 C 96 136 60 130 60 170" />
+    <circle cx="96" cy="136" r="7" fill="#b8860b" stroke="none" />
+  </g>
+  <g transform=" translate(0 1414) scale(1 -1)" fill="none" stroke="#b8860b" stroke-width="4" stroke-linecap="round">
+    <path d="M 130 96 C 90 96 96 136 96 136 C 96 136 60 130 60 170" />
+    <circle cx="96" cy="136" r="7" fill="#b8860b" stroke="none" />
+  </g>
+  
+  <text x="1000" y="300" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="104" font-weight="bold" fill="#8a6d1d" letter-spacing="14">CERTIFICATE</text>
+  <text x="1000" y="382" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="36" fill="#a98a2f" letter-spacing="16">OF ACHIEVEMENT</text>
+  <text x="1000" y="560" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-style="italic" font-size="32" fill="#7a6a45">This certificate is proudly presented to</text>
+  <line x1="420" y1="782" x2="1580" y2="782" stroke="#d8c58e" stroke-width="3"/>
+  
+  <line x1="330" y1="1190" x2="800" y2="1190" stroke="#8a7a55" stroke-width="3"/>
+  <text x="565" y="1238" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="26" fill="#8a7a55">Authorized Signature</text>
+  <line x1="1200" y1="1190" x2="1670" y2="1190" stroke="#8a7a55" stroke-width="3"/>
+  <text x="1435" y="1238" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="26" fill="#8a7a55">Director</text>
+</svg>

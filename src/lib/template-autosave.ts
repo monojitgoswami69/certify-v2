@@ -1,4 +1,4 @@
-import type { TextBox, QrZone } from '../types';
+import type { TextBox, QrZone, ImageElement } from '../types';
 import { getAuthToken } from './api-client';
 
 export interface AutoSaveTemplateParams {
@@ -7,6 +7,7 @@ export interface AutoSaveTemplateParams {
   eventName?: string;
   boxes: TextBox[];
   qrZones: QrZone[];
+  images: ImageElement[];
   defaultFont?: string;
   defaultFontSize?: number;
   defaultFontColor?: string;
@@ -97,6 +98,7 @@ export async function autoSaveCurrentTemplate(
     eventName,
     boxes,
     qrZones,
+    images,
     defaultFont,
     defaultFontSize,
     defaultFontColor,
@@ -121,6 +123,7 @@ export async function autoSaveCurrentTemplate(
       layoutConfig: {
         boxes,
         qrZones,
+        images,
         defaultFont: defaultFont || 'Inter',
         defaultFontSize: defaultFontSize || 28,
         defaultFontColor: defaultFontColor || '#000000',

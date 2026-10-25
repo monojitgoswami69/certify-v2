@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="1414" viewBox="0 0 2000 1414">
+    <rect width="2000" height="1414" fill="#f7fdf9"/>
+  <rect x="58" y="58" width="1884" height="1298" fill="none" stroke="#047857" stroke-width="7"/>
+  <rect x="80" y="80" width="1840" height="1254" fill="none" stroke="#10b981" stroke-width="2"/>
+  <g fill="none" stroke="#047857" stroke-width="5" stroke-linecap="round">
+    <path d="M 150 200 C 110 260 120 330 170 380" />
+    <path d="M 132 220 C 150 250 152 290 140 320" />
+    <path d="M 1850 200 C 1890 260 1880 330 1830 380" />
+    <path d="M 1868 220 C 1850 250 1848 290 1860 320" />
+  </g>
+  
+  <text x="1000" y="300" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="104" font-weight="bold" fill="#065f46" letter-spacing="14">CERTIFICATE</text>
+  <text x="1000" y="382" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="36" fill="#059669" letter-spacing="16">OF ACHIEVEMENT</text>
+  <text x="1000" y="560" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-style="italic" font-size="32" fill="#4b7c6b">This certificate is proudly presented to</text>
+  <line x1="420" y1="782" x2="1580" y2="782" stroke="#a7d7bf" stroke-width="3"/>
+  
+  <line x1="330" y1="1190" x2="800" y2="1190" stroke="#4b7c6b" stroke-width="3"/>
+  <text x="565" y="1238" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="26" fill="#4b7c6b">Authorized Signature</text>
+  <line x1="1200" y1="1190" x2="1670" y2="1190" stroke="#4b7c6b" stroke-width="3"/>
+  <text x="1435" y="1238" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="26" fill="#4b7c6b">Director</text>
+</svg>

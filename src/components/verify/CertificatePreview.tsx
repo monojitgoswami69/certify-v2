@@ -5,7 +5,7 @@ import { ChevronDown, Download, FileText, Image as ImageIcon, Loader2, X } from 
 import { buildVerifyUrlFor } from '@/lib/cert-registration';
 import { ensureFontsLoaded } from '@/lib/font-loader';
 import { downloadBlob, sanitizeFilename } from '@/lib/utils';
-import type { QrZone, TextBox } from '@/types';
+import type { ImageElement, QrZone, TextBox } from '@/types';
 
 interface AssetResponse {
   status: 'ok';
@@ -15,6 +15,7 @@ interface AssetResponse {
   layoutConfig: {
     boxes?: TextBox[];
     qrZones?: QrZone[];
+    images?: ImageElement[];
     defaultFont?: string;
     defaultFontSize?: number;
     defaultFontColor?: string;
@@ -120,6 +121,7 @@ export function CertificatePreview({
           qrZones: asset.layoutConfig.qrZones?.length
             ? asset.layoutConfig.qrZones
             : undefined,
+          images: asset.layoutConfig.images,
           verificationUrl: buildVerifyUrlFor(certificateId),
         });
         if (cancelled || !rendered.pngBlob) throw new Error('preview render failed');
@@ -209,6 +211,7 @@ export function CertificatePreview({
           includeJpg: format === 'jpg',
           includePdf: format === 'pdf',
           qrZones: layout.qrZones?.length ? layout.qrZones : undefined,
+          images: layout.images,
           verificationUrl: buildVerifyUrlFor(certificateId),
         });
         const blob =

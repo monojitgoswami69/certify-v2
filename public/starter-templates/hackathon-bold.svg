@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="1414" viewBox="0 0 2000 1414">
+    <rect width="2000" height="1414" fill="#0b1220"/>
+  <rect x="60" y="60" width="1880" height="1294" fill="none" stroke="#1f2937" stroke-width="8" rx="10"/>
+  <line x1="144" y1="120" x2="132" y2="152" stroke="#10b981" stroke-width="2" opacity="0.5"/>
+  <line x1="1856" y1="120" x2="1868" y2="152" stroke="#10b981" stroke-width="2" opacity="0.5"/>
+  <line x1="168" y1="120" x2="156" y2="152" stroke="#10b981" stroke-width="2" opacity="0.5"/>
+  <line x1="1832" y1="120" x2="1844" y2="152" stroke="#10b981" stroke-width="2" opacity="0.5"/>
+  <line x1="192" y1="120" x2="180" y2="152" stroke="#10b981" stroke-width="2" opacity="0.5"/>
+  <line x1="1808" y1="120" x2="1820" y2="152" stroke="#10b981" stroke-width="2" opacity="0.5"/>
+  <line x1="216" y1="120" x2="204" y2="152" stroke="#10b981" stroke-width="2" opacity="0.5"/>
+  <line x1="1784" y1="120" x2="1796" y2="152" stroke="#10b981" stroke-width="2" opacity="0.5"/>
+  <line x1="240" y1="120" x2="228" y2="152" stroke="#10b981" stroke-width="2" opacity="0.5"/>
+  <line x1="1760" y1="120" x2="1772" y2="152" stroke="#10b981" stroke-width="2" opacity="0.5"/>
+  <text x="1000" y="296" text-anchor="middle" font-family="'Helvetica Neue', Arial, sans-serif" font-size="96" font-weight="800" fill="#10b981" letter-spacing="16">CERTIFICATE</text>
+  <text x="1000" y="374" text-anchor="middle" font-family="Menlo, Consolas, monospace" font-size="30" fill="#34d399" letter-spacing="10">&lt; OF ACHIEVEMENT /&gt;</text>
+  <text x="1000" y="560" text-anchor="middle" font-family="Menlo, Consolas, monospace" font-size="28" fill="#6b7280">awarded_to :=</text>
+  <line x1="640" y1="782" x2="1360" y2="782" stroke="#10b981" stroke-width="3"/>
+  <line x1="820" y1="1190" x2="1180" y2="1190" stroke="#374151" stroke-width="3"/>
+  <text x="1000" y="1238" text-anchor="middle" font-family="Menlo, Consolas, monospace" font-size="24" fill="#9ca3af" letter-spacing="4">// EVENT ORGANIZERS</text>
+</svg>

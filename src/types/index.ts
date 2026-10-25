@@ -11,12 +11,33 @@ export interface TextBox {
   y: number;
   w: number;
   h: number;
+  /** CSV column this box prints. Empty for static boxes. */
   field: string;
   fontSize: number;
   fontColor: string;
   fontFamily: string;
   hAlign: HorizontalAlign;
   vAlign: VerticalAlign;
+  /** 'field' (default) prints the CSV column; 'static' prints fixed text. */
+  kind?: 'field' | 'static';
+  /** Fixed text when kind === 'static'. */
+  staticText?: string;
+}
+
+/**
+ * Decorative bitmap element placed on the template (logo, signature, seal).
+ * Serialized into layoutConfig.images as a self-contained data URL.
+ */
+export interface ImageElement {
+  id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** Self-contained data URL (png/jpeg/webp). */
+  src: string;
+  /** 0..1, defaults to 1. */
+  opacity?: number;
 }
 
 export type FontCategory = 'serif' | 'sans-serif' | 'display' | 'handwriting' | 'monospace';

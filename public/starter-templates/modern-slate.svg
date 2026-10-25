@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="1414" viewBox="0 0 2000 1414">
+    <rect width="2000" height="1414" fill="#ffffff"/>
+  <rect x="70" y="70" width="1860" height="1274" fill="none" stroke="#e2e8f0" stroke-width="2" rx="18"/>
+  <rect x="82" y="82" width="1836" height="1250" fill="none" stroke="#94a3b8" stroke-width="4" rx="12"/>
+  <rect x="0" y="0" width="2000" height="26" fill="#334155"/>
+  
+  <text x="1000" y="296" text-anchor="middle" font-family="'Helvetica Neue', Arial, sans-serif" font-size="96" font-weight="700" fill="#0f172a" letter-spacing="22">CERTIFICATE</text>
+  <text x="1000" y="376" text-anchor="middle" font-family="'Helvetica Neue', Arial, sans-serif" font-size="30" fill="#64748b" letter-spacing="18">OF ACHIEVEMENT</text>
+  <text x="1000" y="560" text-anchor="middle" font-family="'Helvetica Neue', Arial, sans-serif" font-size="28" fill="#94a3b8" letter-spacing="4">THIS CERTIFICATE IS PROUDLY PRESENTED TO</text>
+  <line x1="700" y1="782" x2="1300" y2="782" stroke="#cbd5e1" stroke-width="3"/>
+  <line x1="820" y1="1190" x2="1180" y2="1190" stroke="#94a3b8" stroke-width="3"/>
+  <text x="1000" y="1238" text-anchor="middle" font-family="'Helvetica Neue', Arial, sans-serif" font-size="24" fill="#64748b" letter-spacing="6">PROGRAM DIRECTOR</text>
+</svg>

@@ -21,6 +21,8 @@ export function BoxCustomizer() {
     csvData,
     qrZones,
     updateBox,
+    addStaticTextBox,
+    templateImage,
     deleteBox,
     setFontPreview,
     setActiveBox,
@@ -113,7 +115,9 @@ export function BoxCustomizer() {
               className="w-full flex items-center justify-between py-2 px-3 rounded-lg border border-stone-200/80 hover:border-stone-400 hover:bg-stone-50 text-left transition-colors"
             >
               <span className="text-xs font-medium text-stone-800">
-                {box.field || `Text Box ${index + 1}`}
+                {box.kind === 'static'
+                  ? `\u201C${(box.staticText || 'Static text').slice(0, 18)}\u201D`
+                  : box.field || `Text Box ${index + 1}`}
               </span>
               <span className="text-[10px] font-mono text-stone-400">
                 {Math.round(box.w)} × {Math.round(box.h)} px
@@ -136,12 +140,34 @@ export function BoxCustomizer() {
             </button>
           ))}
         </div>
+        <button
+          type="button"
+          onClick={() => {
+            pushState(boxes, qrZones);
+            addStaticTextBox({
+              x: Math.round((templateImage?.naturalWidth || 1000) * 0.3),
+              y: Math.round((templateImage?.naturalHeight || 700) * 0.45),
+              w: Math.round((templateImage?.naturalWidth || 1000) * 0.4),
+              h: Math.max(40, Math.round((templateImage?.naturalHeight || 700) * 0.06)),
+            });
+          }}
+          className="w-full py-2 px-3 text-xs font-semibold text-stone-700 border border-dashed border-stone-300 rounded-lg hover:border-stone-500 hover:bg-stone-50 transition-colors cursor-pointer"
+        >
+          + Add Static Text
+        </button>
+        <p className="text-[11px] text-stone-400">
+          Static text is fixed on every certificate — titles, taglines, instructions. Logos and
+          signatures live in the Logos &amp; Signatures card below.
+        </p>
       </div>
     );
   }
 
   const previewValue =
-    csvData.length > 0 && activeBox.field ? resolveFieldValue(activeBox.field, csvData[0]) || '(empty)' : '';
+    activeBox.kind !== 'static' && csvData.length > 0 && activeBox.field
+      ? resolveFieldValue(activeBox.field, csvData[0]) || '(empty)'
+      : '';
+  const isStaticBox = activeBox.kind === 'static';
 
   const handleUpdate = (updates: Partial<typeof activeBox>) => {
     pushState(boxes, qrZones);
@@ -275,7 +301,7 @@ export function BoxCustomizer() {
         <div>
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Selected Box</p>
           <p className="font-semibold text-slate-800 mt-0.5">
-            {activeBox.field || 'No field selected'}
+            {isStaticBox ? 'Static Text' : activeBox.field || 'No field selected'}
           </p>
         </div>
         <button
@@ -297,21 +323,35 @@ export function BoxCustomizer() {
         </div>
       )}
 
-      <div>
-        <label className="block text-xs font-semibold text-slate-600 mb-1.5">CSV Field</label>
-        <CustomSelect
-          value={activeBox.field}
-          onChange={(val) => handleUpdate({ field: val })}
-          options={[
-            { value: '', label: 'Select a field...' },
-            ...Array.from(
-              new Set([...csvHeaders, ...(activeBox.field ? [activeBox.field] : [])])
-            ).map((h) => ({ value: h, label: h })),
-          ]}
-          placeholder="Select a field..."
-          searchable
-        />
-      </div>
+      {isStaticBox ? (
+        <div>
+          <label className="block text-xs font-semibold text-slate-600 mb-1.5">Static Text</label>
+          <textarea
+            value={activeBox.staticText ?? ''}
+            onChange={(e) => handleUpdate({ staticText: e.target.value })}
+            rows={2}
+            className="w-full px-3 py-2 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-0 focus:border-slate-400 resize-y"
+            placeholder="Certificate of Excellence"
+          />
+          <p className="text-[11px] text-stone-400 mt-1">Same text on every certificate.</p>
+        </div>
+      ) : (
+        <div>
+          <label className="block text-xs font-semibold text-slate-600 mb-1.5">CSV Field</label>
+          <CustomSelect
+            value={activeBox.field}
+            onChange={(val) => handleUpdate({ field: val })}
+            options={[
+              { value: '', label: 'Select a field...' },
+              ...Array.from(
+                new Set([...csvHeaders, ...(activeBox.field ? [activeBox.field] : [])])
+              ).map((h) => ({ value: h, label: h })),
+            ]}
+            placeholder="Select a field..."
+            searchable
+          />
+        </div>
+      )}
 
       <div>
         <FontSelector

@@ -111,6 +111,14 @@ export async function POST(request: Request) {
         Array.isArray(layoutConfig) ||
         (layoutConfig.boxes !== undefined && !Array.isArray(layoutConfig.boxes)) ||
         (layoutConfig.qrZones !== undefined && !Array.isArray(layoutConfig.qrZones)) ||
+        (layoutConfig.images !== undefined &&
+          (!Array.isArray(layoutConfig.images) || layoutConfig.images.length > 30 ||
+            layoutConfig.images.some(
+              (im: unknown) =>
+                !im || typeof im !== 'object' ||
+                typeof (im as { src?: unknown }).src !== 'string' ||
+                String((im as { src?: unknown }).src).length > 3 * 1024 * 1024
+            ))) ||
         JSON.stringify(layoutConfig).length > MAX_LAYOUT_LENGTH)
     ) {
       return NextResponse.json({ detail: 'Invalid layout configuration' }, { status: 400 });

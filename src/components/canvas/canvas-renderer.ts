@@ -1,4 +1,4 @@
-import type { TextBox } from '../../types';
+import type { TextBox, ImageElement } from '../../types';
 import type { QrZone } from '../../store/useAppStore';
 import { isFontLoaded, loadGoogleFont, getFontFamilyCSS } from '../../lib/font-loader';
 import type { HandleKey } from '../../lib/canvas-snapping';
@@ -333,6 +333,68 @@ export function getHandleAtPoint(
   for (const [key, pos] of Object.entries(handles)) {
     if (Math.abs(imgX - pos.x) < threshold && Math.abs(imgY - pos.y) < threshold) {
       return key as HandleKey;
+    }
+  }
+  return null;
+}
+
+/**
+ * Draws a decorative image element (logo/signature/seal). Selection chrome
+ * matches the text-box language (indigo outline + handles).
+ */
+export function drawImageElementOnCanvas(
+  ctx: CanvasRenderingContext2D,
+  el: ImageElement,
+  decoded: HTMLImageElement | null,
+  isActive: boolean,
+  effectiveScale: number
+): void {
+  const display = {
+    x: el.x * effectiveScale,
+    y: el.y * effectiveScale,
+    w: el.w * effectiveScale,
+    h: el.h * effectiveScale,
+  };
+
+  if (decoded) {
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, el.opacity ?? 1));
+    ctx.drawImage(decoded, display.x, display.y, display.w, display.h);
+    ctx.restore();
+  } else {
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.25)';
+    ctx.fillRect(display.x, display.y, display.w, display.h);
+  }
+
+  ctx.strokeStyle = isActive ? '#4f46e5' : 'rgba(100, 116, 139, 0.7)';
+  ctx.lineWidth = isActive ? 2 : 1.5;
+  ctx.setLineDash(isActive ? [] : [4, 2]);
+  ctx.strokeRect(display.x, display.y, display.w, display.h);
+  ctx.setLineDash([]);
+
+  if (isActive) {
+    const handles = getHandlePositions(display);
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = '#4f46e5';
+    ctx.lineWidth = 2;
+    Object.values(handles).forEach((h) => {
+      ctx.beginPath();
+      ctx.rect(h.x - HANDLE_SIZE / 2, h.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
+      ctx.fill();
+      ctx.stroke();
+    });
+  }
+}
+
+export function getImageElementAtPoint(
+  imgX: number,
+  imgY: number,
+  images: ImageElement[]
+): ImageElement | null {
+  for (let i = images.length - 1; i >= 0; i--) {
+    const el = images[i];
+    if (imgX >= el.x && imgX <= el.x + el.w && imgY >= el.y && imgY <= el.y + el.h) {
+      return el;
     }
   }
   return null;

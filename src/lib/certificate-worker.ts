@@ -11,7 +11,7 @@
 
 import { jsPDF } from 'jspdf';
 import QRCode from 'qrcode';
-import type { QrStyleConfig } from '../types';
+import type { QrStyleConfig, ImageElement } from '../types';
 import { resolveFieldValue } from './utils';
 import { drawStyledQr } from './qr-renderer';
 
@@ -29,6 +29,8 @@ export interface TextBox {
   fontFamily: string;
   hAlign: 'left' | 'center' | 'right';
   vAlign: 'top' | 'middle' | 'bottom';
+  kind?: 'field' | 'static';
+  staticText?: string;
 }
 
 export interface QrPlacement {
@@ -64,6 +66,7 @@ export interface InitMessage {
   templateHeight: number;
   boxes: TextBox[];
   qrZones?: QrPlacement[];
+  images?: ImageElement[];
   formats: OutputFormat[];
   jpegQuality?: number;
   fonts?: WorkerFontData[];
@@ -104,6 +107,7 @@ let cachedTemplateWidth = 0;
 let cachedTemplateHeight = 0;
 let cachedBoxRenderInfo: BoxRenderInfo[] = [];
 let cachedQrZones: QrPlacement[] = [];
+let cachedImageElements: Array<{ el: ImageElement; bitmap: ImageBitmap | null }> = [];
 let cachedLogoBitmaps = new Map<string, ImageBitmap>();
 let cachedFormats: OutputFormat[] = [];
 let cachedJpegQuality = 0.92;
@@ -328,6 +332,15 @@ async function generateBatch(items: BatchItem[]): Promise<void> {
       // 1. DRAW: Background Template
       ctx.drawImage(cachedTemplateBitmap, 0, 0);
 
+      // 1b. DRAW: Decorative image elements (logos, signatures)
+      for (const { el, bitmap } of cachedImageElements) {
+        if (!bitmap) continue;
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, Math.min(1, el.opacity ?? 1));
+        ctx.drawImage(bitmap, el.x, el.y, el.w, el.h);
+        ctx.restore();
+      }
+
       // 2. DRAW: QR Verification Zones
       if (item.verificationUrl && cachedQrZones.length > 0) {
         for (const zone of cachedQrZones) {
@@ -337,7 +350,10 @@ async function generateBatch(items: BatchItem[]): Promise<void> {
 
       // 3. DRAW: Text Boxes
       for (const info of cachedBoxRenderInfo) {
-        const text = resolveFieldValue(info.box.field, item.row);
+        const text =
+          info.box.kind === 'static'
+            ? info.box.staticText ?? ''
+            : resolveFieldValue(info.box.field, item.row);
         drawTextBox(ctx, text, info);
       }
 
@@ -430,6 +446,20 @@ self.onmessage = async (event: MessageEvent<InitMessage | GenerateBatchMessage>)
       cachedJpegQuality = message.jpegQuality ?? 0.92;
       cachedPdfOrientation = message.templateWidth > message.templateHeight ? 'landscape' : 'portrait';
       cachedQrZones = message.qrZones || [];
+
+      // Decode decorative image elements (logos, signatures) once per init.
+      cachedImageElements = [];
+      for (const el of message.images ?? []) {
+        try {
+          const res = await fetch(el.src);
+          const blob = await res.blob();
+          const bitmap = await createImageBitmap(blob);
+          cachedImageElements.push({ el, bitmap });
+        } catch {
+          cachedImageElements.push({ el, bitmap: null });
+        }
+      }
+
       cachedLogoBitmaps.clear();
       for (const zone of cachedQrZones) {
         if (zone.style?.logo && !cachedLogoBitmaps.has(zone.style.logo)) {
@@ -445,7 +475,7 @@ self.onmessage = async (event: MessageEvent<InitMessage | GenerateBatchMessage>)
       }
 
       cachedBoxRenderInfo = message.boxes
-        .filter((box) => box.field)
+        .filter((box) => box.field || box.kind === 'static')
         .map((box) => {
           const hAlign = box.hAlign || 'center';
           let textX: number;

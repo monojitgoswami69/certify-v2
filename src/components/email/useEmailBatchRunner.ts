@@ -44,6 +44,7 @@ export function useEmailBatchRunner() {
     templateFile,
     csvData,
     boxes,
+    images,
     emailColumn,
     emailSettings,
     emailProgress,
@@ -212,6 +213,7 @@ export function useEmailBatchRunner() {
               templateHeight: templateImage.naturalHeight || templateImage.height,
               boxes: validBoxes,
               qrZones: useQr ? qrZones : [],
+              images,
               formats: [
                 ...(emailSettings.attachJpg ? ['jpg'] : []),
                 ...(emailSettings.attachPng ? ['png'] : []),
@@ -377,6 +379,7 @@ export function useEmailBatchRunner() {
                 includePdf: Boolean(emailSettings.attachPdf),
                 canvas: workerCanvas,
                 qrZones: useQr ? qrZones : undefined,
+                images,
                 verificationUrl: useQr && certId ? buildVerifyUrlFor(certId) : undefined,
               });
             }
@@ -519,6 +522,7 @@ export function useEmailBatchRunner() {
           eventName,
           boxes,
           qrZones,
+          images,
           defaultFont,
           defaultFontSize,
           defaultFontColor,

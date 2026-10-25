@@ -93,6 +93,7 @@ export async function loadWorkspace({ eventName, templateId, token, shouldApply 
       store.setBoxes(normalizedBoxes);
     }
     if (Array.isArray(layout?.qrZones)) store.setQrZones(layout.qrZones);
+    if (Array.isArray(layout?.images)) store.setImages(layout.images);
     if (layout?.defaultFont) store.setDefaultFont(layout.defaultFont);
     if (layout?.defaultFontSize) store.setDefaultFontSize(layout.defaultFontSize);
     if (layout?.defaultFontColor) store.setDefaultFontColor(layout.defaultFontColor);

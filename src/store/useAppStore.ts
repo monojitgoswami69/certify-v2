@@ -11,6 +11,7 @@ import type {
   EmailProgress,
   TextBox,
   QrZone,
+  ImageElement,
   ExportFormats,
 } from '../types';
 
@@ -45,6 +46,10 @@ function generateBoxId(): string {
   return `box_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 }
 
+function generateImageId(): string {
+  return `img_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+}
+
 function generateQrId(): string {
   return `qr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 }
@@ -65,6 +70,18 @@ interface AppStore {
   deleteBox: (id: string) => void;
   setActiveBox: (id: string | null) => void;
   setBoxes: (boxes: TextBox[]) => void;
+
+  // Static text boxes reuse the TextBox shape with kind='static'
+  addStaticTextBox: (box: Omit<TextBox, 'id' | 'field' | 'fontSize' | 'fontColor' | 'fontFamily' | 'hAlign' | 'vAlign' | 'kind' | 'staticText'>) => void;
+
+  // Decorative image elements (logos, signatures, seals)
+  images: ImageElement[];
+  activeImageId: string | null;
+  addImage: (image: Omit<ImageElement, 'id'>) => void;
+  updateImage: (id: string, updates: Partial<ImageElement>) => void;
+  deleteImage: (id: string) => void;
+  setActiveImage: (id: string | null) => void;
+  setImages: (images: ImageElement[]) => void;
 
   // QR Verification Zones (supports multiple QR codes)
   qrZones: QrZone[];
@@ -156,6 +173,8 @@ const initialState = {
   templateInfo: '',
   boxes: [] as TextBox[],
   activeBoxId: null as string | null,
+  images: [] as ImageElement[],
+  activeImageId: null as string | null,
   qrZones: [] as QrZone[],
   activeQrId: null as string | null,
   isPlacingQr: false,
@@ -203,6 +222,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       templateInfo: info,
       boxes: [],
       activeBoxId: null,
+      images: [],
+      activeImageId: null,
       qrZones: [],
       activeQrId: null,
       isPlacingQr: false,
@@ -221,6 +242,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       templateInfo: '',
       boxes: [],
       activeBoxId: null,
+      images: [],
+      activeImageId: null,
       qrZones: [],
       activeQrId: null,
       isPlacingQr: false,
@@ -273,6 +296,62 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setBoxes: (boxes) =>
     set((state) => ({
       boxes,
+      registrationDirty: state.isBatchRegistered ? true : state.registrationDirty,
+    })),
+
+  addStaticTextBox: (boxData) => {
+    const { defaultFont, defaultFontSize, defaultFontColor } = get();
+    const newBox: TextBox = {
+      id: generateBoxId(),
+      ...boxData,
+      field: '',
+      kind: 'static',
+      staticText: 'Text',
+      fontSize: defaultFontSize,
+      fontColor: defaultFontColor,
+      fontFamily: defaultFont || 'Inter',
+      hAlign: 'center',
+      vAlign: 'bottom',
+    };
+    set((state) => ({
+      boxes: [...state.boxes, newBox],
+      activeBoxId: newBox.id,
+      registrationDirty: state.isBatchRegistered ? true : state.registrationDirty,
+    }));
+  },
+
+  addImage: (imageData) => {
+    const newImage: ImageElement = { id: generateImageId(), ...imageData };
+    set((state) => ({
+      images: [...state.images, newImage],
+      activeImageId: newImage.id,
+      registrationDirty: state.isBatchRegistered ? true : state.registrationDirty,
+    }));
+  },
+
+  updateImage: (id, updates) =>
+    set((state) => ({
+      images: state.images.map((img) => (img.id === id ? { ...img, ...updates } : img)),
+      registrationDirty: state.isBatchRegistered ? true : state.registrationDirty,
+    })),
+
+  deleteImage: (id) =>
+    set((state) => ({
+      images: state.images.filter((img) => img.id !== id),
+      activeImageId: state.activeImageId === id ? null : state.activeImageId,
+      registrationDirty: state.isBatchRegistered ? true : state.registrationDirty,
+    })),
+
+  setActiveImage: (activeImageId) =>
+    set((state) => ({
+      activeImageId,
+      activeBoxId: activeImageId ? null : state.activeBoxId,
+      activeQrId: activeImageId ? null : state.activeQrId,
+    })),
+
+  setImages: (images) =>
+    set((state) => ({
+      images,
       registrationDirty: state.isBatchRegistered ? true : state.registrationDirty,
     })),
 

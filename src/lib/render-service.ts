@@ -8,7 +8,7 @@
  * jsPDF/canvas work. Rendering overlaps with network-bound sending.
  */
 import { CertificateWorkerPool, type WorkerTask, type BatchResultItem } from './worker-pool';
-import type { TextBox, CsvRow } from '../types';
+import type { TextBox, CsvRow, ImageElement } from '../types';
 import type { QrPlacement, OutputFormat } from './certificate-worker';
 import type { WorkerFontData } from './font-loader';
 
@@ -69,6 +69,7 @@ export interface PooledRendererParams {
   templateHeight: number;
   boxes: TextBox[];
   qrZones: QrPlacement[];
+  images?: ImageElement[];
   formats: OutputFormat[];
   fonts?: WorkerFontData[];
   tasks: WorkerTask[];
