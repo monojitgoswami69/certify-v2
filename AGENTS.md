@@ -8,6 +8,15 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 <!-- END:nextjs-agent-rules -->
 
+# Git & Deployment Workflow (Strict Rule)
+
+## 1. Pushes Require Explicit Approval
+- **NEVER run `git push` without the user's explicit approval in the current conversation.** `main` is the release branch — a push can reach production, and new feature work may break it.
+- Local commits are allowed (and encouraged) with clear conventional messages (`fix:`, `feat(scope):`, `refactor:`) so the tree stays reviewable; the **push** is the gated action.
+- The push remote is `personal` (there is no `origin`): `git push personal main`.
+- Before proposing a push, run the verification gauntlet and report results: `npm run lint`, `npm test`, `npm run build`, and `node scripts/e2e-smoke.mjs <port>` against a locally booted production server when the change touches APIs or the database.
+- If the user asks to "commit and push" explicitly, that counts as approval for that change only — it does not carry over to future work.
+
 # UI Design & Layout Rules
 
 ## 1. Avoid Carded Container Mess & Redundant Pills (Strict Rule)
