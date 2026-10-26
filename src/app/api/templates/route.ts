@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
 import { mutationAllowed, forbiddenCsrfResponse } from '../../../lib/server-auth';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { createHash } from 'crypto';
 import { db } from '../../../lib/db';
-import { templates } from '../../../db/schema';
+import { templates, templateVersions } from '../../../db/schema';
 import { unauthorizedResponse } from '../../../lib/server-auth';
 import { getAuthenticatedUser } from '../../../lib/accounts';
 import { env } from '../../../lib/env';
@@ -185,6 +185,26 @@ export async function POST(request: Request) {
         template: current ?? null,
         detail: 'A newer version of this template was saved elsewhere; kept the newest copy.',
       });
+    }
+
+    // Snapshot the saved layout (last 10 kept) for rollback in the library.
+    try {
+      await db.insert(templateVersions).values({
+        templateId: savedTemplate.id,
+        layoutConfig: savedTemplate.layoutConfig,
+        imageHash: savedTemplate.imageHash ?? null,
+      });
+      const old = await db
+        .select({ id: templateVersions.id })
+        .from(templateVersions)
+        .where(eq(templateVersions.templateId, savedTemplate.id))
+        .orderBy(desc(templateVersions.createdAt))
+        .offset(10);
+      if (old.length > 0) {
+        await db.delete(templateVersions).where(inArray(templateVersions.id, old.map((o) => o.id)));
+      }
+    } catch (verErr) {
+      console.warn('[Templates] version snapshot failed:', verErr);
     }
 
     return NextResponse.json({

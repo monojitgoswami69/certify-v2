@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, Suspense } from 'react';
+import { useEffect, useState, useRef, useCallback, Suspense } from 'react';
 import { FileSpreadsheet, X, Image as ImageIcon, CalendarDays, Monitor, Sparkles, Table2 } from 'lucide-react';
 import { ErrorBoundary } from '../../components/ui/ErrorBoundary';
 import { SidebarHeader } from '../../components/sidebar/SidebarHeader';
@@ -24,7 +24,14 @@ import { useAppStore } from '../../store/useAppStore';
 import { useHistoryStore } from '../../store/useHistoryStore';
 import { useAuthStore } from '../../store/useAuthStore';
 import { loadWorkspace, isWorkspaceLoadedFor } from '../../lib/workspace-loader';
+import {
+  fetchWorkspaceDraft,
+  saveWorkspaceDraft,
+  deleteWorkspaceDraft,
+  type DraftState,
+} from '../../lib/draft-autosave';
 import { getAuthToken } from '../../lib/api-client';
+import { imageSourceToBlob } from '../../lib/utils';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 function WorkspaceContent() {
@@ -37,6 +44,9 @@ function WorkspaceContent() {
     csvFile,
     eventName,
     setEventName,
+    setCsvData,
+    setBoxes,
+    setTemplate,
     viewMode,
     error,
     previewEnabled,
@@ -44,6 +54,18 @@ function WorkspaceContent() {
     setPreviewEnabled,
     clearTemplate,
     clearCsvData,
+    images,
+    emailSettings,
+    defaultFont,
+    defaultFontSize,
+    defaultFontColor,
+    csvHeaders,
+    setEmailSettings,
+    setDefaultFont,
+    setDefaultFontSize,
+    setDefaultFontColor,
+    setQrZones,
+    setImages,
   } = useAppStore();
 
   const { isAuthenticated, isLoading, initialize, token } = useAuthStore();
@@ -76,6 +98,151 @@ function WorkspaceContent() {
       router.push('/login');
     }
   }, [isLoading, isAuthenticated, router]);
+
+  // -----------------------------------------------------------------
+  // Draft workspaces: debounced server autosave + one-click recovery, so a
+  // closed tab loses nothing. Skipped while hydrating from a URL (event /
+  // templateId) or while the canvas is empty-and-clean.
+  // -----------------------------------------------------------------
+  const [draftRecovery, setDraftRecovery] = useState<DraftState | null>(null);
+  const draftCheckedRef = useRef(false);
+  const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hydratedFromEvent = Boolean(eventParam || templateIdParam);
+
+  useEffect(() => {
+    if (!isAuthenticated || isLoading || hydratedFromEvent || draftCheckedRef.current) return;
+    draftCheckedRef.current = true;
+    const state = useAppStore.getState();
+    const clean =
+      !state.templateImage && state.csvData.length === 0 && state.boxes.length === 0 && !state.eventName;
+    if (!clean) return;
+    void fetchWorkspaceDraft().then((draft) => {
+      if (draft && (draft.templateRef || draft.csvRows.length > 0 || draft.boxes.length > 0 || draft.eventName)) {
+        setDraftRecovery(draft);
+      }
+    });
+  }, [isAuthenticated, isLoading, hydratedFromEvent]);
+
+  useEffect(() => {
+    if (!isAuthenticated || isLoading || hydratedFromEvent || !templateImage) return;
+    if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
+    draftSaveTimerRef.current = setTimeout(() => {
+      void saveWorkspaceDraft({
+        eventName,
+        csvHeaders,
+        csvRows: csvData.slice(0, 2000),
+        csvFileName: csvFile?.name ?? null,
+        boxes,
+        qrZones,
+        images,
+        emailSettings,
+        defaultFont: defaultFont ?? undefined,
+        defaultFontSize: defaultFontSize ?? undefined,
+        defaultFontColor: defaultFontColor ?? undefined,
+        templateRef: templateFile
+          ? { fileName: templateFile.name, width: templateImage.naturalWidth, height: templateImage.naturalHeight }
+          : null,
+      });
+    }, 2500);
+    return () => {
+      if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
+    };
+  }, [
+    isAuthenticated,
+    isLoading,
+    hydratedFromEvent,
+    eventName,
+    csvData,
+    csvHeaders,
+    csvFile,
+    boxes,
+    qrZones,
+    images,
+    emailSettings,
+    defaultFont,
+    defaultFontSize,
+    defaultFontColor,
+    templateImage,
+    templateFile,
+  ]);
+
+  const recoverDraft = useCallback(async () => {
+    const draft = draftRecovery;
+    if (!draft) return;
+    setDraftRecovery(null);
+    try {
+      setEventName(draft.eventName || '');
+      if (draft.csvRows.length > 0 && draft.csvHeaders.length > 0) {
+        const esc = (v: string) => `"${String(v).replace(/"/g, '""')}"`;
+        const csvContent = [
+          draft.csvHeaders.map(esc).join(','),
+          ...draft.csvRows.map((r) => draft.csvHeaders.map((h) => esc(r[h] ?? '')).join(',')),
+        ].join('\n');
+        const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+        const file = new File([blob], draft.csvFileName || 'recovered-roster.csv', { type: 'text/csv' });
+        setCsvData(file, draft.csvHeaders, draft.csvRows);
+      }
+      setBoxes(draft.boxes || []);
+      setQrZones(draft.qrZones || []);
+      setImages(draft.images || []);
+      if (draft.emailSettings) setEmailSettings(draft.emailSettings);
+      if (draft.defaultFont) setDefaultFont(draft.defaultFont);
+      if (draft.defaultFontSize) setDefaultFontSize(draft.defaultFontSize);
+      if (draft.defaultFontColor) setDefaultFontColor(draft.defaultFontColor);
+
+      // Best-effort template restore: match a saved template by the original file name.
+      if (draft.templateRef) {
+        const base = draft.templateRef.fileName.replace(/\.[^/.]+$/, '').trim().toLowerCase();
+        const tokenNow = token || getAuthToken();
+        const res = await fetch('/api/templates', {
+          credentials: 'same-origin',
+          headers: tokenNow ? { Authorization: `Bearer ${tokenNow}` } : {},
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const match = (data.templates ?? []).find(
+            (t: { name: string }) => t.name.trim().toLowerCase() === base
+          );
+          if (match) {
+            const full = await fetch(`/api/templates/${match.id}`, {
+              credentials: 'same-origin',
+              headers: tokenNow ? { Authorization: `Bearer ${tokenNow}` } : {},
+            });
+            if (full.ok) {
+              const { template } = await full.json();
+              if (template?.imageData) {
+                const blob = await imageSourceToBlob(template.imageData);
+                const file = new File([blob], template.name + '.png', { type: blob.type || 'image/png' });
+                const img = document.createElement('img');
+                await new Promise<void>((resolve, reject) => {
+                  img.onload = () => resolve();
+                  img.onerror = () => reject(new Error('decode failed'));
+                  img.src = template.imageData;
+                });
+                setTemplate(file, img, `${template.name} (recovered)`);
+              }
+            }
+          }
+        }
+      }
+      void deleteWorkspaceDraft();
+    } catch (err) {
+      console.warn('[Draft recovery] failed:', err);
+    }
+  }, [
+    draftRecovery,
+    setEventName,
+    setCsvData,
+    setBoxes,
+    setQrZones,
+    setImages,
+    setEmailSettings,
+    setDefaultFont,
+    setDefaultFontSize,
+    setDefaultFontColor,
+    setTemplate,
+    token,
+  ]);
 
   // Fresh Studio entry: If no event or templateId query param is present, ensure workspace state is clean
   useEffect(() => {
@@ -173,6 +340,36 @@ function WorkspaceContent() {
         {/* Scrollable Steps Content */}
         <div className="flex-1 p-3.5 space-y-3.5 overflow-y-auto">
           {/* Step 1 */}
+          {draftRecovery && (
+            <div className="mb-3 p-3 rounded-xl border border-amber-200 bg-amber-50/80 text-xs font-quicksand">
+              <p className="font-semibold text-amber-800">
+                Recover your previous session?
+              </p>
+              <p className="text-amber-700 mt-0.5">
+                A draft from {new Date(draftRecovery.savedAt).toLocaleString()} was found — layout, roster
+                {draftRecovery.templateRef ? ', and template' : ''} can be restored.
+              </p>
+              <div className="flex gap-2 mt-2">
+                <button
+                  type="button"
+                  onClick={() => void recoverDraft()}
+                  className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-[11px] font-semibold transition-colors cursor-pointer"
+                >
+                  Recover session
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void deleteWorkspaceDraft();
+                    setDraftRecovery(null);
+                  }}
+                  className="px-3 py-1.5 text-stone-600 border border-stone-200 rounded-lg text-[11px] font-semibold hover:bg-stone-50 transition-colors cursor-pointer"
+                >
+                  Discard
+                </button>
+              </div>
+            </div>
+          )}
           <StepCard number={1} title="Upload Template" status={step1Status}>
             {templateImage ? (
               <div className="flex items-center justify-between px-3.5 py-2.5 bg-white border border-slate-200 shadow-xs rounded-xl">

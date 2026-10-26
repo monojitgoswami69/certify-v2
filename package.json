@@ -28,7 +28,9 @@
     "generate:benchmark": "node scripts/generate-benchmark-csv.mjs",
     "db:events": "node scripts/db-migrate-sql.mjs drizzle/legacy/0002_events.sql",
     "db:stamp": "node scripts/db-stamp-baseline.mjs",
-    "db:event-features": "node scripts/db-migrate-sql.mjs drizzle/0003_event_features.sql"
+    "db:event-features": "node scripts/db-migrate-sql.mjs drizzle/0003_event_features.sql",
+    "db:template-versions": "node scripts/db-migrate-sql.mjs drizzle/0004_template_versions.sql",
+    "db:drafts-access": "node scripts/db-migrate-sql.mjs drizzle/0005_drafts_and_access.sql"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",

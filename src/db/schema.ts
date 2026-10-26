@@ -145,6 +145,49 @@ export const registrationBatches = pgTable(
 );
 
 /**
+ * Layout snapshots written on every template save (kept to the last 10 per
+ * template) so risky edits can be rolled back.
+ */
+export const templateVersions = pgTable(
+  'template_versions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    templateId: uuid('template_id')
+      .notNull()
+      .references(() => templates.id, { onDelete: 'cascade' }),
+    layoutConfig: jsonb('layout_config').notNull(),
+    imageHash: text('image_hash'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('template_versions_template_idx').on(table.templateId, table.createdAt)]
+);
+
+/**
+ * Per-account autosaved session (CSV roster, layout, email copy) so a closed
+ * tab is recoverable. One row per user.
+ */
+export const workspaceDrafts = pgTable('workspace_drafts', {
+  userId: uuid('user_id')
+    .primaryKey()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  state: jsonb('state').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Sign-in allowlist: only emails added by an admin can access the platform.
+ * Roles: 'user' | 'admin' | 'super_admin' — the ADMIN_EMAIL account
+ * bootstraps as super_admin at sign-in time.
+ */
+export const platformAccess = pgTable('platform_access', {
+  email: text('email').primaryKey(),
+  role: text('role').notNull().default('user'),
+  addedBy: uuid('added_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
  * Gmail OAuth credentials per account. Persisted in Postgres (not memory) so
  * they survive restarts and are shared across instances. The refresh token is
  * long-lived and sensitive; treat the table like a password store.

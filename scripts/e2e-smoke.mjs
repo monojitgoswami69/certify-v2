@@ -249,6 +249,36 @@ try {
   check('scan counting off → no verificationCount field', vOff.verificationCount === undefined,
     `field=${JSON.stringify(vOff.verificationCount)}`);
 
+  // 7e. Admin console: regular users are forbidden; elevated accounts can
+  //     read aggregate analytics and manage the allowlist.
+  const adminForbidden = await fetch(`${BASE}/api/admin/overview`, { headers: auth });
+  check('admin API forbidden for regular user (403)', adminForbidden.status === 403,
+    `status=${adminForbidden.status}`);
+  await sql`INSERT INTO platform_access (email, role) VALUES (${TEST_EMAIL}, 'super_admin')
+            ON CONFLICT (email) DO UPDATE SET role = 'super_admin'`;
+  const adminOk = await fetch(`${BASE}/api/admin/overview`, { headers: auth });
+  const adminData = await adminOk.json().catch(() => ({}));
+  check('admin overview readable after elevation (200)',
+    adminOk.status === 200 && typeof adminData.overview?.accounts === 'number',
+    `status=${adminOk.status} accounts=${adminData.overview?.accounts}`);
+  const grant = await fetch(`${BASE}/api/admin/access`, {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({ email: 'invited-' + Date.now() + '@example.com', role: 'user' }),
+  });
+  const grantData = await grant.json().catch(() => ({}));
+  check('allowlist grant works (200)', grant.status === 200 &&
+    (grantData.access ?? []).some((a) => a.email.startsWith('invited-')),
+    `status=${grant.status}`);
+  const grantedEmail = (grantData.access ?? []).find((a) => a.email.startsWith('invited-'))?.email;
+  const revoke = await fetch(`${BASE}/api/admin/access?email=${encodeURIComponent(grantedEmail)}`, {
+    method: 'DELETE', headers: auth,
+  });
+  check('allowlist revoke works (200)', revoke.status === 200, `status=${revoke.status}`);
+  await sql`DELETE FROM platform_access WHERE email = ${TEST_EMAIL}`;
+  const adminAfterDemote = await fetch(`${BASE}/api/admin/overview`, { headers: auth });
+  check('admin API forbidden again after removal (403)', adminAfterDemote.status === 403,
+    `status=${adminAfterDemote.status}`);
+
   // 8. Logout (via the cookie path) revokes the session server-side and
   //    instructs the browser to drop the cookie.
   const lo = await fetch(`${BASE}/api/auth/logout`, { method: 'POST', headers: cookieAuth });

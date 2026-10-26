@@ -12,6 +12,8 @@ import {
   RefreshCw,
   AlertCircle,
   CheckCircle2,
+  History,
+  Copy,
 } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import { useAuthStore } from '../../store/useAuthStore';
@@ -54,6 +56,10 @@ export function TemplateLibraryModal({ isOpen, onClose, onLoaded }: TemplateLibr
   const [loading, setLoading] = useState(true);
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
+  const [historyFor, setHistoryFor] = useState<string | null>(null);
+  const [versions, setVersions] = useState<Array<{ id: string; createdAt: string; boxCount: number; qrCount: number }> | null>(null);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -151,6 +157,82 @@ export function TemplateLibraryModal({ isOpen, onClose, onLoaded }: TemplateLibr
       setError(err instanceof Error ? err.message : 'Failed to load template');
     } finally {
       setLoadingId(null);
+    }
+  };
+
+  // Duplicate a saved template (full copy incl. the artwork).
+  const handleDuplicateTemplate = async (templateId: string, templateName: string) => {
+    if (!token) return;
+    setDuplicatingId(templateId);
+    setError(null);
+    try {
+      const res = await fetch(`/api/templates/${templateId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error('Failed to load template for copying');
+      const { template } = await res.json();
+      const saveRes = await fetch('/api/templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          name: `${template.name} (copy)`.slice(0, 200),
+          imageData: template.imageData,
+          imageHash: template.imageHash,
+          width: template.width,
+          height: template.height,
+          layoutConfig: template.layoutConfig,
+        }),
+      });
+      if (!saveRes.ok) {
+        const data = await saveRes.json().catch(() => ({}));
+        throw new Error(data.detail || 'Failed to save the copy');
+      }
+      await fetchTemplates();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to duplicate template');
+    } finally {
+      setDuplicatingId(null);
+    }
+  };
+
+  // Version history: list snapshots and restore one.
+  const openHistory = async (templateId: string) => {
+    if (!token) return;
+    setHistoryFor(templateId);
+    setVersions(null);
+    setError(null);
+    try {
+      const res = await fetch(`/api/templates/${templateId}/versions`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error('Failed to load versions');
+      const data = await res.json();
+      setVersions(data.versions || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load versions');
+    }
+  };
+
+  const restoreVersion = async (templateId: string, versionId: string) => {
+    if (!token) return;
+    setRestoringId(versionId);
+    setError(null);
+    try {
+      const res = await fetch(`/api/templates/${templateId}/versions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ versionId }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || 'Failed to restore version');
+      }
+      await fetchTemplates();
+      await openHistory(templateId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to restore version');
+    } finally {
+      setRestoringId(null);
     }
   };
 
@@ -296,6 +378,28 @@ export function TemplateLibraryModal({ isOpen, onClose, onLoaded }: TemplateLibr
 
                   <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
                     <button
+                      onClick={() => void openHistory(t.id)}
+                      disabled={isDeleting || isCurrentLoading}
+                      className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-50 rounded-lg transition-colors cursor-pointer border border-transparent hover:border-slate-200 disabled:opacity-50"
+                      title="Version history"
+                      aria-label="Version history"
+                    >
+                      <History className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => void handleDuplicateTemplate(t.id, t.name)}
+                      disabled={isDeleting || isCurrentLoading || duplicatingId === t.id}
+                      className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-50 rounded-lg transition-colors cursor-pointer border border-transparent hover:border-slate-200 disabled:opacity-50"
+                      title="Duplicate template"
+                      aria-label="Duplicate template"
+                    >
+                      {duplicatingId === t.id ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                    <button
                       onClick={() => handleDeleteTemplate(t.id, t.name)}
                       disabled={isDeleting || isCurrentLoading}
                       className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer border border-transparent hover:border-red-200 disabled:opacity-50"
@@ -317,6 +421,44 @@ export function TemplateLibraryModal({ isOpen, onClose, onLoaded }: TemplateLibr
                       <span>{isCurrentLoading ? 'Loading...' : 'Load Template'}</span>
                     </button>
                   </div>
+
+                  {historyFor === t.id && (
+                    <div className="w-full border-t border-slate-100 pt-2.5 mt-1">
+                      <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+                        Version history (last 10 saves)
+                      </p>
+                      {versions === null ? (
+                        <p className="text-xs text-slate-400 py-1">Loading…</p>
+                      ) : versions.length === 0 ? (
+                        <p className="text-xs text-slate-400 py-1">
+                          No snapshots yet — one is recorded every time this template is saved.
+                        </p>
+                      ) : (
+                        <ul className="divide-y divide-slate-100">
+                          {[...versions].reverse().map((v) => (
+                            <li key={v.id} className="flex items-center justify-between py-1.5 gap-2">
+                              <span className="text-xs text-slate-600 font-quicksand">
+                                {new Date(v.createdAt).toLocaleString([], {
+                                  month: 'short',
+                                  day: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })}
+                                <span className="text-slate-400"> · {v.boxCount} fields · {v.qrCount} QR</span>
+                              </span>
+                              <button
+                                onClick={() => void restoreVersion(t.id, v.id)}
+                                disabled={restoringId !== null}
+                                className="px-2.5 py-1 text-[11px] font-semibold text-slate-700 border border-slate-200 rounded-md hover:bg-slate-50 hover:border-slate-400 transition-colors cursor-pointer disabled:opacity-50"
+                              >
+                                {restoringId === v.id ? 'Restoring…' : 'Restore layout'}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })

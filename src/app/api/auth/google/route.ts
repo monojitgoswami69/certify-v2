@@ -5,6 +5,7 @@ import { createSessionToken, appendSessionCookie } from '../../../../lib/server-
 import { toPublicUser, upsertGoogleUser } from '../../../../lib/accounts';
 import { checkRateLimit, getClientIp } from '../../../../lib/rate-limit';
 import { env, googleClientId } from '../../../../lib/env';
+import { getPlatformRole, ensureSuperAdminRow } from '../../../../lib/platform-access';
 
 const GOOGLE_CLIENT_ID = googleClientId();
 const client = new OAuth2Client(GOOGLE_CLIENT_ID);
@@ -88,6 +89,21 @@ export async function POST(request: Request) {
 
     if (!identity) {
       return NextResponse.json({ detail: 'Invalid Google credential' }, { status: 401 });
+    }
+
+    // Allowlist gate: only admin-added emails can access the platform.
+    const platformRole = await getPlatformRole(identity.email);
+    if (!platformRole) {
+      return NextResponse.json(
+        {
+          detail:
+            'This email has not been granted access yet. Ask your administrator to add it in the Admin console.',
+        },
+        { status: 403 }
+      );
+    }
+    if (platformRole === 'super_admin') {
+      await ensureSuperAdminRow();
     }
 
     const account = await upsertGoogleUser(identity);
