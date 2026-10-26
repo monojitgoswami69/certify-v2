@@ -4,6 +4,9 @@ import { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   RotateCcw,
+  Link2,
+  Check,
+  Clock,
 } from 'lucide-react';
 import { ConfettiCanvas } from '@/components/verify/ConfettiCanvas';
 import { CertificatePreview } from '@/components/verify/CertificatePreview';
@@ -17,6 +20,9 @@ type VerifyResponse =
       eventName?: string | null;
       issuedAt: string;
       issuedBy?: string | null;
+      expiresAt?: string | null;
+      expired?: boolean;
+      verificationCount?: number;
     }
   | {
       status: 'revoked';
@@ -260,6 +266,23 @@ export function VerifyClient({
           <h1 className="text-2xl sm:text-3xl font-jura font-bold text-stone-900 tracking-tight font-[700]">
             Valid Certificate
           </h1>
+          {state.expired && state.expiresAt && (
+            <div
+              className="mt-3 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-amber-300 bg-amber-50"
+              role="status"
+            >
+              <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+              <p className="text-xs sm:text-sm font-quicksand font-semibold text-amber-800 text-left">
+                This credential expired on {formatDate(state.expiresAt)} and is no longer current.
+              </p>
+            </div>
+          )}
+          {typeof state.verificationCount === 'number' && (
+            <p className="mt-2 text-xs font-quicksand font-semibold text-stone-500">
+              Viewed {state.verificationCount.toLocaleString()} time
+              {state.verificationCount === 1 ? '' : 's'}
+            </p>
+          )}
         </div>
 
         {/* ----------------------------------------------------------- */}
@@ -342,6 +365,8 @@ export function VerifyClient({
           </div>
           </div>
         </div>
+
+        <ShareRow eventName={state.eventName ?? ''} issuedBy={state.issuedBy || defaultIssuedBy || ''} />
       </div>
     );
   }
@@ -481,5 +506,87 @@ export function VerifyClient({
         </button>
       </div>
     </div>
+  );
+}
+
+/**
+ * Share actions under the verification record: LinkedIn "Add to profile",
+ * an X post, and copy-link. Recipient sharing is the product's organic
+ * growth loop — every post links back to this verification page.
+ */
+function ShareRow({ eventName, issuedBy }: { eventName: string; issuedBy: string }) {
+  const [copied, setCopied] = useState(false);
+  const pageUrl = typeof window !== 'undefined' ? window.location.href : '';
+  const certName = eventName ? `${eventName} certificate` : 'This verified certificate';
+  const enc = encodeURIComponent;
+
+  const linkedIn = `https://www.linkedin.com/profile/add?startTask=CERTIFICATION&name=${enc(certName)}&organizationName=${enc(issuedBy)}&certUrl=${enc(pageUrl)}`;
+  const tweet = `https://twitter.com/intent/tweet?text=${enc(`I earned ${certName}${issuedBy ? ` from ${issuedBy}` : ''} — verify it here:`)}&url=${enc(pageUrl)}`;
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(pageUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard unavailable (permissions/insecure context) — ignore.
+    }
+  };
+
+  return (
+    <div className="w-full max-w-md mx-auto mt-6 flex items-center justify-center gap-2 flex-wrap animate-fade-in" style={{ animationDelay: '560ms' }}>
+      <a
+        href={linkedIn}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-quicksand font-semibold text-stone-700 bg-white border border-stone-300 rounded-lg hover:border-stone-500 hover:bg-stone-50 transition-colors"
+      >
+        <LinkedInGlyph className="w-3.5 h-3.5 text-[#0a66c2]" />
+        Add to LinkedIn
+      </a>
+      <a
+        href={tweet}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-quicksand font-semibold text-stone-700 bg-white border border-stone-300 rounded-lg hover:border-stone-500 hover:bg-stone-50 transition-colors"
+      >
+        <XGlyph className="w-3 h-3 text-stone-900" />
+        Share on X
+      </a>
+      <button
+        type="button"
+        onClick={() => void copy()}
+        className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-quicksand font-semibold text-stone-700 bg-white border border-stone-300 rounded-lg hover:border-stone-500 hover:bg-stone-50 transition-colors cursor-pointer"
+      >
+        {copied ? (
+          <>
+            <Check className="w-3.5 h-3.5 text-emerald-600" />
+            Copied!
+          </>
+        ) : (
+          <>
+            <Link2 className="w-3.5 h-3.5 text-stone-400" />
+            Copy link
+          </>
+        )}
+      </button>
+    </div>
+  );
+}
+
+
+function LinkedInGlyph({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M20.45 20.45h-3.55v-5.57c0-1.33-.03-3.04-1.85-3.04-1.85 0-2.14 1.45-2.14 2.94v5.67H9.36V9h3.41v1.56h.05c.47-.9 1.63-1.85 3.36-1.85 3.6 0 4.27 2.37 4.27 5.45v6.29zM5.34 7.43a2.06 2.06 0 1 1 0-4.12 2.06 2.06 0 0 1 0 4.12zM7.12 20.45H3.56V9h3.56v11.45z" />
+    </svg>
+  );
+}
+
+function XGlyph({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M18.24 2.25h3.31l-7.23 8.26 8.5 11.24h-6.66l-5.21-6.82-5.97 6.82H1.67l7.73-8.84L1.25 2.25h6.83l4.71 6.23 5.45-6.23zm-1.16 17.52h1.83L7.08 4.13H5.12l11.96 15.64z" />
+    </svg>
   );
 }

@@ -20,6 +20,7 @@ import {
   Trash2,
   ChevronDown,
   ChevronUp,
+  CalendarDays,
 } from 'lucide-react';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useAppStore } from '../../store/useAppStore';
@@ -67,6 +68,44 @@ function DashboardContent() {
 
   // Deleting event state
   const [deletingEventName, setDeletingEventName] = useState<string | null>(null);
+  const [eventSettingsSaving, setEventSettingsSaving] = useState(false);
+  const validThroughDateInput = detailedEventSummary?.validThrough
+    ? detailedEventSummary.validThrough.slice(0, 10)
+    : '';
+
+  const handleUpdateEventSettings = useCallback(async (patch: { trackScans?: boolean; validThrough?: string | null }) => {
+    const eventId = detailedEventSummary?.eventId;
+    if (!eventId || eventSettingsSaving) return;
+    setEventSettingsSaving(true);
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'X-Certify-Request': '1',
+      };
+      const storedToken = useAuthStore.getState().token || getStoredToken();
+      if (storedToken) headers.Authorization = `Bearer ${storedToken}`;
+      const res = await fetch(`/api/events/${eventId}`, {
+        method: 'PATCH',
+        credentials: 'same-origin',
+        headers,
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Failed to update');
+      const data = await res.json();
+      setDetailedEventSummary((prev) =>
+        prev && prev.eventId === data.event.id
+          ? { ...prev, trackScans: data.event.trackScans, validThrough: data.event.validThrough }
+          : prev
+      );
+      setEvents((prev) =>
+        prev.map((e) => (e.eventId === data.event.id ? { ...e, trackScans: data.event.trackScans, validThrough: data.event.validThrough } : e))
+      );
+    } catch (err) {
+      console.warn('[Dashboard] event settings update failed:', err);
+    } finally {
+      setEventSettingsSaving(false);
+    }
+  }, [detailedEventSummary, eventSettingsSaving, token]);
 
   // In-flight request deduplication and stable events ref
   const inFlightOverviewRef = useRef<boolean>(false);
@@ -567,6 +606,73 @@ function DashboardContent() {
                 </button>
               </div>
             </div>
+
+            {detailedEventSummary?.eventId && (
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6 py-3 px-4 rounded-xl border border-[#E5DAC3] bg-white/60 text-xs sm:text-sm">
+                {/* Verification activity (opt-in aggregate counting) */}
+                <div className="flex items-center gap-3 min-w-0">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={Boolean(detailedEventSummary.trackScans)}
+                    onClick={() => void handleUpdateEventSettings({
+                      trackScans: !detailedEventSummary.trackScans,
+                    })}
+                    disabled={eventSettingsSaving}
+                    className="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-200 cursor-pointer disabled:opacity-50"
+                    style={{ backgroundColor: detailedEventSummary.trackScans ? '#10b981' : '#d6d3d1' }}
+                    title="Count how often recipients open this event's verification pages"
+                  >
+                    <span
+                      className="inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform duration-200"
+                      style={{ transform: detailedEventSummary.trackScans ? 'translateX(18px)' : 'translateX(3px)' }}
+                    />
+                  </button>
+                  <div className="min-w-0">
+                    <p className="font-quicksand font-semibold text-slate-700">
+                      Track verification views
+                    </p>
+                    <p className="text-[11px] text-stone-500 font-quicksand">
+                      {detailedEventSummary.trackScans
+                        ? detailedEventSummary.scanSummary && detailedEventSummary.scanSummary.totalScans > 0
+                          ? `${detailedEventSummary.scanSummary.totalScans.toLocaleString()} view${detailedEventSummary.scanSummary.totalScans === 1 ? '' : 's'} · last ${detailedEventSummary.scanSummary.lastScannedAt ? new Date(detailedEventSummary.scanSummary.lastScannedAt).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '—'}`
+                          : 'On — no views recorded yet'
+                        : 'Off (nothing is recorded)'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Validity window */}
+                <div className="flex items-center gap-2.5 sm:ml-auto">
+                  <CalendarDays className="w-4 h-4 text-stone-400 shrink-0" />
+                  <div>
+                    <label className="block font-quicksand font-semibold text-slate-700">
+                      Valid through <span className="text-stone-400 font-medium">(optional)</span>
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="date"
+                        value={validThroughDateInput}
+                        onChange={(e) => void handleUpdateEventSettings({
+                          validThrough: e.target.value ? new Date(e.target.value + 'T23:59:59').toISOString() : null,
+                        })}
+                        disabled={eventSettingsSaving}
+                        className="mt-0.5 px-2 py-1 rounded-lg border border-[#E5DAC3] bg-white text-xs font-quicksand text-slate-800 focus:outline-none focus:ring-0 focus:border-slate-400 cursor-pointer disabled:opacity-50"
+                      />
+                      {detailedEventSummary.validThrough && (
+                        <button
+                          type="button"
+                          onClick={() => void handleUpdateEventSettings({ validThrough: null })}
+                          className="text-[11px] font-semibold text-stone-500 hover:text-red-600 transition-colors cursor-pointer"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {detailsError && (
               <div className="p-3 rounded-lg bg-red-50 text-red-800 border border-red-200 text-xs flex items-center gap-2">

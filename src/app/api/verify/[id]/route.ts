@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { eq } from 'drizzle-orm';
 import { db } from '../../../../lib/db';
-import { certificates, users } from '../../../../db/schema';
+import { certificates, events, users } from '../../../../db/schema';
 import { hashToken, isValidCertificateId } from '../../../../lib/verification';
 import { checkRateLimit, getClientIp } from '../../../../lib/rate-limit';
 import { getAuthenticatedUser } from '../../../../lib/accounts';
@@ -70,11 +70,16 @@ export async function GET(
         recipientEmail: certificates.recipientEmail,
         eventName: certificates.eventName,
         issuedAt: certificates.issuedAt,
+        scanCount: certificates.scanCount,
+        eventId: certificates.eventId,
+        eventTrackScans: events.trackScans,
+        eventValidThrough: events.validThrough,
         issuerName: users.issuedByName,
         issuerAccountName: users.name,
       })
       .from(certificates)
       .leftJoin(users, eq(users.id, certificates.userId))
+      .leftJoin(events, eq(events.id, certificates.eventId))
       .where(eq(certificates.tokenHash, tokenHash))
       .limit(1);
 
@@ -130,6 +135,27 @@ export async function GET(
       );
     }
 
+    // Opt-in verification counting: aggregate counters only — never IPs,
+    // user agents, or scan logs. The issuing account's own checks don't count.
+    let verificationCount: number | null = null;
+    if (cert.eventTrackScans && !isOwner) {
+      try {
+        const [bumped] = await db
+          .update(certificates)
+          .set({ scanCount: cert.scanCount + 1, lastScannedAt: new Date() })
+          .where(eq(certificates.id, cert.id))
+          .returning({ scanCount: certificates.scanCount });
+        verificationCount = bumped?.scanCount ?? cert.scanCount + 1;
+      } catch (scanErr) {
+        console.warn('[Verification] scan counter failed:', scanErr);
+      }
+    } else if (cert.eventTrackScans) {
+      verificationCount = cert.scanCount;
+    }
+
+    const expired =
+      cert.eventValidThrough !== null && cert.eventValidThrough.getTime() < Date.now();
+
     // Anyone holding the QR link may verify it. Only the issuing account sees the full email.
     return NextResponse.json(
       {
@@ -139,6 +165,11 @@ export async function GET(
         eventName: cert.eventName,
         issuedAt: cert.issuedAt,
         issuedBy,
+        // Present but expiring: the client shows an "expired" banner while
+        // keeping details (revocation remains the hard kill).
+        expiresAt: cert.eventValidThrough ? cert.eventValidThrough.toISOString() : null,
+        expired,
+        ...(verificationCount !== null ? { verificationCount } : {}),
       },
       {
         headers: {

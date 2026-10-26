@@ -30,6 +30,14 @@ export interface DashboardEventSummary {
   firstIssuedAt: string;
   lastIssuedAt: string;
   templateName: string | null;
+  eventId?: string | null;
+  validThrough?: string | null;
+  trackScans?: boolean;
+  scanSummary?: {
+    totalScans: number;
+    scannedCertificates?: number;
+    lastScannedAt: string | null;
+  };
 }
 
 export interface DashboardStats {
@@ -47,7 +55,7 @@ async function findEventByName(userId: string, eventName: string) {
   const normalized = eventName.trim();
   if (!normalized) return null;
   const [row] = await db
-    .select({ id: eventsTable.id, name: eventsTable.name })
+    .select({ id: eventsTable.id, name: eventsTable.name, trackScans: eventsTable.trackScans, validThrough: eventsTable.validThrough })
     .from(eventsTable)
     .where(and(eq(eventsTable.userId, userId), eq(eventsTable.name, normalized)))
     .limit(1);
@@ -107,6 +115,8 @@ export async function GET(request: Request) {
         status: certificates.status,
         issuedAt: certificates.issuedAt,
         templateName: certificates.templateName,
+        scanCount: certificates.scanCount,
+        lastScannedAt: certificates.lastScannedAt,
         ...(includeRowData ? { rowData: certificates.rowData } : {}),
       };
 
@@ -146,6 +156,14 @@ export async function GET(request: Request) {
         };
       });
 
+      const totalScans = rows.reduce((sum, r) => sum + (r.scanCount ?? 0), 0);
+      const scannedCerts = rows.filter((r) => (r.scanCount ?? 0) > 0).length;
+      const lastScanIso = rows
+        .map((r) => r.lastScannedAt?.toISOString() ?? null)
+        .filter((v): v is string => Boolean(v))
+        .sort()
+        .at(-1) ?? null;
+
       const eventSummary: DashboardEventSummary = {
         eventName: decodedEventName,
         certificateCount: rows.length,
@@ -154,6 +172,14 @@ export async function GET(request: Request) {
         firstIssuedAt,
         lastIssuedAt,
         templateName: eventTemplateName,
+        eventId: event?.id ?? null,
+        validThrough: event?.validThrough ? event.validThrough.toISOString() : null,
+        trackScans: event?.trackScans ?? false,
+        scanSummary: {
+          totalScans,
+          scannedCertificates: scannedCerts,
+          lastScannedAt: lastScanIso,
+        },
       };
 
       // Only query canvas template graphic if explicitly requested by Studio/Editor
@@ -346,6 +372,11 @@ export async function GET(request: Request) {
           string | null
         >`max(${certificates.templateName}) filter (where ${certificates.templateName} is not null)`,
         eventCreatedAt: eventsTable.createdAt,
+        eventId: eventsTable.id,
+        validThrough: eventsTable.validThrough,
+        trackScans: eventsTable.trackScans,
+        totalScans: sql<number>`coalesce(sum(${certificates.scanCount}), 0)::int`,
+        lastScannedAt: sql<string | null>`max(${certificates.lastScannedAt})::text`,
       })
       .from(eventsTable)
       .leftJoin(
@@ -366,6 +397,13 @@ export async function GET(request: Request) {
           firstIssuedAt: row.firstIssuedAt ? new Date(row.firstIssuedAt).toISOString() : fallback,
           lastIssuedAt: row.lastIssuedAt ? new Date(row.lastIssuedAt).toISOString() : fallback,
           templateName: row.templateName,
+          eventId: row.eventId,
+          validThrough: row.validThrough ? row.validThrough.toISOString() : null,
+          trackScans: row.trackScans,
+          scanSummary: {
+            totalScans: row.totalScans,
+            lastScannedAt: row.lastScannedAt ? new Date(row.lastScannedAt).toISOString() : null,
+          },
         };
       })
       .sort((a, b) => (a.lastIssuedAt < b.lastIssuedAt ? 1 : a.lastIssuedAt > b.lastIssuedAt ? -1 : 0));

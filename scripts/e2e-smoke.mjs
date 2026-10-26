@@ -212,6 +212,43 @@ try {
   const assetMalformed = await fetch(`${BASE}/api/verify/not-a-uuid/asset`);
   check('asset for malformed id is 404', assetMalformed.status === 404, `status=${assetMalformed.status}`);
 
+  // 7d. Event settings: opt-in scan counting + validity window (events API)
+  const [eventForSettings] = await sql`SELECT id FROM events WHERE user_id = ${user.id} AND name = ${EVENT}`;
+  const bobId = r1.data.ids[1];
+  const patchSettings = async (body) => {
+    const res = await fetch(`${BASE}/api/events/${eventForSettings.id}`, {
+      method: 'PATCH', headers: auth, body: JSON.stringify(body),
+    });
+    return { status: res.status, data: await res.json().catch(() => ({})) };
+  };
+
+  const scanOn = await patchSettings({ trackScans: true });
+  check('event settings PATCH accepts trackScans (200)', scanOn.status === 200 && scanOn.data.event?.trackScans === true,
+    `status=${scanOn.status}`);
+  const v1 = await (await fetch(`${BASE}/api/verify/${bobId}`)).json();
+  const v2 = await (await fetch(`${BASE}/api/verify/${bobId}`)).json();
+  check('opt-in scan counting increments (1 then 2)',
+    v1.verificationCount === 1 && v2.verificationCount === 2,
+    `counts=${v1.verificationCount},${v2.verificationCount}`);
+
+  const yesterday = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+  const expSet = await patchSettings({ validThrough: yesterday });
+  check('event settings PATCH accepts validThrough (200)', expSet.status === 200 && Boolean(expSet.data.event?.validThrough),
+    `status=${expSet.status}`);
+  const vExp = await (await fetch(`${BASE}/api/verify/${bobId}`)).json();
+  check('expired certificate flags expired=true (details kept)',
+    vExp.status === 'valid' && vExp.expired === true && vExp.recipientName === 'Bob Jones',
+    `expired=${vExp.expired}`);
+  const expClear = await patchSettings({ validThrough: null });
+  const vClear = await (await fetch(`${BASE}/api/verify/${bobId}`)).json();
+  check('clearing validThrough restores non-expired verify', expClear.status === 200 && vClear.expired === false,
+    `expired=${vClear.expired}`);
+
+  await patchSettings({ trackScans: false });
+  const vOff = await (await fetch(`${BASE}/api/verify/${bobId}`)).json();
+  check('scan counting off → no verificationCount field', vOff.verificationCount === undefined,
+    `field=${JSON.stringify(vOff.verificationCount)}`);
+
   // 8. Logout (via the cookie path) revokes the session server-side and
   //    instructs the browser to drop the cookie.
   const lo = await fetch(`${BASE}/api/auth/logout`, { method: 'POST', headers: cookieAuth });

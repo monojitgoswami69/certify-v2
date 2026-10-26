@@ -27,7 +27,8 @@
     "db:restore": "node scripts/restore-db.mjs",
     "generate:benchmark": "node scripts/generate-benchmark-csv.mjs",
     "db:events": "node scripts/db-migrate-sql.mjs drizzle/legacy/0002_events.sql",
-    "db:stamp": "node scripts/db-stamp-baseline.mjs"
+    "db:stamp": "node scripts/db-stamp-baseline.mjs",
+    "db:event-features": "node scripts/db-migrate-sql.mjs drizzle/0003_event_features.sql"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",

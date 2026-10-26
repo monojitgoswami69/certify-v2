@@ -3,6 +3,7 @@ import {
   uuid,
   text,
   integer,
+  boolean,
   jsonb,
   timestamp,
   uniqueIndex,
@@ -51,6 +52,9 @@ export const certificates = pgTable(
     templateName: text('template_name'),
     status: text('status').notNull().default('issued'), // 'issued' | 'revoked' | 'static'
     rowData: jsonb('row_data'),
+    // Aggregate verification counters (opt-in per event; see events.track_scans).
+    scanCount: integer('scan_count').notNull().default(0),
+    lastScannedAt: timestamp('last_scanned_at', { withTimezone: true }),
     issuedAt: timestamp('issued_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -107,6 +111,11 @@ export const events = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
+    // Opt-in verification counting: aggregate counters only, never scan logs.
+    trackScans: boolean('track_scans').notNull().default(false),
+    // Optional expiry for the whole event; public verify shows an expired
+    // banner past this instant (details remain; revocation stays the hard kill).
+    validThrough: timestamp('valid_through', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
