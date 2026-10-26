@@ -21,6 +21,7 @@ import {
   ChevronDown,
   ChevronUp,
   CalendarDays,
+  UserPlus,
 } from 'lucide-react';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useAppStore } from '../../store/useAppStore';
@@ -28,7 +29,9 @@ import { useHistoryStore } from '../../store/useHistoryStore';
 import { downloadBlob, sanitizeFilename, csvCell } from '../../lib/utils';
 import { AccountMenu } from '../../components/account/AccountMenu';
 import { loadWorkspace, isWorkspaceLoadedFor } from '../../lib/workspace-loader';
-import { getAuthToken } from '../../lib/api-client';
+import { getAuthToken, sendEmailV2 } from '../../lib/api-client';
+import { ensureFontsLoaded } from '../../lib/font-loader';
+import { buildVerifyUrlFor } from '../../lib/cert-registration';
 import type { DashboardEventSummary, DashboardParticipant } from '../api/dashboard/route';
 
 function getStoredToken(): string | null {
@@ -69,6 +72,11 @@ function DashboardContent() {
   // Deleting event state
   const [deletingEventName, setDeletingEventName] = useState<string | null>(null);
   const [eventSettingsSaving, setEventSettingsSaving] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newEmail, setNewEmail] = useState('');
+  const [newSendEmail, setNewSendEmail] = useState(true);
+  const [addingRecipient, setAddingRecipient] = useState(false);
+  const [recipientStatus, setRecipientStatus] = useState<{ ok: boolean; message: string } | null>(null);
   const validThroughDateInput = detailedEventSummary?.validThrough
     ? detailedEventSummary.validThrough.slice(0, 10)
     : '';
@@ -106,6 +114,7 @@ function DashboardContent() {
       setEventSettingsSaving(false);
     }
   }, [detailedEventSummary, eventSettingsSaving, token]);
+
 
   // In-flight request deduplication and stable events ref
   const inFlightOverviewRef = useRef<boolean>(false);
@@ -237,6 +246,118 @@ function DashboardContent() {
 
     fetchEventDetails(eventParam);
   }, [eventParam, token, fetchEventDetails]);
+
+  const handleAddRecipient = useCallback(async () => {
+    const evName = detailedEventSummary?.eventName ?? selectedEventName;
+    if (!evName || !newName.trim() || addingRecipient) return;
+    if (newEmail.trim() && !newEmail.includes('@')) {
+      setRecipientStatus({ ok: false, message: 'Enter a valid email address.' });
+      return;
+    }
+    setAddingRecipient(true);
+    setRecipientStatus(null);
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'X-Certify-Request': '1',
+      };
+      const storedToken = useAuthStore.getState().token || getStoredToken();
+      if (storedToken) headers.Authorization = `Bearer ${storedToken}`;
+
+      const rowData: Record<string, string> = { Name: newName.trim() };
+      if (newEmail.trim()) rowData.Email = newEmail.trim();
+
+      const res = await fetch('/api/certificates/register', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers,
+        body: JSON.stringify({
+          eventName: evName,
+          certificates: [
+            {
+              recipientName: newName.trim(),
+              recipientEmail: newEmail.trim() || undefined,
+              rowData,
+            },
+          ],
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !Array.isArray(data.ids)) {
+        throw new Error(data.detail || 'Failed to register the recipient');
+      }
+      const certId: string = data.ids[0];
+      let message = 'Recipient added.';
+
+      if (newSendEmail && newEmail.trim()) {
+        // Render the certificate client-side from the event's saved template
+        // and deliver through the account's connected Gmail (server-held).
+        const tRes = await fetch(
+          `/api/dashboard?event=${encodeURIComponent(evName)}&includeTemplate=true`,
+          { credentials: 'same-origin', headers: storedToken ? { Authorization: `Bearer ${storedToken}` } : {} }
+        );
+        const tData = await tRes.json().catch(() => ({}));
+        const tpl = tData?.template;
+        if (!tpl?.imageData) throw new Error('No saved template found for this event — open it in Studio once and save.');
+
+        const img = document.createElement('img');
+        await new Promise<void>((resolve, reject) => {
+          img.onload = () => resolve();
+          img.onerror = () => reject(new Error('Template failed to load'));
+          img.src = tpl.imageData;
+        });
+        const layout = tpl.layoutConfig ?? {};
+        const boxes = Array.isArray(layout.boxes) ? layout.boxes : [];
+        const fonts = new Set(
+          [...boxes.map((b: { fontFamily?: string }) => b.fontFamily), layout.defaultFont].filter(
+            (x: unknown): x is string => Boolean(x)
+          )
+        );
+        if (fonts.size > 0) await ensureFontsLoaded(fonts);
+
+        const { generateCertificate } = await import('../../lib/certificate-engine');
+        const cert = await generateCertificate({
+          templateImage: img,
+          boxes,
+          row: rowData,
+          filename: sanitizeFilename(newName.trim()),
+          includePdf: true,
+          qrZones: Array.isArray(layout.qrZones) ? layout.qrZones : undefined,
+          images: Array.isArray(layout.images) ? layout.images : undefined,
+          verificationUrl: buildVerifyUrlFor(certId),
+        });
+        if (!cert.pdfBlob) throw new Error('Certificate rendering failed');
+
+        const result = await sendEmailV2({
+          recipientEmail: newEmail.trim(),
+          emailSubject: `Your certificate from ${evName}`,
+          emailBodyPlain:
+            `Hi ${newName.trim()},\n\nCongratulations! Your certificate is attached.\n\n` +
+            `You can verify it any time here: ${buildVerifyUrlFor(certId)}\n\nBest regards`,
+          emailBodyHtml: '',
+          filename: sanitizeFilename(newName.trim()),
+          pdfBlob: cert.pdfBlob,
+        });
+        message =
+          result.status === 'success'
+            ? 'Recipient added and certificate emailed.'
+            : 'Recipient added, but the email needs a reconnect — connect Google in Studio and retry.';
+      }
+
+      setRecipientStatus({ ok: true, message });
+      setNewName('');
+      setNewEmail('');
+      // Refresh the participant list so the new row appears immediately.
+      await fetchEventDetails(evName);
+    } catch (err) {
+      setRecipientStatus({
+        ok: false,
+        message: err instanceof Error ? err.message : 'Failed to add recipient',
+      });
+    } finally {
+      setAddingRecipient(false);
+    }
+  }, [detailedEventSummary, selectedEventName, newName, newEmail, newSendEmail, addingRecipient, fetchEventDetails]);
 
   // Return from detailed view to events list
   const handleBackToEventsList = () => {
@@ -672,6 +793,58 @@ function DashboardContent() {
                   </div>
                 </div>
               </div>
+            )}
+
+            {/* Quick add recipient (+ optional instant email) */}
+            <div className="flex flex-col sm:flex-row sm:items-center gap-2 py-1">
+              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider shrink-0">
+                Add recipient
+              </span>
+              <input
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="Full name"
+                className="flex-1 min-w-0 px-3 py-1.5 text-xs font-quicksand bg-white border border-[#E5DAC3] rounded-lg focus:outline-none focus:border-slate-400"
+                aria-label="New recipient name"
+              />
+              <input
+                value={newEmail}
+                onChange={(e) => setNewEmail(e.target.value)}
+                placeholder="Email (for certificate delivery)"
+                className="flex-1 min-w-0 px-3 py-1.5 text-xs font-quicksand bg-white border border-[#E5DAC3] rounded-lg focus:outline-none focus:border-slate-400"
+                aria-label="New recipient email"
+                type="email"
+              />
+              <label className="flex items-center gap-1.5 text-xs font-quicksand font-medium text-slate-600 cursor-pointer select-none shrink-0">
+                <input
+                  type="checkbox"
+                  checked={newSendEmail}
+                  onChange={(e) => setNewSendEmail(e.target.checked)}
+                  className="rounded border-slate-300 text-primary-600 focus:ring-0 cursor-pointer"
+                />
+                Email now
+              </label>
+              <button
+                type="button"
+                onClick={() => void handleAddRecipient()}
+                disabled={addingRecipient || !newName.trim()}
+                className="h-8 px-3.5 inline-flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-saira font-semibold uppercase tracking-wider transition-all cursor-pointer disabled:opacity-50 shrink-0"
+              >
+                {addingRecipient ? (
+                  <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <UserPlus className="w-3.5 h-3.5" />
+                )}
+                Add
+              </button>
+            </div>
+            {recipientStatus && (
+              <p
+                className={`text-xs font-quicksand font-medium ${recipientStatus.ok ? 'text-emerald-700' : 'text-red-600'}`}
+                role="status"
+              >
+                {recipientStatus.message}
+              </p>
             )}
 
             {detailsError && (

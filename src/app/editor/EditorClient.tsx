@@ -1,18 +1,21 @@
 'use client';
 
 import { useEffect, useState, Suspense } from 'react';
-import { FileSpreadsheet, X, Image as ImageIcon, CalendarDays, Monitor, Sparkles } from 'lucide-react';
+import { FileSpreadsheet, X, Image as ImageIcon, CalendarDays, Monitor, Sparkles, Table2 } from 'lucide-react';
 import { ErrorBoundary } from '../../components/ui/ErrorBoundary';
 import { SidebarHeader } from '../../components/sidebar/SidebarHeader';
 import { StepCard } from '../../components/sidebar/StepCard';
 import { TemplateUpload } from '../../components/sidebar/TemplateUpload';
 import { StarterGalleryModal } from '../../components/modals/StarterGalleryModal';
+import { CsvDrafterModal } from '../../components/modals/CsvDrafterModal';
+import { AddRecipientForm } from '../../components/sidebar/AddRecipientForm';
 import { CsvUpload } from '../../components/sidebar/CsvUpload';
 import { BoxCustomizer } from '../../components/sidebar/BoxCustomizer';
 import { ImagesCard } from '../../components/sidebar/ImagesCard';
 import { QrZoneCard } from '../../components/sidebar/QrZoneCard';
 import { CanvasEditor } from '../../components/canvas/CanvasEditor';
 import { GenerateButton } from '../../components/sidebar/GenerateButton';
+import { SpotCheckButton } from '../../components/sidebar/SpotCheckButton';
 import { EmailSidebar } from '../../components/email/EmailSidebar';
 import { EmailPreviewPane } from '../../components/email/EmailPreviewPane';
 import { CsvPreviewModal } from '../../components/modals/CsvPreviewModal';
@@ -50,6 +53,7 @@ function WorkspaceContent() {
   const eventParam = searchParams.get('event');
   const [showCsvPreview, setShowCsvPreview] = useState(false);
   const [showStarterGallery, setShowStarterGallery] = useState(false);
+  const [showCsvDrafter, setShowCsvDrafter] = useState(false);
   const [isNarrowScreen, setIsNarrowScreen] = useState(false);
   const [dismissNarrowWarning, setDismissNarrowWarning] = useState(false);
   const [isHydrating, setIsHydrating] = useState(false);
@@ -245,7 +249,20 @@ function WorkspaceContent() {
                 </div>
               </div>
             ) : (
-              <CsvUpload />
+              <div className="space-y-2">
+                <CsvUpload />
+                <button
+                  type="button"
+                  onClick={() => setShowCsvDrafter(true)}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 px-3 text-xs font-semibold text-stone-700 bg-white border border-stone-200 rounded-lg hover:border-stone-400 hover:bg-stone-50 transition-colors cursor-pointer"
+                >
+                  <Table2 className="w-3.5 h-3.5 text-primary-600" />
+                  Draft a CSV manually
+                </button>
+              </div>
+            )}
+            {csvData.length > 0 && (
+              <AddRecipientForm />
             )}
           </StepCard>
 
@@ -290,6 +307,7 @@ function WorkspaceContent() {
           {/* Step 5 */}
           <StepCard number={5} title="Generate & Deliver" status={step5Status}>
             <GenerateButton />
+            <SpotCheckButton />
             {error && (
               <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
                 {error}
@@ -302,6 +320,7 @@ function WorkspaceContent() {
       <CanvasEditor />
 
       <StarterGalleryModal open={showStarterGallery} onClose={() => setShowStarterGallery(false)} />
+      <CsvDrafterModal open={showCsvDrafter} onClose={() => setShowCsvDrafter(false)} />
       <CsvPreviewModal isOpen={showCsvPreview} onClose={() => setShowCsvPreview(false)} />
 
       {/* Small Screen / Mobile Warning Modal */}
