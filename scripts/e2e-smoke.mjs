@@ -279,6 +279,17 @@ try {
   check('admin API forbidden again after removal (403)', adminAfterDemote.status === 403,
     `status=${adminAfterDemote.status}`);
 
+  // 7f. Nonce regression sweep: every app page must be server-rendered per
+  //     request so the proxy's nonce CSP applies to its inline scripts. A page
+  //     that forgets connection() prerenders static HTML whose inline scripts
+  //     the CSP blocks (silent white-screen).
+  for (const page of ['/', '/login', '/dashboard', '/editor', '/admin', '/privacy', '/terms']) {
+    const html = await (await fetch(`${BASE}${page}`)).text();
+    const inline = [...html.matchAll(/<script(?![^>]*\ssrc=)(?![^>]*\snonce=)[^>]*>/g)].length;
+    const nonced = (html.match(/nonce="/g) || []).length;
+    check(`nonce CSP: ${page} has no un-nonce'd inline scripts`, inline === 0, `inline=${inline} nonced=${nonced}`);
+  }
+
   // 8. Logout (via the cookie path) revokes the session server-side and
   //    instructs the browser to drop the cookie.
   const lo = await fetch(`${BASE}/api/auth/logout`, { method: 'POST', headers: cookieAuth });

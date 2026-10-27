@@ -149,13 +149,19 @@ function readSessionCookie(request: Request): string | null {
 
 /**
  * Resolves the session from the Authorization header (legacy/cli) or the
- * HttpOnly session cookie (browser).
+ * HttpOnly session cookie (browser). A bearer token is preferred, but an
+ * INVALID one (expired, revoked, stale localStorage relic) falls through to
+ * the cookie instead of masking a perfectly good session — otherwise one
+ * bad stored token could log a valid browser session out.
  */
 export function getSessionFromRequest(request: Request): VerifiedSession | null {
   const authHeader = request.headers.get('authorization');
   if (authHeader) {
     const match = authHeader.match(/^bearer\s+(\S+)$/i);
-    if (match) return readSession(match[1]);
+    if (match) {
+      const fromHeader = readSession(match[1]);
+      if (fromHeader) return fromHeader;
+    }
   }
   const cookieToken = readSessionCookie(request);
   if (cookieToken) return readSession(cookieToken);

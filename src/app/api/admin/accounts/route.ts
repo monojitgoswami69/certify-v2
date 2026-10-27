@@ -45,6 +45,19 @@ export async function GET(request: Request) {
     order by u.created_at desc
   `);
 
-  const rows = (result.rows ?? result) as unknown as AccountRow[];
+  const raw = (result.rows ?? result) as unknown as Record<string, unknown>[];
+  // Raw SQL returns snake_case; map to the client's camelCase contract.
+  const rows: AccountRow[] = raw.map((r) => ({
+    email: String(r.email ?? ''),
+    role: String(r.role ?? 'user'),
+    createdAt: (r.created_at as string) ?? null,
+    eventCount: Number(r.event_count ?? 0),
+    certificateCount: Number(r.certificate_count ?? 0),
+    activeCount: Number(r.active_count ?? 0),
+    revokedCount: Number(r.revoked_count ?? 0),
+    totalViews: Number(r.total_views ?? 0),
+    lastIssuedAt: (r.last_issued_at as string) ?? null,
+    lastActiveAt: (r.last_active_at as string) ?? null,
+  }));
   return ok({ accounts: rows });
 }
