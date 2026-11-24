@@ -3,7 +3,7 @@ import Link from 'next/link';
 
 export const metadata: Metadata = {
   title: 'Terms of Service | Certify',
-  description: 'Terms of Service and acceptable use conditions for Certify.',
+  description: 'The rules for issuing, verifying, and emailing certificates with Certify.',
   robots: { index: true, follow: true },
 };
 
@@ -38,7 +38,7 @@ export default async function TermsOfServicePage() {
             Terms of Service
           </h1>
           <p className="mt-2 text-sm text-stone-700 font-sans">
-            Effective Date: October 15, 2026 · Last Updated: October 2026
+            Effective October 15, 2026 · Updated November 25, 2026
           </p>
         </header>
 
@@ -46,44 +46,40 @@ export default async function TermsOfServicePage() {
           {/* Section 1 */}
           <section className="space-y-3">
             <h2 className="section-title text-stone-900">
-              1. Acceptance of Terms
+              1. Using Certify
             </h2>
             <p>
-              By accessing or using <Link href="/" className="underline underline-offset-2">Certify</Link>{' '}
-              (&quot;the Service&quot;), you agree to be bound by these Terms of Service (&quot;Terms&quot;). If you do not agree to these Terms, you may not access or use the Service.
+              These terms apply when you use <Link href="/" className="text-primary-800 underline underline-offset-2">Certify</Link>, whether you issue certificates or open a link to verify one. By using Certify, you agree to these terms.
             </p>
           </section>
 
           {/* Section 2 */}
           <section className="space-y-3">
             <h2 className="section-title text-stone-900">
-              2. Description of the Service
+              2. Issuing and verifying certificates
             </h2>
             <p>
-              Certify is a software utility designed for event organizers, educational institutions, and organizations to create certificate templates, batch generate credentials from spreadsheets, register verifiable credentials, and dispatch certificates to recipients via email.
+              In Certify Studio, you can design a template, upload a recipient spreadsheet, and generate certificates in batches. When you register a batch with a verification QR code, anyone with the link can check the certificate. Our <Link href="/privacy" className="text-primary-800 underline underline-offset-2">Privacy Policy</Link> explains what they can see.
             </p>
           </section>
 
           {/* Section 3 */}
           <section className="space-y-3">
             <h2 className="section-title text-stone-900">
-              3. Permitted & Acceptable Use
+              3. Your responsibilities as an issuer
             </h2>
             <p>
-              You agree to use Certify only for lawful purposes and in accordance with these Terms. You represent and warrant that:
+              Use Certify lawfully. Before you upload a roster or issue a certificate, make sure you have permission to use the artwork and recipient information and the authority to issue the certificate on behalf of the event or organization.
             </p>
             <ul className="list-disc pl-5 space-y-2 text-stone-700">
               <li>
-                You possess all necessary rights, permissions, and authority to issue certificates and credentials on behalf of the represented organization or event.
+                Collect recipient information lawfully and get consent when it’s required.
               </li>
               <li>
-                All recipient information uploaded into the Service was gathered lawfully and with the requisite consent of the recipients.
+                Issue only accurate certificates you are authorized to issue. Counterfeit and misleading certificates are prohibited.
               </li>
               <li>
-                You will not use the Service to generate counterfeit, fraudulent, misleading, or unauthorized certifications.
-              </li>
-              <li>
-                You will not use the Service or connected email integrations to transmit unsolicited bulk email (&quot;spam&quot;), phishing campaigns, or harmful content.
+                Use the email feature for legitimate certificate delivery. Spam, phishing, and harmful messages are prohibited.
               </li>
             </ul>
           </section>
@@ -91,41 +87,33 @@ export default async function TermsOfServicePage() {
           {/* Section 4 */}
           <section className="space-y-3">
             <h2 className="section-title text-stone-900">
-              4. Third-Party Integrations & Google APIs
+              4. Sending certificates through Gmail
             </h2>
             <p>
-              Certify supports Google sign-in and a separate, optional Gmail connection for sending generated credentials from your account. When using Google integrations:
+              If you want to email certificates, connect Gmail using the same Google account you signed in with. Gmail’s sending limits and delivery rules apply. Keep the Studio tab open until your batch finishes.
             </p>
-            <ul className="list-disc pl-5 space-y-2 text-stone-700">
-              <li>
-                You agree to comply with Google&apos;s Terms of Service and the Google API Services User Data Policy.
-              </li>
-              <li>
-                You acknowledge that email delivery speed and quota limits are governed by Google&apos;s API policies and your Google Workspace / Gmail account tier.
-              </li>
-              <li>
-                You can disconnect Gmail from Certify at any time.
-              </li>
-            </ul>
+            <p>
+              Use the integration in line with <a href="https://policies.google.com/terms" className="text-primary-800 underline underline-offset-2">Google’s Terms of Service</a> and the <a href="https://developers.google.com/terms/api-services-user-data-policy" className="text-primary-800 underline underline-offset-2">Google API Services User Data Policy</a>. You can disconnect Gmail from Studio at any time.
+            </p>
           </section>
 
           {/* Section 5 */}
           <section className="space-y-3">
             <h2 className="section-title text-stone-900">
-              5. Intellectual Property & User Content
+              5. Your artwork and data
             </h2>
             <p>
-              You retain all ownership, intellectual property rights, and copyright in the graphics, logos, certificate artwork, and participant datasets you upload to the Service. Certify does not claim any proprietary interest in your content.
+              Uploading artwork, logos, or spreadsheets to Certify does not transfer ownership. You keep the rights you already have in that material.
             </p>
           </section>
 
           {/* Section 6 */}
           <section className="space-y-3">
             <h2 className="section-title text-stone-900">
-              6. Disclaimer of Warranties
+              6. Availability and warranties
             </h2>
             <p>
-              The Service is provided on an &quot;AS IS&quot; and &quot;AS AVAILABLE&quot; basis, without warranties of any kind, whether express or implied, including but not limited to implied warranties of merchantability, fitness for a particular purpose, or non-infringement. We do not warrant that the Service will be uninterrupted, error-free, or entirely secure.
+              Certify is provided “as is” and “as available.” We can’t promise the service will always be available, error-free, or entirely secure. Where the law allows, we disclaim express and implied warranties, including merchantability, fitness for a particular purpose, and non-infringement.
             </p>
           </section>
 
@@ -135,29 +123,29 @@ export default async function TermsOfServicePage() {
               7. Limitation of Liability
             </h2>
             <p>
-              To the maximum extent permitted by applicable law, Certify and its operators shall not be liable for any indirect, incidental, special, consequential, or punitive damages, or any loss of profits, data, or goodwill arising from your use of or inability to use the Service.
+              To the extent the law allows, Certify and its operators are not liable for indirect, incidental, special, consequential, or punitive damages, or for loss of profits, data, or goodwill arising from using or being unable to use Certify.
             </p>
           </section>
 
           {/* Section 8 */}
           <section className="space-y-3">
             <h2 className="section-title text-stone-900">
-              8. Modifications to Terms
+              8. Changes to these terms
             </h2>
             <p>
-              We reserve the right to modify these Terms at any time. Any changes will be posted directly to this page with an updated effective date. Your continued use of the Service after changes are published constitutes your acceptance of the revised Terms.
+              We may update these terms from time to time. When we do, we’ll post the new version here with its effective date. If you keep using Certify after revised terms are published, you agree to the updated terms.
             </p>
           </section>
 
           {/* Section 9 */}
           <section className="space-y-3">
             <h2 className="section-title text-stone-900">
-              9. Contact Information
+              9. Contact
             </h2>
             <p>
-              For any questions regarding these Terms of Service, please contact:
+              For questions about these terms, email{' '}
+              <a href="mailto:monojit.goswami.0905@gmail.com" className="text-primary-800 underline underline-offset-2">monojit.goswami.0905@gmail.com</a>.
             </p>
-            <a href="mailto:monojit.goswami.0905@gmail.com" className="text-primary-800 underline underline-offset-2">monojit.goswami.0905@gmail.com</a>
           </section>
         </div>
 

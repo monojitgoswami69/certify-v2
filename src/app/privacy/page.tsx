@@ -3,7 +3,7 @@ import Link from 'next/link';
 
 export const metadata: Metadata = {
   title: 'Privacy Policy | Certify',
-  description: 'Privacy Policy and Google API Services User Data Policy disclosure for Certify.',
+  description: 'How Certify handles your account, certificate records, and Gmail connection.',
   robots: { index: true, follow: true },
 };
 
@@ -38,74 +38,56 @@ export default async function PrivacyPolicyPage() {
             Privacy Policy
           </h1>
           <p className="mt-2 text-sm text-stone-700 font-sans">
-            Effective October 15, 2026 · Updated November 24, 2026
+            Effective October 15, 2026 · Updated November 25, 2026
           </p>
         </header>
 
         <div className="mt-8 space-y-10 text-stone-800 text-sm leading-relaxed">
           <section className="space-y-3">
-            <h2 className="section-title text-stone-900">1. Overview</h2>
+            <h2 className="section-title text-stone-900">1. Your account</h2>
             <p>
-              <Link href="/" className="text-primary-800 underline underline-offset-2">Certify</Link>{' '}
-              helps event organizers design, generate, verify, and deliver certificates. This policy covers the account, certificate, and Gmail data used to provide those features.
+              When you sign in with Google, we receive your verified email address, your name, and any profile photo Google provides. We use your email address to check whether you have access to Certify, and we save your name and photo for your profile. A session cookie keeps you signed in.
             </p>
           </section>
 
           <section className="space-y-3">
-            <h2 className="section-title text-stone-900">2. Information we collect</h2>
-            <ul className="list-disc space-y-2 pl-5 text-stone-700">
-              <li><strong>Google sign-in.</strong> Google provides your verified email address, name, and profile photo when available. Certify uses those details to check whether you can sign in, maintain your account, and show your profile. A session cookie keeps you signed in.</li>
-              <li><strong>Certificate and recipient data.</strong> Certify processes the roster, artwork, layouts, and event details you provide. Saving templates or drafts can store artwork, layouts, or recipient information on our servers. Registering certificates stores event and recipient records and the design needed to reproduce issued certificates.</li>
-              <li><strong>Optional Gmail connection.</strong> If you authorize Gmail, Certify checks that Google verifies the same email address you used to sign in. Certify encrypts its stored Gmail access and refresh tokens and uses them to send the certificate emails you initiate.</li>
-            </ul>
+            <h2 className="section-title text-stone-900">2. What we save when you create certificates</h2>
+            <p>Your browser generates certificate files and ZIP downloads. When you save a template, we store its artwork and layout. Studio drafts can save the recipient spreadsheet, email draft, and layout so you can pick up where you left off.</p>
+            <p>When you register a batch, we save the event, its recipient records, and the design. Certify uses those records to verify certificates later and recreate them for download.</p>
           </section>
 
           <section className="space-y-3">
-            <h2 className="section-title text-stone-900">3. How we use and share information</h2>
-            <ul className="list-disc space-y-2 pl-5 text-stone-700">
-              <li>Certify renders certificate files and packages ZIP downloads in your browser. It stores registered records so recipients can verify or download issued certificates.</li>
-              <li>Anyone with a valid public verification link can see certificate details such as the recipient name, event, and issuer. When a download is available, it can include the fields printed on the certificate. Private roster fields and recipient email addresses stay out of the public verification response.</li>
-              <li>When you initiate a send, Certify processes the recipient address, message, and certificate attachment and submits them to Google’s Gmail API for delivery. The recipient receives the message and sender address.</li>
-              <li>Hosting and database providers process data on Certify’s behalf to operate the service. Certify does not sell Google user data or use it for advertising or generalized AI model training.</li>
-            </ul>
+            <h2 className="section-title text-stone-900">3. What a verification link shows</h2>
+            <p>Anyone with a verification link can check the certificate’s status. A valid certificate can show the recipient’s name, the event, the issuer, and the issue date. If the issuer turns on view counts, the page can show how many times the certificate has been checked.</p>
+            <p>We leave the recipient’s contact email and private spreadsheet columns out of public verification details. When a download is available, the file can show any information the issuer printed on the certificate.</p>
           </section>
 
           <section className="space-y-3">
-            <h2 className="section-title text-stone-900">4. Google API Services and Limited Use</h2>
+            <h2 className="section-title text-stone-900">4. Sending certificates through Gmail</h2>
+            <p>Connecting Gmail is optional. If you connect it, we check that the Gmail address matches the Google address you used to sign in. We store the access and refresh tokens from Google in encrypted form so Certify can send emails from that account when you ask it to.</p>
+            <p>When you start a send, we give Gmail the recipient’s address, your message, and the certificate attachment for delivery. The email comes from your Gmail address.</p>
             <p>
-              Certify requests the sensitive, send-only Gmail scope{' '}
-              <code className="font-mono text-xs [overflow-wrap:anywhere]">https://www.googleapis.com/auth/gmail.send</code>{' '}
-              to send the certificate emails you start. Certify does not read your inbox, drafts, or Gmail history.
+              Certify requests only the Gmail send permission (<code className="font-mono text-xs [overflow-wrap:anywhere]">https://www.googleapis.com/auth/gmail.send</code>). This permission lets Certify send a message without granting access to your inbox, drafts, or sent mail.
             </p>
             <p>
-              Certify&apos;s use and transfer to any other app of information received from Google APIs will adhere to the{' '}
-              <a href="https://developers.google.com/terms/api-services-user-data-policy" className="text-primary-800 underline underline-offset-2">
-                Google API Services User Data Policy
-              </a>
-              , including the Limited Use requirements.
+              We follow the <a href="https://developers.google.com/terms/api-services-user-data-policy" className="text-primary-800 underline underline-offset-2">Google API Services User Data Policy</a>, including its Limited Use requirements, when we use or transfer information from Google APIs. We never sell Google user data or use it for ads or general-purpose AI training. We limit human access to the circumstances Google allows, such as helping with a specific issue you’ve asked us to look at or meeting a legal obligation.
             </p>
-            <p>Certify limits human access to Google user data in accordance with Google’s Limited Use requirements, such as troubleshooting with your permission or complying with a legal obligation.</p>
           </section>
 
           <section className="space-y-3">
-            <h2 className="section-title text-stone-900">5. Retention, deletion, and revocation</h2>
-            <ul className="list-disc space-y-2 pl-5 text-stone-700">
-              <li><strong>Disconnecting Gmail.</strong> Certify stores Gmail credentials while Gmail is connected. Selecting <strong>Disconnect Gmail</strong> in the email interface removes those credentials from Certify and requests revocation with Google.</li>
-              <li>You can also revoke Certify’s access through your{' '}
-                <a href="https://myaccount.google.com/permissions" className="text-primary-800 underline underline-offset-2">Google Account permissions</a>.
-              </li>
-              <li>Certify keeps account information while your account exists and keeps issued records to support verification. Contact us to request deletion of your account information, saved data, or Google user data. Disconnecting Gmail does not delete sent messages or issued records.</li>
-            </ul>
+            <h2 className="section-title text-stone-900">5. Disconnecting Gmail or deleting your data</h2>
+            <p>Choose <strong>Disconnect Gmail</strong> in Studio to remove the tokens we store and ask Google to revoke Certify’s access. You can also revoke access directly in your <a href="https://myaccount.google.com/permissions" className="text-primary-800 underline underline-offset-2">Google Account permissions</a>. Messages you’ve already sent and certificates you’ve already issued stay in place when you disconnect Gmail.</p>
+            <p>We keep your account information while you have an account and retain issued certificate records so their links can still be verified. To request deletion of account information, saved workspace data, or data from Google, email the address below.</p>
           </section>
 
           <section className="space-y-3">
-            <h2 className="section-title text-stone-900">6. Data security</h2>
-            <p>Certify uses HTTPS for data in transit, encrypts stored Gmail tokens, and checks account permissions before exposing private workspace data. Public verification identifiers are checked against stored hashes.</p>
+            <h2 className="section-title text-stone-900">6. Hosting and security</h2>
+            <p>Our hosting and database providers process data on our behalf to run Certify. We use HTTPS for connections to the service, encrypt stored Gmail tokens, and check account permissions before opening a private workspace.</p>
           </section>
 
           <section className="space-y-3">
             <h2 className="section-title text-stone-900">7. Contact</h2>
-            <p>For questions about this policy or to request data deletion, email{' '}
+            <p>For privacy questions or deletion requests, email{' '}
               <a href="mailto:monojit.goswami.0905@gmail.com" className="text-primary-800 underline underline-offset-2">monojit.goswami.0905@gmail.com</a>.
             </p>
           </section>
