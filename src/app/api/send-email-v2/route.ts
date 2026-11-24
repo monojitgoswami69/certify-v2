@@ -6,6 +6,10 @@ import { requireIssuer, issuanceRequiredResponse } from '../../../lib/issuer-aut
 import { getFreshAccessToken, gmailConfigured } from '../../../lib/google-token-store';
 import { reserveMailSlot } from '../../../lib/mail-quota';
 import { log, requestIdOf } from '../../../lib/logger';
+import { canClaimMail, claimMail, finishMail, getMailTarget } from '../../../lib/mail-delivery';
+import { isValidCertificateId } from '../../../lib/verification';
+import type { PersistedMailStatus } from '../../../types';
+import { singleRecipientEmail } from '../../../lib/mail-preferences';
 
 // =========================================================================
 // Shared MIME builder (streamTransport never opens a socket, so a single
@@ -42,7 +46,6 @@ async function buildRawMimeMessage(mailOptions: SendMailOptions): Promise<Uint8A
   });
 }
 
-const SINGLE_EMAIL_RE = /^[^\s@,;<>"]+@[^\s@,;<>"]+\.[^\s@,;<>"]+$/;
 const MAX_ATTACHMENT_BYTES = 24 * 1024 * 1024;
 const MAX_REQUEST_BYTES = 34 * 1024 * 1024;
 
@@ -73,6 +76,15 @@ function unconfirmedEmail() {
     status: 'unconfirmed',
     detail: 'Gmail acceptance could not be confirmed. Check Gmail Sent before sending again.',
   }, { status: 502 });
+}
+
+function blockedDelivery(status?: PersistedMailStatus) {
+  if (!status) return NextResponse.json({ detail: 'Certificate and recipient do not match an active issued certificate.' }, { status: 404 });
+  const detail = status === 'accepted' ? 'Gmail already accepted this certificate email.'
+    : status === 'sending' ? 'A send is already in progress for this certificate.'
+    : status === 'unknown' ? 'Review this send in Gmail Sent from the event before retrying.'
+    : 'The delivery changed. Refresh the event and try again.';
+  return NextResponse.json({ status: 'delivery_blocked', deliveryStatus: status, detail }, { status: 409 });
 }
 
 function reconnectRequired(email: string) {
@@ -109,6 +121,8 @@ export async function POST(request: Request) {
   }
 
   try {
+    let certificateId: string;
+    let resendVersion: string;
     let recipientEmail: string;
     let emailSubject: string;
     let emailBodyPlain: string;
@@ -122,6 +136,8 @@ export async function POST(request: Request) {
     if (contentType.includes('multipart/form-data')) {
       // Optimized path: raw binary attachments (no base64 inflation).
       const form = await payload.formData();
+      certificateId = String(form.get('certificate_id') || '');
+      resendVersion = String(form.get('resend_version') || '');
       recipientEmail = String(form.get('recipient_email') || '');
       emailSubject = String(form.get('email_subject') || '');
       emailBodyPlain = String(form.get('email_body_plain') || '');
@@ -142,6 +158,8 @@ export async function POST(request: Request) {
       // Legacy JSON + base64 fallback (kept for backward compatibility).
       const body = await payload.json();
       if (!body || typeof body !== 'object') throw new SyntaxError('Invalid email payload');
+      certificateId = String(body.certificate_id || '');
+      resendVersion = String(body.resend_version || '');
       recipientEmail = String(body.recipient_email || '');
       emailSubject = String(body.email_subject || '');
       emailBodyPlain = String(body.email_body_plain || '');
@@ -170,6 +188,9 @@ export async function POST(request: Request) {
     }
 
     recipientEmail = recipientEmail.trim();
+    if (!isValidCertificateId(certificateId) || (resendVersion && !isValidCertificateId(resendVersion))) {
+      return NextResponse.json({ detail: 'A valid issued certificate ID is required.' }, { status: 400 });
+    }
     if (!recipientEmail || attachments.length === 0) {
       return NextResponse.json(
         { detail: 'Recipient email and at least one attachment are required' },
@@ -178,9 +199,14 @@ export async function POST(request: Request) {
     }
 
     // Exactly one address: a CSV cell like "a@x.com, b@y.com" must not fan out to multiple recipients
-    if (!SINGLE_EMAIL_RE.test(recipientEmail)) {
+    if (recipientEmail.length > 320 || !singleRecipientEmail.test(recipientEmail)) {
       return NextResponse.json({ detail: `Invalid recipient email address: ${recipientEmail}` }, { status: 400 });
     }
+
+    const target = await getMailTarget(user.userId, certificateId, recipientEmail);
+    const resend = resendVersion || undefined;
+    if (!target?.email || !canClaimMail(target, resend)) return blockedDelivery(target?.status);
+    recipientEmail = target.email.trim();
 
     const totalAttachmentBytes = attachments.reduce((sum, a) => sum + a.content.length, 0);
     if (totalAttachmentBytes > MAX_ATTACHMENT_BYTES) {
@@ -203,10 +229,29 @@ export async function POST(request: Request) {
       attachments,
     });
 
-    const slot = await reserveMailSlot(user.email);
+    const claimStartedAt = performance.now();
+    const attempt = await claimMail(user.userId, certificateId, recipientEmail, resend);
+    if (!attempt) return blockedDelivery((await getMailTarget(user.userId, certificateId, recipientEmail))?.status);
+    const finish = (status: Exclude<PersistedMailStatus, 'sending'>, detail: string | null, gmailId?: string) =>
+      finishMail(user.userId, certificateId, attempt, status, detail, gmailId, resend);
+
+    let slot: Awaited<ReturnType<typeof reserveMailSlot>>;
+    try {
+      slot = await reserveMailSlot(user.email);
+    } catch (error) {
+      await finish('failed', 'Could not reserve a sending slot.');
+      throw error;
+    }
     if (!slot.allowed) {
+      await finish(target.status === 'failed' ? 'failed' : 'pending', 'Paused before submission to Gmail.');
       if (slot.retryAfter === null) return issuanceRequiredResponse();
       return retryLater('Your account has reached its sending limit.', slot.retryAfter, 'account');
+    }
+    // Decline delayed work while the claim is still fresh enough for the full
+    // Gmail timeout. A stale execution must never send after manual review.
+    if (performance.now() - claimStartedAt > 60_000) {
+      await finish('failed', 'The send expired before submission to Gmail.');
+      return NextResponse.json({ detail: 'The send expired before submission to Gmail.' }, { status: 503 });
     }
 
     let gmailRes: Response;
@@ -223,13 +268,22 @@ export async function POST(request: Request) {
 
     } catch {
       log.warn('email', 'No response from Gmail after submission', { requestId: requestIdOf(request), userId: user.userId });
+      await finish('unknown', 'Gmail did not respond after submission.').catch(() => {});
       return unconfirmedEmail();
     }
-    if (gmailRes.status >= 500) return unconfirmedEmail();
+    if (gmailRes.status >= 500 || gmailRes.status === 408) {
+      await finish('unknown', 'Gmail returned an uncertain response after submission.').catch(() => {});
+      return unconfirmedEmail();
+    }
 
     if (gmailRes.ok) {
+      const body = await gmailRes.json().catch(() => null);
+      const gmailId = typeof body?.id === 'string' ? body.id.slice(0, 200) : undefined;
+      const saved = await finish('accepted', null, gmailId).catch(() => false);
+      if (!saved) return unconfirmedEmail();
       return NextResponse.json({ status: 'success', message: 'Email accepted by Gmail', recipient: recipientEmail });
     }
+    await finish('failed', `Gmail rejected the submission (HTTP ${gmailRes.status}).`);
     if (gmailRes.status === 429) {
       const header = gmailRes.headers.get('retry-after');
       const seconds = header && /^\d+$/.test(header) ? Number(header)

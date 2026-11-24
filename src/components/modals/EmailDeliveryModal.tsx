@@ -56,7 +56,7 @@ export function EmailDeliveryModal({
       else if (r.status === 'failed') failed++;
       else if (r.status === 'sending') sending++;
       else if (r.status === 'skipped') skipped++;
-      else pending++;
+      else if (r.status === 'pending') pending++;
     }
 
     return {
@@ -350,7 +350,9 @@ export function EmailDeliveryModal({
                       </span>
                     );
                   } else if (record.status === 'unconfirmed') {
-                    badge = <span className="text-xs font-semibold text-amber-700">Unconfirmed</span>;
+                    badge = <span className="text-xs font-semibold text-amber-700">Unknown</span>;
+                  } else if (record.status === 'in_flight') {
+                    badge = <span className="text-xs font-semibold text-blue-700">In flight</span>;
                   } else if (record.status === 'skipped') {
                     badge = (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
@@ -386,7 +388,7 @@ export function EmailDeliveryModal({
                       </td>
                       <td className="px-4 py-2">
                         {record.status === 'sent' ? (
-                          <span className="text-emerald-600 font-medium">Delivered successfully</span>
+                          <span className="text-emerald-600 font-medium">Accepted by Gmail</span>
                         ) : record.error ? (
                           <span className="text-red-600 font-medium break-words" title={record.error}>
                             {record.error}

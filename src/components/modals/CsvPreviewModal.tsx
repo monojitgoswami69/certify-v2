@@ -13,7 +13,7 @@ interface CsvPreviewModalProps {
 const PAGE_SIZE = 50;
 
 export function CsvPreviewModal({ isOpen, onClose }: CsvPreviewModalProps) {
-  const { csvHeaders, csvData, csvFile } = useAppStore();
+  const { csvHeaders, csvData, csvFile, csvReview } = useAppStore();
   const [mounted, setMounted] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
@@ -24,13 +24,9 @@ export function CsvPreviewModal({ isOpen, onClose }: CsvPreviewModalProps) {
 
   const filteredRows = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return csvData;
-    return csvData.filter((row) =>
-      Object.values(row).some((val) =>
-        String(val || '').toLowerCase().includes(q)
-      )
-    );
-  }, [csvData, searchQuery]);
+    return csvData.map((row, index) => ({ number: csvReview.numbers[index], row }))
+      .filter(({ row }) => !q || Object.values(row).some((value) => value.toLowerCase().includes(q)));
+  }, [csvData, csvReview, searchQuery]);
 
   // Reset to page 1 when search query changes
   useEffect(() => {
@@ -112,7 +108,7 @@ export function CsvPreviewModal({ isOpen, onClose }: CsvPreviewModalProps) {
               <tr className="bg-slate-100/95 backdrop-blur-xs border-b border-slate-200 text-slate-700">
                 {/* Fixed Top-Left Corner Header for row index */}
                 <th className="sticky left-0 top-0 z-30 bg-slate-200/95 backdrop-blur-xs px-3.5 py-2.5 font-bold uppercase tracking-wider text-[11px] text-slate-600 border-r border-b border-slate-300 text-center w-12 select-none">
-                  #
+                  Record
                 </th>
                 {csvHeaders.map((header, idx) => (
                   <th
@@ -137,14 +133,14 @@ export function CsvPreviewModal({ isOpen, onClose }: CsvPreviewModalProps) {
                   </td>
                 </tr>
               ) : (
-                pageRows.map((row, rowIdx) => (
+                pageRows.map(({ row, number }) => (
                   <tr
-                    key={rowIdx}
+                    key={number}
                     className="hover:bg-primary-50/30 transition-colors group"
                   >
                     {/* Fixed Sticky Left Column for row number */}
                     <td className="sticky left-0 z-10 bg-slate-50/95 group-hover:bg-slate-100/95 backdrop-blur-xs px-3.5 py-2 text-center text-slate-400 font-mono text-[11px] border-r border-slate-200 whitespace-nowrap font-medium select-none">
-                      {startIndex + rowIdx + 1}
+                      {number}
                     </td>
                     {csvHeaders.map((header, colIdx) => (
                       <td

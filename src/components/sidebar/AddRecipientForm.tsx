@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { UserPlus, Loader2, Check } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
+import { cleanCsvRows } from '../../lib/csv-parser';
 
 /**
  * Console single-recipient add: append one person to the loaded roster
@@ -10,7 +11,7 @@ import { useAppStore } from '../../store/useAppStore';
  * Name/Email headers on a fresh workspace).
  */
 export function AddRecipientForm() {
-  const { csvData, csvHeaders, csvFile, setCsvData } = useAppStore();
+  const { csvData, csvHeaders, csvFile, csvReview, setCsvData } = useAppStore();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [saving, setSaving] = useState(false);
@@ -56,7 +57,12 @@ export function AddRecipientForm() {
       const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
       const file = new File([blob], csvFile?.name || 'roster.csv', { type: 'text/csv' });
 
-      setCsvData(file, headers, allRows);
+      const lastNumber = csvReview.ignored.reduce((last, record) => Math.max(last, record.number), csvReview.numbers.at(-1) ?? 1);
+      const cleaned = cleanCsvRows(allRows.map((record) => Object.fromEntries(headers.map((header) => [header, record[header] ?? '']))),
+        [...csvReview.numbers, lastNumber + 1]);
+      setCsvData(file, headers, cleaned.data, {
+        ...csvReview, numbers: cleaned.review.numbers, ignored: [...csvReview.ignored, ...cleaned.review.ignored],
+      });
       setName('');
       setEmail('');
       setAdded(true);

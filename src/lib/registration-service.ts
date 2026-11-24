@@ -9,10 +9,10 @@ import { readIssuedDesign } from './event-design-validation';
 import { log } from './logger';
 import { computeIdentityFingerprint, computeLegacyEmailFingerprint, normalizeName, pickEmailFromRowData } from './record-fingerprint';
 import { generateCertificateId, hashToken, isValidCertificateId } from './verification';
+import { readMailPreferences, singleRecipientEmail } from './mail-preferences';
 
 const MAX_BATCH = 2000;
 const CHUNK_SIZE = 500;
-const EMAIL_RE = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/;
 
 export class RegistrationError extends Error {
   constructor(message: string, public readonly status: number = 400) {
@@ -33,6 +33,7 @@ export interface RegisterBatchCommand {
   eventName?: unknown;
   label?: unknown;
   design?: unknown;
+  mailPreferences?: unknown;
 }
 
 function boundedText(input: unknown, max: number): string {
@@ -90,6 +91,7 @@ export async function registerCertificates(user: PublicUser, command: RegisterBa
   if (command.design !== undefined && !design) throw new RegistrationError('A valid certificate design is required');
   const requestedName = boundedText(command.eventName, 500) || 'General Event';
   const requestedLabel = boundedText(command.label, 120) || null;
+  const mailPreferences = readMailPreferences(command.mailPreferences);
   let [event] = await findOwnedEvent(user.userId, eventId, design);
   if (!event && !design) throw new RegistrationError('Event not found', 404);
   if (event && design && (!event.matchesDesign || event.name !== requestedName || event.label !== requestedLabel)) {
@@ -106,8 +108,10 @@ export async function registerCertificates(user: PublicUser, command: RegisterBa
     if (!recipientName) throw new RegistrationError(`Recipient name is required on row ${index + 1}`);
     const row = readRow(item?.rowData);
     const rowData = storeRosterRow(row);
-    const rawEmail = boundedText(item?.recipientEmail, 320) || pickEmailFromRowData(row);
-    if (rawEmail && !EMAIL_RE.test(rawEmail)) throw new RegistrationError(`Invalid recipient email on row ${index + 1}`);
+    const rawEmail = typeof item?.recipientEmail === 'string' ? item.recipientEmail.trim() : pickEmailFromRowData(row);
+    if (rawEmail && (rawEmail.length > 320 || !singleRecipientEmail.test(rawEmail))) {
+      throw new RegistrationError(`Invalid recipient email on row ${index + 1}`);
+    }
     const recipientEmail = rawEmail || null;
     const fingerprint = computeIdentityFingerprint(user.userId, eventId, recipientName, recipientEmail);
     const fields = freezeRenderFields(layout, row);
@@ -131,16 +135,17 @@ export async function registerCertificates(user: PublicUser, command: RegisterBa
     // retry may reuse the event ID after checking the same design below.
     const created = await db.execute<{ fingerprint: string }>(sql`
       WITH created_event AS (
-        INSERT INTO ${events} (id, user_id, name, label, issued_design)
-        VALUES (${eventId}, ${user.userId}, ${name}, ${requestedLabel}, ${JSON.stringify(design)}::jsonb)
+        INSERT INTO ${events} (id, user_id, name, label, issued_design, mail_preferences)
+        VALUES (${eventId}, ${user.userId}, ${name}, ${requestedLabel}, ${JSON.stringify(design)}::jsonb,
+          ${mailPreferences ? JSON.stringify(mailPreferences) : null}::jsonb)
         ON CONFLICT (id) DO NOTHING
         RETURNING id
       )
       INSERT INTO ${certificates} (id, user_id, event_id, token_hash, event_name, record_fingerprint,
-        recipient_name, recipient_email, row_data, render_fields, template_name, status)
+        recipient_name, recipient_email, row_data, render_fields, template_name, status, mail_status)
       SELECT ${id}::uuid, ${user.userId}::uuid, created_event.id, ${hashToken(id)}, ${name}, ${first.fingerprint},
         ${first.recipientName}, ${first.recipientEmail}, ${JSON.stringify(first.rowData)}::jsonb,
-        ${JSON.stringify(first.fields)}::jsonb, ${name}, ${isStatic ? 'static' : 'issued'}
+        ${JSON.stringify(first.fields)}::jsonb, ${name}, ${isStatic ? 'static' : 'issued'}, 'pending'
       FROM created_event
       RETURNING record_fingerprint AS fingerprint
     `);
@@ -182,7 +187,7 @@ export async function registerCertificates(user: PublicUser, command: RegisterBa
     toInsert.set(item.fingerprint, {
       id, userId: user.userId, eventId, tokenHash: hashToken(id), eventName: name, recordFingerprint: item.fingerprint,
       recipientName: item.recipientName, recipientEmail: item.recipientEmail, rowData: item.rowData,
-      templateName: name, status: isStatic ? 'static' : 'issued', renderFields: item.fields,
+      templateName: name, status: isStatic ? 'static' : 'issued', renderFields: item.fields, mailStatus: 'pending',
     });
   }
 

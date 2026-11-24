@@ -35,6 +35,7 @@ import { IssuerWorkspace } from '../../components/account/IssuerWorkspace';
 import { apiFetch, fetchEventDesign } from '../../lib/api-client';
 import { emailIssuedCertificate, renderIssuedPdf } from '../../lib/issued-certificate';
 import { EventRecipients } from './EventRecipients';
+import { EventMailQueue, mailStatusLabels } from './EventMailQueue';
 import { buildVerifyUrlFor } from '../../lib/cert-registration';
 import type { DashboardEventSummary, DashboardParticipant } from '../api/dashboard/route';
 
@@ -216,16 +217,24 @@ function DashboardContent() {
   }, [selectedEventKey, eventIdParam, fetchEventDetails]);
 
   async function handleCertificateAction(cert: DashboardParticipant, action: 'download' | 'email') {
-    if (!detailedEventSummary?.eventId || !cert.renderFields || workingCertificate) return;
-    if (action === 'email' && (!cert.recipientEmail || !window.confirm(`Send the certificate to ${cert.recipientEmail} from your connected Gmail account?`))) return;
+    const eventId = detailedEventSummary?.eventId;
+    if (!eventId || !cert.renderFields || workingCertificate) return;
+    if (action === 'email') {
+      if (!cert.recipientEmail || cert.mailStatus === 'unknown' || cert.mailStatus === 'sending') return;
+      if (!window.confirm(cert.mailStatus === 'accepted'
+        ? `Gmail already accepted this certificate email. Send another copy to ${cert.recipientEmail}?`
+        : `Send the certificate to ${cert.recipientEmail} from your connected Gmail account?`)) return;
+    }
     setCertificateNotice(null);
     setWorkingCertificate(cert.id);
     try {
-      const { design, event } = await fetchEventDesign(detailedEventSummary.eventId);
+      const { design, event, mailPreferences } = await fetchEventDesign(eventId);
       if (!design || !event.designLocked) throw new Error('The original design is unavailable.');
       const recipient = { id: cert.id, name: cert.recipientName };
       if (action === 'email') {
-        const result = await emailIssuedCertificate(design, cert.renderFields, { ...recipient, email: cert.recipientEmail! }, event.name);
+        const result = await emailIssuedCertificate(design, cert.renderFields, {
+          ...recipient, email: cert.recipientEmail!, resendVersion: cert.mailStatus === 'accepted' ? cert.mailVersion ?? undefined : undefined,
+        }, event.name, mailPreferences, cert.rowData);
         setCertificateNotice({ text: result.message, error: result.status !== 'success' });
       } else {
         const pdf = await renderIssuedPdf(design, cert.renderFields, recipient);
@@ -234,6 +243,7 @@ function DashboardContent() {
     } catch (error) {
       setCertificateNotice({ text: error instanceof Error ? error.message : 'The certificate action could not be completed.', error: true });
     } finally {
+      if (action === 'email') await fetchEventDetails(eventId);
       setWorkingCertificate(null);
     }
   }
@@ -575,6 +585,10 @@ function DashboardContent() {
                 </div>
               </div>
             )}
+            {detailedEventSummary?.eventId && detailedEventSummary.designLocked && (
+              <EventMailQueue key={detailedEventSummary.eventId} eventId={detailedEventSummary.eventId}
+                participants={participants} onChange={() => fetchEventDetails(detailedEventSummary.eventId!)} />
+            )}
 
             {detailedEventSummary?.eventId && (
               <EventRecipients key={detailedEventSummary.eventId} eventId={detailedEventSummary.eventId}
@@ -688,6 +702,7 @@ function DashboardContent() {
                             </td>
                             <td className="py-2 px-3 text-right text-stone-600 font-medium text-xs">
                               {cert.recipientEmail || '—'}
+                              {cert.recipientEmail && <p className="text-xs text-stone-500" title={cert.mailDetail ?? undefined}>{mailStatusLabels[cert.mailStatus]}</p>}
                             </td>
                             <td className="py-2 px-3 text-right text-xs">
                               {isStatic ? (
@@ -740,9 +755,9 @@ function DashboardContent() {
                                   <Download className="inline h-4 w-4" />
                                 </button>
                               )}
-                              {cert.renderFields && !isRevoked && cert.recipientEmail && (
+                              {cert.renderFields && !isRevoked && cert.recipientEmail && cert.mailStatus !== 'unknown' && cert.mailStatus !== 'sending' && (
                                 <button type="button" onClick={() => void handleCertificateAction(cert, 'email')}
-                                  disabled={Boolean(workingCertificate)} aria-label={`Email certificate to ${cert.recipientName}`}
+                                  disabled={Boolean(workingCertificate)} aria-label={`${cert.mailStatus === 'accepted' ? 'Resend' : 'Email'} certificate to ${cert.recipientName}`}
                                   className="mr-2 text-slate-600 hover:text-slate-900 disabled:opacity-50">
                                   <Mail className="inline h-4 w-4" />
                                 </button>

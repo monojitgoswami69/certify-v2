@@ -4,7 +4,7 @@
  */
 import { registerCertificates } from './api-client';
 import type { IssuedEventDesign } from './event-design';
-import type { CsvRow } from '../types';
+import type { CsvRow, EmailSettings } from '../types';
 
 export function getVerifyBaseUrl(): string {
   const origin = process.env.NEXT_PUBLIC_APP_URL?.trim()
@@ -36,9 +36,10 @@ export async function ensureCertificateIds(params: {
   eventName: string;
   label: string;
   design?: IssuedEventDesign;
+  mailPreferences?: EmailSettings;
   onIssued: (ids: Map<number, string>) => void;
 }): Promise<Map<number, string>> {
-  const { records, existingIds, getDisplayName, getEmail, eventId, eventName, label, design, onIssued } = params;
+  const { records, existingIds, getDisplayName, getEmail, eventId, eventName, label, design, mailPreferences, onIssued } = params;
   const pending = records.filter(({ rowIndex }) => !existingIds.has(rowIndex));
   const merged = new Map(existingIds);
 
@@ -52,7 +53,8 @@ export async function ensureCertificateIds(params: {
       recipientEmail: getEmail?.(row),
       rowData: row,
     }));
-    const outcomes = await registerCertificates(items, { eventId, eventName, label, design: firstDesign });
+    const outcomes = await registerCertificates(items, { eventId, eventName, label, design: firstDesign,
+      mailPreferences: firstDesign ? mailPreferences : undefined });
     outcomes.forEach((outcome, offset) => {
       if (outcome.status !== 'conflict') merged.set(chunk[offset].rowIndex, outcome.id);
     });

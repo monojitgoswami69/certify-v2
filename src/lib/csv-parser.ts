@@ -8,6 +8,36 @@
 export interface ParsedCsv {
   headers: string[];
   data: Record<string, string>[];
+  review: CsvReviewMetadata;
+}
+
+export interface CsvReviewMetadata {
+  numbers: number[];
+  ignored: Array<{ number: number; duplicateOf?: number }>;
+  extraColumns?: number[];
+  renamedHeaders?: Array<{ column: number; name: string; header: string }>;
+}
+
+export function cleanCsvRows(data: Record<string, string>[], numbers = data.map((_, index) => index + 2)) {
+  const kept: ParsedCsv['data'] = [];
+  const review: CsvReviewMetadata = { numbers: [], ignored: [] };
+  const seen = new Map<string, number>();
+  data.forEach((row, index) => {
+    const number = numbers[index];
+    if (!Object.values(row).some((value) => value.trim())) {
+      review.ignored.push({ number });
+      return;
+    }
+    const key = JSON.stringify(Object.entries(row));
+    const duplicateOf = seen.get(key);
+    if (duplicateOf !== undefined) review.ignored.push({ number, duplicateOf });
+    else {
+      seen.set(key, number);
+      review.numbers.push(number);
+      kept.push(row);
+    }
+  });
+  return { data: kept, review };
 }
 
 export function parseCsv(text: string): ParsedCsv {
@@ -30,9 +60,7 @@ export function parseCsv(text: string): ParsedCsv {
     fieldWasQuoted = false;
   };
   const pushRow = () => {
-    if (currentRow.some((field) => field.length > 0)) {
-      rows.push(currentRow);
-    }
+    rows.push(currentRow);
     currentRow = [];
   };
 
@@ -77,16 +105,25 @@ export function parseCsv(text: string): ParsedCsv {
   }
 
   // Push remaining field and row if any
-  if (currentField || currentRow.length > 0) {
+  if (currentField || fieldWasQuoted || currentRow.length > 0) {
     pushField();
     pushRow();
   }
 
-  if (rows.length < 2) {
+  const headerIndex = rows.findIndex((row) => row.some((value) => value.trim()));
+  if (headerIndex < 0 || rows.length <= headerIndex + 1) {
     throw new Error('CSV file must contain a header row and at least one data row.');
   }
 
-  const rawHeaders = rows[0];
+  const sourceHeaders = rows[headerIndex];
+  const records = rows.slice(headerIndex + 1);
+  const extraColumns: number[] = [];
+  records.forEach((record, index) => {
+    if (record.slice(sourceHeaders.length).some((field) => field.trim())) {
+      extraColumns.push(headerIndex + index + 2);
+    }
+  });
+  const rawHeaders = extraColumns.length ? [...sourceHeaders, 'Extra CSV values'] : sourceHeaders;
   const cleanHeaders = rawHeaders.map((header, index) =>
     header.replace(/^\uFEFF/, '').replace(/^"|"$/g, '').trim() || `Column_${index + 1}`
   );
@@ -106,11 +143,20 @@ export function parseCsv(text: string): ParsedCsv {
     return unique;
   });
 
-  const data: Record<string, string>[] = [];
+  const cleaned = cleanCsvRows(records.map((values) => Object.fromEntries(
+    headers.map((header, index) => [header, index < sourceHeaders.length ? values[index] ?? ''
+      : values.slice(index).some((value) => value.trim()) ? JSON.stringify(values.slice(index)) : '']),
+  )), records.map((_, index) => headerIndex + index + 2));
+  cleaned.review.extraColumns = extraColumns;
+  cleaned.review.renamedHeaders = headers.flatMap((header, index) => index < sourceHeaders.length && header !== rawHeaders[index].trim()
+    ? [{ column: index + 1, name: rawHeaders[index].trim(), header }] : []);
+  return { headers, ...cleaned };
+}
 
-  for (const values of rows.slice(1)) {
-    data.push(Object.fromEntries(headers.map((header, index) => [header, values[index] ?? ''])));
-  }
-
-  return { headers, data };
+export async function readCsvFile(file: File): Promise<ParsedCsv> {
+  if (file.size > 20 * 1024 * 1024) throw new Error('CSV files can be up to 20 MB.');
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const encoding = bytes[0] === 0xff && bytes[1] === 0xfe ? 'utf-16le'
+    : bytes[0] === 0xfe && bytes[1] === 0xff ? 'utf-16be' : 'utf-8';
+  return parseCsv(new TextDecoder(encoding).decode(bytes));
 }

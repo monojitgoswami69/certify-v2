@@ -8,6 +8,7 @@
  */
 import { apiFetch } from './api-client';
 import type { TextBox, QrZone, ImageElement, EmailSettings } from '../types';
+import type { CsvReviewMetadata } from './csv-parser';
 
 export interface DraftState {
   savedAt: string;
@@ -15,6 +16,7 @@ export interface DraftState {
   eventLabel?: string;
   csvHeaders: string[];
   csvRows: Array<Record<string, string>>;
+  csvReview?: CsvReviewMetadata;
   csvFileName: string | null;
   boxes: TextBox[];
   qrZones: QrZone[];

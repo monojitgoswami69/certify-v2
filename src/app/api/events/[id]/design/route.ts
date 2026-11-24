@@ -15,9 +15,9 @@ async function fetchDesign(userId: string, id: string) {
   if (!event) return null;
 
   if (event.designLocked) {
-    const [row] = await db.select({ design: events.issuedDesign }).from(events)
+    const [row] = await db.select({ design: events.issuedDesign, mailPreferences: events.mailPreferences }).from(events)
       .where(and(eq(events.id, id), eq(events.userId, userId))).limit(1);
-    return { event, design: row?.design ?? null, revision: null };
+    return { event, design: row?.design ?? null, revision: null, mailPreferences: row?.mailPreferences ?? null };
   }
 
   const [certificate] = await db.select({ name: certificates.templateName }).from(certificates)

@@ -9,7 +9,7 @@ export const snapshotTables = {
   },
   events: {
     key: 'id',
-    columns: 'id user_id name label issued_design track_scans valid_through created_at updated_at',
+    columns: 'id user_id name label issued_design mail_preferences track_scans valid_through created_at updated_at',
     userColumn: 'user_id',
   },
   templates: {
@@ -34,7 +34,7 @@ export const snapshotTables = {
   },
   certificates: {
     key: 'id',
-    columns: 'id user_id event_id token_hash event_name record_fingerprint recipient_name recipient_email template_name status row_data render_fields scan_count last_scanned_at issued_at',
+    columns: 'id user_id event_id token_hash event_name record_fingerprint recipient_name recipient_email template_name status row_data render_fields scan_count last_scanned_at issued_at mail_status mail_attempt_id mail_updated_at mail_gmail_id mail_detail',
     userColumn: 'user_id',
     legacyOwner: true,
   },

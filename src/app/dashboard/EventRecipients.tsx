@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useMemo, useState, type FormEvent } from 'react';
 import { FileSpreadsheet, UserPlus } from 'lucide-react';
 import type { DashboardParticipant } from '../api/dashboard/route';
 import {
@@ -8,16 +8,16 @@ import {
   type EventDesignResponse, type RegisterCertificateItem,
 } from '../../lib/api-client';
 import { freezeRenderFields, getDesignFields } from '../../lib/render-fields';
-import { emailIssuedCertificate, renderIssuedPreview } from '../../lib/issued-certificate';
-import { parseCsv, type ParsedCsv } from '../../lib/csv-parser';
+import { emailIssuedCertificate } from '../../lib/issued-certificate';
+import { BatchReviewDialog } from '../../components/modals/BatchReviewDialog';
+import { rosterIdentity, type ReviewRecord } from '../../lib/batch-review';
+import { singleRecipientEmail } from '../../lib/mail-preferences';
+import { decodeDesignImage } from '../../lib/workspace-loader';
+import { readCsvFile, type ParsedCsv } from '../../lib/csv-parser';
 
 const names = ['name', 'fullname', 'recipientname', 'studentname', 'participantname', 'candidatename', 'membername'];
 const emails = ['email', 'emailaddress', 'recipientemail', 'mail'];
 const normalize = (value: string) => value.trim().toLowerCase().replace(/[\s_-]/g, '');
-const identity = (name: string, email?: string | null) =>
-  JSON.stringify([name.trim().toLowerCase(), email?.trim().toLowerCase() ?? '']);
-const emailPattern = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/;
-
 const inputClass = 'w-full rounded-md border border-stone-300 bg-white px-2.5 py-1.5 text-sm';
 const buttonClass = 'inline-flex items-center gap-1.5 rounded-md bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50';
 
@@ -42,20 +42,19 @@ export function EventRecipients({ eventId, eventName, designLocked, participants
   const [nameColumn, setNameColumn] = useState('');
   const [emailColumn, setEmailColumn] = useState('');
   const [columnMap, setColumnMap] = useState<Record<string, string>>({});
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
-
-  useEffect(() => () => { if (previewImage) URL.revokeObjectURL(previewImage); }, [previewImage]);
+  const [batchReview, setBatchReview] = useState<{ image: HTMLImageElement; records: ReviewRecord[] } | null>(null);
 
   const design = designResponse?.design;
   const fields = useMemo(() => design ? getDesignFields(design.layoutConfig) : [], [design]);
   const customFields = fields.filter((field) => !names.includes(normalize(field)) && !emails.includes(normalize(field)));
-  const existing = useMemo(() => new Map(participants.map((row) => [
-    identity(row.recipientName, row.recipientEmail), row.renderFields ?? row.rowData ?? {},
-  ])), [participants]);
+  const existing = useMemo(() => ({
+    byIdentity: new Map(participants.map((row) => [rosterIdentity(row.recipientName, row.recipientEmail), row])),
+    names: new Set(participants.map((row) => row.recipientName.trim().toLowerCase())),
+    addresses: new Set(participants.map((row) => row.recipientEmail?.trim().toLowerCase()).filter(Boolean)),
+  }), [participants]);
 
   async function open(next: typeof mode) {
     setMode(next);
-    setPreviewImage(null);
     setNotice(null);
     if (!next || (design && (next === 'confirm' || designResponse.event.designLocked))) return;
     setWorking(true);
@@ -124,7 +123,8 @@ export function EventRecipients({ eventId, eventName, designLocked, participants
       setIndividualFields({});
       if (emailNow && address) {
         const result = await emailIssuedCertificate(
-          design, freezeRenderFields(design.layoutConfig, rowData), { id: outcome.id, name: person, email: address }, eventName,
+          design, freezeRenderFields(design.layoutConfig, rowData), { id: outcome.id, name: person, email: address },
+          eventName, designResponse?.mailPreferences, rowData,
         );
         setNotice({ text: result.status === 'success' ? 'Recipient added. Gmail accepted the email.' : `Recipient added. ${result.message}` });
       } else {
@@ -140,11 +140,10 @@ export function EventRecipients({ eventId, eventName, designLocked, participants
 
   async function loadCsv(file?: File) {
     setCsv(null);
-    setPreviewImage(null);
     setNotice(null);
     if (!file) return;
     try {
-      const parsed = parseCsv(await file.text());
+      const parsed = await readCsvFile(file);
       const findColumn = (choices: string[]) => parsed.headers.find((header) => choices.includes(normalize(header))) ?? '';
       setNameColumn(findColumn(names));
       setEmailColumn(findColumn(emails));
@@ -155,61 +154,66 @@ export function EventRecipients({ eventId, eventName, designLocked, participants
     }
   }
 
-  const seen = new Map<string, Record<string, string>>();
-  const preview = csv && nameColumn ? csv.data.map((row, index) => {
-    const recipientName = row[nameColumn]?.trim() ?? '';
-    const recipientEmail = row[emailColumn]?.trim() ?? '';
-    const key = identity(recipientName, recipientEmail);
-    const rowData = Object.fromEntries(fields.map((field) => [
-      field, names.includes(normalize(field)) ? recipientName
-        : emails.includes(normalize(field)) ? recipientEmail
-        : row[columnMap[field]] ?? '',
-    ]));
-    const prior = existing.get(key) ?? seen.get(key);
-    const state = !recipientName || (recipientEmail && !emailPattern.test(recipientEmail)) ? 'Invalid'
-      : prior ? fields.some((field) => (prior[field] ?? '') !== rowData[field]) ? 'Conflict' : 'Duplicate'
-      : 'Ready';
-    if (state === 'Ready') seen.set(key, rowData);
-    return { item: { recipientName, recipientEmail, rowData }, state, index };
-  }) : [];
-  const ready = preview.filter(({ state }) => state === 'Ready');
-
-  async function previewFirstCertificate() {
-    const item = ready[0]?.item;
-    if (!design || !item || working) return;
+  async function openBatchReview() {
+    if (!csv || !nameColumn || !design || working) return;
     setWorking(true);
     setNotice(null);
     try {
-      const image = await renderIssuedPreview(design, freezeRenderFields(design.layoutConfig, item.rowData), item.recipientName);
-      setPreviewImage(URL.createObjectURL(image));
+      const image = await decodeDesignImage(design);
+      const extra = new Set(csv.review.extraColumns);
+      const records = csv.data.map((row, index) => {
+        const number = csv.review.numbers[index];
+        const name = row[nameColumn]?.trim() ?? '';
+        const email = row[emailColumn]?.trim() ?? '';
+        const rowData = {
+          ...row,
+          ...Object.fromEntries(fields.map((field) => [
+            field, names.includes(normalize(field)) ? name
+              : emails.includes(normalize(field)) ? email : row[columnMap[field]] ?? '',
+          ])),
+        };
+        const prior = existing.byIdentity.get(rosterIdentity(name, email));
+        const priorFields = prior?.renderFields ?? prior?.rowData ?? {};
+        const currentFields = freezeRenderFields(design.layoutConfig, rowData);
+        const different = fields.some((field) => (priorFields[field] ?? '') !== currentFields[field]);
+        const blocked = extra.has(number) ? 'This record has more values than the CSV header. Fix the CSV and import it again.'
+          : !name ? 'Map a name column and fill in a recipient name.'
+          : email && (email.length > 320 || !singleRecipientEmail.test(email)) ? 'Fix the recipient email in the CSV or omit this record.'
+          : prior ? different ? 'This recipient already has an issued certificate with different printed values.'
+            : 'This recipient already has an issued certificate.' : undefined;
+        const note = !prior && (existing.names.has(name.toLowerCase()) || (email && existing.addresses.has(email.toLowerCase())))
+          ? 'An existing recipient shares this name or email. Check whether both certificates are needed.' : undefined;
+        return { number, row: rowData, name, email, blocked, note };
+      });
+      setBatchReview({ image, records });
     } catch (error) {
-      setNotice({ text: error instanceof Error ? error.message : 'Could not preview the certificate.', error: true });
+      setNotice({ text: error instanceof Error ? error.message : 'Could not open the batch review.', error: true });
     } finally {
       setWorking(false);
     }
   }
 
-  async function addBulk() {
-    if (!design || working || !ready.length) return;
+  async function addBulk(selected: Set<number>) {
+    if (!design || working || !batchReview || !designResponse?.event.designLocked) return;
+    const ready = batchReview.records.filter(({ number, blocked }) => selected.has(number) && !blocked);
+    if (!ready.length) return;
     setWorking(true);
     setNotice(null);
     let added = 0;
     let skipped = 0;
     try {
       for (let i = 0; i < ready.length; i += 500) {
-        const items: RegisterCertificateItem[] = ready.slice(i, i + 500).map(({ item }) => item);
+        const items: RegisterCertificateItem[] = ready.slice(i, i + 500).map(({ name, email, row }) => ({
+          recipientName: name, recipientEmail: email, rowData: row,
+        }));
         const outcomes = await registerCertificates(items, { eventId });
         added += outcomes.filter(({ status }) => status === 'issued').length;
         skipped += outcomes.filter(({ status }) => status !== 'issued').length;
       }
       setCsv(null);
-      setPreviewImage(null);
       setNotice({ text: `Added ${added} ${added === 1 ? 'recipient' : 'recipients'}.${skipped ? ` ${skipped} already had certificates at issuance.` : ''}` });
     } catch (error) {
-      setNotice({
-        text: `${added ? `Added ${added} before the request stopped. ` : ''}${error instanceof Error ? error.message : 'CSV issuance failed.'}`,
-        error: true,
-      });
+      throw new Error(`${added ? `Added ${added} before the request stopped. ` : ''}${error instanceof Error ? error.message : 'CSV issuance failed.'}`);
     } finally {
       await onChange();
       setWorking(false);
@@ -273,39 +277,17 @@ export function EventRecipients({ eventId, eventName, designLocked, participants
           {csv && (
             <>
               <div className="grid max-w-3xl gap-2 sm:grid-cols-3">
-                <ColumnPicker title="Recipient name" headers={csv.headers} value={nameColumn} onChange={(column) => { setNameColumn(column); setPreviewImage(null); }} />
-                <ColumnPicker title="Recipient email" headers={csv.headers} value={emailColumn} onChange={(column) => { setEmailColumn(column); setPreviewImage(null); }} />
+                <ColumnPicker title="Recipient name" headers={csv.headers} value={nameColumn} onChange={setNameColumn} />
+                <ColumnPicker title="Recipient email" headers={csv.headers} value={emailColumn} onChange={setEmailColumn} />
                 {customFields.map((field) => <ColumnPicker key={field} title={field} headers={csv.headers}
-                  value={columnMap[field] ?? ''} onChange={(column) => { setColumnMap({ ...columnMap, [field]: column }); setPreviewImage(null); }} />)}
+                  value={columnMap[field] ?? ''} onChange={(column) => setColumnMap({ ...columnMap, [field]: column })} />)}
               </div>
-              {nameColumn && <>
-                <p className="text-sm text-slate-700" role="status">
-                  {ready.length} ready · {preview.filter(({ state }) => state === 'Duplicate').length} duplicate · {preview.filter(({ state }) => state === 'Invalid').length} invalid
-                  {preview.some(({ state }) => state === 'Conflict') && ` · ${preview.filter(({ state }) => state === 'Conflict').length} conflicting`}
-                </p>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <caption className="text-left font-semibold pb-1">CSV preview · first {Math.min(8, preview.length)} rows</caption>
-                    <thead className="border-b border-stone-200"><tr>
-                      {['Name', 'Email', ...customFields, 'Status'].map((header, index) => <th key={index} className="py-1 pr-3">{header}</th>)}
-                    </tr></thead>
-                    <tbody className="divide-y divide-stone-200">
-                      {preview.slice(0, 8).map(({ item, index, state }) => <tr key={index}>
-                        {[item.recipientName, item.recipientEmail, ...customFields.map((field) => item.rowData[field]), state]
-                          .map((value, i) => <td key={i} className="py-1 pr-3">{value || '—'}</td>)}
-                      </tr>)}
-                    </tbody>
-                  </table>
-                </div>
-                {previewImage && <img src={previewImage} alt="Preview of the first new certificate" className="max-h-56 max-w-full object-contain" />}
-                <div className="flex flex-wrap gap-3">
-                  <button type="button" disabled={working || ready.length === 0} onClick={() => void previewFirstCertificate()}
-                    className="text-xs font-semibold text-slate-700 underline disabled:opacity-50">Preview certificate</button>
-                  <button type="button" className={buttonClass} disabled={working || ready.length === 0} onClick={() => void addBulk()}>
-                    Issue {ready.length} {ready.length === 1 ? 'certificate' : 'certificates'}
-                  </button>
-                </div>
-              </>}
+              <button type="button" disabled={working || !nameColumn} onClick={() => void openBatchReview()} className={buttonClass}>
+                Review CSV batch
+              </button>
+              {batchReview && <BatchReviewDialog title={`Review CSV batch · ${eventName}`}
+                records={batchReview.records} cleaning={csv.review} template={batchReview.image} layout={design.layoutConfig}
+                onClose={() => setBatchReview(null)} onIssue={addBulk} />}
             </>
           )}
         </div>

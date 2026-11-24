@@ -7,6 +7,7 @@ import type { Font, FontCategory } from '../types';
 const GOOGLE_FONTS_CSS_URL = 'https://fonts.googleapis.com/css2';
 
 const requestedFonts = new Set<string>();
+const fontStylesheets = new Map<string, Promise<void>>();
 let cachedFonts: Font[] = [];
 let fontPromise: Promise<Font[]> | null = null;
 
@@ -39,12 +40,23 @@ export function loadGoogleFont(family: string): boolean {
   if (requestedFonts.has(family)) return true;
 
   if (typeof document !== 'undefined') {
-    const existing = document.querySelector(`link[data-font="${family}"]`);
+    const existing = [...document.querySelectorAll<HTMLLinkElement>('link[data-font]')].find((link) => link.dataset.font === family);
     if (!existing) {
       const link = document.createElement('link');
       link.rel = 'stylesheet';
       link.setAttribute('data-font', family);
       link.href = `${GOOGLE_FONTS_CSS_URL}?family=${encodeURIComponent(family)}:wght@400;500;600;700&display=swap`;
+      fontStylesheets.set(family, new Promise((resolve) => {
+        const settled = () => {
+          clearTimeout(timer);
+          link.removeEventListener('load', settled);
+          link.removeEventListener('error', settled);
+          resolve();
+        };
+        const timer = setTimeout(settled, 4_000);
+        link.addEventListener('load', settled);
+        link.addEventListener('error', settled);
+      }));
       document.head.appendChild(link);
     }
     requestedFonts.add(family);
@@ -58,33 +70,33 @@ export function loadGoogleFont(family: string): boolean {
  * FontFaceSet before rendering. MUST be awaited prior to canvas drawing to
  * guarantee certificates render with the correct webfont (not a fallback).
  */
-export async function ensureFontsLoaded(fonts: Iterable<string>): Promise<void> {
-  if (typeof document === 'undefined' || !('fonts' in document)) return;
+export async function ensureFontsLoaded(fonts: Iterable<string>): Promise<string[]> {
+  if (typeof document === 'undefined' || !('fonts' in document)) return [];
 
   const families = Array.from(new Set(fonts)).filter(Boolean);
   for (const family of families) {
     loadGoogleFont(family);
   }
 
-  await Promise.all(
+  const unavailable = await Promise.all(
     families.map(async (family) => {
+      await fontStylesheets.get(family);
+      const name = family.replace(/['"\\\r\n]/g, '');
+      let timer: ReturnType<typeof setTimeout> | undefined;
       try {
-        await Promise.all([
-          document.fonts.load(`400 16px "${family}"`),
-          document.fonts.load(`600 16px "${family}"`),
-          document.fonts.load(`700 16px "${family}"`),
+        const fonts = await Promise.race([
+          document.fonts.load(`400 16px "${name}"`),
+          new Promise<FontFace[]>((resolve) => { timer = setTimeout(() => resolve([]), 4_000); }),
         ]);
+        return fonts.length || !fontStylesheets.has(family) ? null : family;
       } catch {
-        // Font may not support all weights; ignore and rely on CSS fallback.
+        return family;
+      } finally {
+        clearTimeout(timer);
       }
     })
   );
-
-  try {
-    await document.fonts.ready;
-  } catch {
-    // no-op
-  }
+  return unavailable.filter((family): family is string => family !== null);
 }
 
 export interface WorkerFontData {

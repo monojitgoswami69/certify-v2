@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { X, Plus, Trash2, Table2 } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
+import { parseCsv } from '../../lib/csv-parser';
 
 const MAX_ROWS = 2000;
 const MAX_COLS = 40;
@@ -62,34 +63,26 @@ export function CsvDrafterModal({ open, onClose }: { open: boolean; onClose: () 
     setHeaders((prev) => prev.map((h, i) => (i === c ? value : h)));
 
   const save = () => {
-    const cleanHeaders = headers.map((h) => h.trim()).filter(Boolean);
-    if (cleanHeaders.length === 0) {
+    const cleanHeaders = headers.map((h) => h.trim());
+    if (!cleanHeaders.some(Boolean)) {
       setError('Add at least one named column.');
       return;
     }
-    const filled = rows.filter((row) => row.some((cell) => cell.trim() !== ''));
-    if (filled.length === 0) {
+    if (!rows.some((row) => row.some((cell) => cell.trim() !== ''))) {
       setError('Add at least one recipient row.');
       return;
     }
-    const data = filled.map((row) => {
-      const obj: Record<string, string> = {};
-      cleanHeaders.forEach((h, i) => {
-        obj[h] = (row[i] ?? '').trim();
-      });
-      return obj;
-    });
-
     // Synthesize a CSV file so downloads/display behave like a real upload.
     const esc = (v: string) => `"${v.replace(/"/g, '""')}"`;
     const csvContent = [
       cleanHeaders.map(esc).join(','),
-      ...filled.map((row) => cleanHeaders.map((_, i) => esc(row[i] ?? '')).join(',')),
+      ...rows.map((row) => cleanHeaders.map((_, i) => esc((row[i] ?? '').trim())).join(',')),
     ].join('\n');
     const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
     const file = new File([blob], 'draft-roster.csv', { type: 'text/csv' });
 
-    setCsvData(file, cleanHeaders, data);
+    const parsed = parseCsv(csvContent);
+    setCsvData(file, parsed.headers, parsed.data, parsed.review);
     onClose();
   };
 

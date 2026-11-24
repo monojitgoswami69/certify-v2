@@ -13,20 +13,19 @@ import {
   Clock,
   AlertTriangle,
   FileSpreadsheet,
-  ShieldCheck,
 } from 'lucide-react';
+import Link from 'next/link';
+import { useAppStore } from '../../store/useAppStore';
 import { useEmailBatchRunner } from './useEmailBatchRunner';
 import { useBatchRegistration } from '../sidebar/useBatchRegistration';
+import { ReviewBatchButton } from '../sidebar/ReviewBatchButton';
 import { EmailDeliveryModal } from '../modals/EmailDeliveryModal';
 
 export function EmailSendButton() {
   const {
     isBatchRegistered,
     registrationDirty,
-    needsRegistration,
-    isBatchRegistering,
     batchRegistrationError,
-    registerBatch,
   } = useBatchRegistration();
   const {
     emailProgress,
@@ -38,6 +37,7 @@ export function EmailSendButton() {
     startTimeRef,
     isReady,
     allTrackedRecords,
+    retryQueue,
     unsentCount,
     isDeliveryModalOpen,
     setIsDeliveryModalOpen,
@@ -52,6 +52,9 @@ export function EmailSendButton() {
     handleDownloadFullReport,
     handleDownloadErrorReport,
   } = useEmailBatchRunner();
+  const eventId = useAppStore((state) => state.registrationEventId);
+  const unknownCount = allTrackedRecords.filter(({ status }) => status === 'unconfirmed').length;
+  const inFlightCount = allTrackedRecords.filter(({ status }) => status === 'in_flight').length;
 
   const formatDuration = (ms: number): string => {
     const seconds = Math.floor(ms / 1000);
@@ -84,24 +87,7 @@ export function EmailSendButton() {
         <div className="space-y-3">
           {!isBatchRegistered || registrationDirty ? (
             <div className="space-y-2">
-              <button
-                type="button"
-                onClick={() => registerBatch()}
-                disabled={isBatchRegistering}
-                className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-medium disabled:from-slate-200 disabled:to-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed transition-all shadow-md shadow-slate-900/10 cursor-pointer"
-              >
-                {isBatchRegistering ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin text-white" />
-                    <span>Registering {csvData.length} Certificates...</span>
-                  </>
-                ) : (
-                  <>
-                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                    <span>Register Event Batch ({csvData.length} Certificates)</span>
-                  </>
-                )}
-              </button>
+              {!isBatchRegistered && <ReviewBatchButton />}
               <p className="text-[11px] text-slate-500 text-center">
                 Certificates must be registered to save the event in DB before dispatching emails.
               </p>
@@ -170,9 +156,9 @@ export function EmailSendButton() {
               <span className="text-emerald-600 font-medium">
                 {emailProgress.sent.length} sent
               </span>
-              {emailProgress.errors.length > 0 && (
+              {allTrackedRecords.some(({ status }) => status === 'failed') && (
                 <span className="text-red-600 font-medium">
-                  {emailProgress.errors.length} failed
+                  {allTrackedRecords.filter(({ status }) => status === 'failed').length} failed
                 </span>
               )}
             </div>
@@ -322,23 +308,28 @@ export function EmailSendButton() {
           </div>
 
           {/* Retry Failed and/or Resume Unsent Options */}
-          {emailProgress.errors.length > 0 && (
+          {(unknownCount > 0 || inFlightCount > 0) && eventId && (
+            <p className="text-sm text-amber-800">{unknownCount} unknown · {inFlightCount} in flight.{' '}
+              <Link href={`/dashboard?eventId=${eventId}`} className="font-semibold underline">Review delivery in the event dashboard</Link>
+            </p>
+          )}
+
+          {retryQueue.length > 0 && (
             <div className="p-3 bg-red-50 border border-red-200 rounded-lg space-y-2">
               <p className="text-xs font-semibold text-red-800">
-                {emailProgress.errors.length} email
-                {emailProgress.errors.length > 1 ? 's' : ''} failed delivery
+                {retryQueue.length} email{retryQueue.length === 1 ? '' : 's'} failed to send
               </p>
               <button
                 onClick={handleRetry}
                 className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-red-600 text-white rounded-md text-xs font-semibold hover:bg-red-700 transition-colors shadow-xs cursor-pointer"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
-                <span>Retry Failed Only ({emailProgress.errors.length})</span>
+                <span>Retry Failed Only ({retryQueue.length})</span>
               </button>
             </div>
           )}
 
-          {unsentCount > emailProgress.errors.length && (
+          {unsentCount > retryQueue.length && (
             <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-2">
               <p className="text-xs font-semibold text-amber-800">
                 Batch stopped with {unsentCount} unsent record{unsentCount > 1 ? 's' : ''}
@@ -369,7 +360,7 @@ export function EmailSendButton() {
         onClose={() => setIsDeliveryModalOpen(false)}
         records={allTrackedRecords}
         eventName={eventName}
-        onRetryFailed={emailProgress.errors.length > 0 ? handleRetry : undefined}
+        onRetryFailed={retryQueue.length > 0 ? handleRetry : undefined}
         isSending={emailProgress.status === 'sending'}
       />
     </>

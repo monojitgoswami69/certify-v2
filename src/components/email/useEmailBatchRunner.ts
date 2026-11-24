@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { useAuthStore } from '../../store/useAuthStore';
-import { EmailRateLimitError, EmailUnconfirmedError, IssuanceAccessRequiredError, sendEmailV2 } from '../../lib/api-client';
+import { EmailDeliveryBlockedError, EmailRateLimitError, EmailUnconfirmedError, IssuanceAccessRequiredError, saveEventMailPreferences, sendEmailV2 } from '../../lib/api-client';
 import {
   replaceTemplateVariables,
   delay,
@@ -21,7 +21,8 @@ import {
 } from '../../lib/render-service';
 import { CertificateWorkerPool } from '../../lib/worker-pool';
 import { buildVerifyUrlFor } from '../../lib/cert-registration';
-import type { CsvRow, EmailProgress, EmailDeliveryRecord } from '../../types';
+import { selectRecipientName } from '../../lib/batch-review';
+import type { CsvRow, EmailProgress, EmailDeliveryRecord, EmailDeliveryStatus } from '../../types';
 
 export interface FailedRecord {
   rowIndex: number;
@@ -35,6 +36,10 @@ export interface EmailLogs {
   firstSent: Date | null;
   lastSent: Date | null;
   totalElapsed: number;
+}
+
+function excludesAutomaticRetry(status?: EmailDeliveryStatus) {
+  return status === 'sent' || status === 'unconfirmed' || status === 'in_flight' || status === 'skipped';
 }
 
 export function useEmailBatchRunner() {
@@ -71,6 +76,7 @@ export function useEmailBatchRunner() {
 
   const pauseRef = useRef(false);
   const abortRef = useRef(false);
+  const isMounted = useRef(false);
   const reconnectRef = useRef(false);
   // Synchronous busy flag: the Send button's disabled state commits a render
   // late, and a second click would double-send the whole batch.
@@ -85,6 +91,15 @@ export function useEmailBatchRunner() {
   // Comprehensive tracking map: rowIndex -> EmailDeliveryRecord
   const deliveryRosterRef = useRef(csvData);
   const deliveryRecordsRef = useRef<Map<number, EmailDeliveryRecord>>(new Map());
+
+  useEffect(() => {
+    isMounted.current = true;
+    return () => {
+      isMounted.current = false;
+      abortRef.current = true;
+      if (sendInFlightRef.current) resetEmailProgress();
+    };
+  }, [resetEmailProgress]);
 
   useEffect(() => {
     if (emailProgress.status !== 'sending') return;
@@ -103,22 +118,10 @@ export function useEmailBatchRunner() {
       emailColumn &&
       hasMailingAccount &&
       (emailSettings.attachPdf || attachImage) &&
-      (!useQr || (isBatchRegistered && !registrationDirty))
+      isBatchRegistered && !registrationDirty
   );
 
-  const getDisplayName = useCallback(
-    (row: CsvRow): string => {
-      const nameBox = boxes.find((b) => b.field.toLowerCase().includes('name'));
-      if (nameBox && row[nameBox.field]) {
-        return row[nameBox.field];
-      }
-      if (validBoxes.length > 0 && row[validBoxes[0].field]) {
-        return row[validBoxes[0].field];
-      }
-      return 'Recipient';
-    },
-    [boxes, validBoxes]
-  );
+  const getDisplayName = useCallback((row: CsvRow) => selectRecipientName(row, boxes), [boxes]);
 
   const sendBatch = useCallback(
     async (records: Array<{ rowIndex: number; row: CsvRow }>, isRetry: boolean = false) => {
@@ -126,9 +129,9 @@ export function useEmailBatchRunner() {
       if (!templateImage || validBoxes.length === 0) return;
 
       // Read registration at call time: registering does not re-create this callback
-      const { isBatchRegistered, registeredCertIds, registrationDirty } = useAppStore.getState();
-      if (useQr && (!isBatchRegistered || registrationDirty)) {
-        setError('Batch is not registered or has changed since registration. Please register certificates to activate QR verification before sending emails.');
+      const { isBatchRegistered, registeredCertIds, registrationDirty, registrationEventId } = useAppStore.getState();
+      if (!registrationEventId || !isBatchRegistered || registrationDirty) {
+        setError('Issue the batch before sending emails.');
         return;
       }
 
@@ -149,6 +152,8 @@ export function useEmailBatchRunner() {
       let terminateRenderer: (() => void) | null = null;
 
       try {
+      await saveEventMailPreferences(registrationEventId, emailSettings);
+      if (abortRef.current) return;
       const startTime = Date.now();
       startTimeRef.current = startTime;
       const errors: FailedRecord[] = [];
@@ -160,7 +165,7 @@ export function useEmailBatchRunner() {
       // Populate or preserve delivery tracking records
       records.forEach(({ rowIndex, row }) => {
         const existing = deliveryRecordsRef.current.get(rowIndex);
-        if (!existing || (!isRetry && existing.status !== 'sent' && existing.status !== 'unconfirmed')) {
+        if (!existing || (!isRetry && !excludesAutomaticRetry(existing.status))) {
           deliveryRecordsRef.current.set(rowIndex, {
             rowIndex,
             name: getDisplayName(row),
@@ -197,7 +202,7 @@ export function useEmailBatchRunner() {
       // to main-thread rendering when workers are unavailable.
       const isAlreadyProcessed = (rowIndex: number) => {
         const status = deliveryRecordsRef.current.get(rowIndex)?.status;
-        return status === 'sent' || status === 'unconfirmed';
+        return excludesAutomaticRetry(status);
       };
 
       if (CertificateWorkerPool.isSupported()) {
@@ -208,7 +213,7 @@ export function useEmailBatchRunner() {
             const renderTasks = records
               .filter(({ rowIndex, row }) => !isAlreadyProcessed(rowIndex)
                 && validateEmailAddress((row[emailColumn] || '').trim()).valid
-                && (!useQr || registeredCertIds.has(rowIndex)))
+                && registeredCertIds.has(rowIndex))
               .map(({ rowIndex, row }) => {
                 const certId = registeredCertIds.get(rowIndex);
                 return {
@@ -244,6 +249,8 @@ export function useEmailBatchRunner() {
         }
       }
 
+      if (!isMounted.current) return;
+
       setEmailProgress({
         current: 0,
         total: records.length,
@@ -261,7 +268,7 @@ export function useEmailBatchRunner() {
       const PROGRESS_INTERVAL_MS = 250;
       const flushProgress = (displayName: string, force: boolean = false) => {
         const now = Date.now();
-        if (!force && now - lastProgressAt < PROGRESS_INTERVAL_MS) return;
+        if (!isMounted.current || (!force && now - lastProgressAt < PROGRESS_INTERVAL_MS)) return;
         lastProgressAt = now;
         setEmailProgress({
           current: completedCount,
@@ -329,7 +336,7 @@ export function useEmailBatchRunner() {
           const validation = validateEmailAddress(rawEmail);
           if (!validation.valid) {
             const failReason = validation.warning || 'Invalid email address syntax';
-            errors.push({
+            if (rawEmail) errors.push({
               rowIndex,
               name: displayName || '(empty)',
               email: rawEmail || '(empty)',
@@ -340,7 +347,7 @@ export function useEmailBatchRunner() {
               rowIndex,
               name: displayName || '(empty)',
               email: rawEmail || '(empty)',
-              status: 'failed',
+              status: rawEmail ? 'failed' : 'skipped',
               timestamp: new Date().toISOString(),
               error: failReason,
             });
@@ -353,7 +360,7 @@ export function useEmailBatchRunner() {
 
           try {
             const certId = registeredCertIds.get(rowIndex);
-            if (useQr && !certId) {
+            if (!certId) {
               throw new Error('No registered certificate ID for this row. Re-register the batch.');
             }
 
@@ -399,6 +406,7 @@ export function useEmailBatchRunner() {
               : '';
 
             const result = await sendWithRateLimit({
+              certificateId: certId,
               recipientEmail: email,
               emailSubject: subject,
               emailBodyPlain: bodyPlain,
@@ -458,8 +466,15 @@ export function useEmailBatchRunner() {
               setError(errorMsg);
             }
 
-            const unconfirmed = err instanceof EmailUnconfirmedError;
-            const isNetDrop = unconfirmed && err.networkFailure;
+            const blocked = err instanceof EmailDeliveryBlockedError ? err.deliveryStatus : null;
+            if (blocked === 'accepted') {
+              deliveryRecordsRef.current.set(rowIndex, { rowIndex, name: displayName, email, status: 'sent' });
+              completedCount++;
+              flushProgress(displayName);
+              continue;
+            }
+            const unconfirmed = err instanceof EmailUnconfirmedError || blocked === 'unknown';
+            const isNetDrop = err instanceof EmailUnconfirmedError && err.networkFailure;
 
             if (isNetDrop) {
               consecutiveNetworkErrorsRef.current++;
@@ -479,7 +494,7 @@ export function useEmailBatchRunner() {
               rowIndex,
               name: displayName,
               email,
-              status: unconfirmed ? 'unconfirmed' : 'failed',
+              status: unconfirmed ? 'unconfirmed' : blocked === 'sending' ? 'in_flight' : 'failed',
               timestamp: new Date().toISOString(),
               error: errorMsg,
             });
@@ -494,6 +509,8 @@ export function useEmailBatchRunner() {
         return worker();
       });
       await Promise.all(workers);
+
+      if (!isMounted.current) return;
 
       for (const [rIndex, r] of deliveryRecordsRef.current.entries()) {
         if (r.status === 'sending') {
@@ -522,6 +539,11 @@ export function useEmailBatchRunner() {
       if (providerLimit.error) setError(providerLimit.error.message);
       setRetryQueue(errors.filter(({ rowIndex }) => deliveryRecordsRef.current.get(rowIndex)?.status === 'failed'));
 
+      } catch (error) {
+        if (isMounted.current) {
+          setError(error instanceof Error ? error.message : 'Could not start certificate delivery.');
+          resetEmailProgress();
+        }
       } finally {
         terminateRenderer?.();
         sendInFlightRef.current = false;
@@ -550,7 +572,8 @@ export function useEmailBatchRunner() {
   );
 
   const handleSend = useCallback(async () => {
-    const records = csvData.map((row, i) => ({ rowIndex: i + 2, row }));
+    const { csvReview } = useAppStore.getState();
+    const records = csvData.map((row, i) => ({ rowIndex: csvReview.numbers[i], row }));
     await sendBatch(records, false);
   }, [csvData, sendBatch]);
 
@@ -563,16 +586,17 @@ export function useEmailBatchRunner() {
   // Delivery records span every run in this session, so rows sent by an earlier run or a retry are never re-sent
   const isRowSent = (rowIndex: number) => {
     const status = deliveryRosterRef.current === csvData ? deliveryRecordsRef.current.get(rowIndex)?.status : undefined;
-    return status === 'sent' || status === 'unconfirmed';
+    return excludesAutomaticRetry(status);
   };
 
   const handleResumeUnsent = useCallback(async () => {
+    const { csvReview } = useAppStore.getState();
     const unsentRecords = csvData
-      .map((row, i) => ({ rowIndex: i + 2, row }))
+      .map((row, i) => ({ rowIndex: csvReview.numbers[i], row }))
       .filter(({ rowIndex }) => {
         if (deliveryRosterRef.current !== csvData) return true;
         const status = deliveryRecordsRef.current.get(rowIndex)?.status;
-        return status !== 'sent' && status !== 'unconfirmed';
+        return !excludesAutomaticRetry(status);
       });
     if (unsentRecords.length > 0) {
       await sendBatch(unsentRecords, false);
@@ -625,7 +649,7 @@ export function useEmailBatchRunner() {
       ? emailProgress.records
       : Array.from(deliveryRecordsRef.current.values());
 
-  const unsentCount = csvData.reduce((count, _row, i) => (isRowSent(i + 2) ? count : count + 1), 0);
+  const unsentCount = useAppStore.getState().csvReview.numbers.reduce((count, number) => (isRowSent(number) ? count : count + 1), 0);
 
   return {
     emailProgress,

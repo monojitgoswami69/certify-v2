@@ -4,6 +4,7 @@
 
 import { create } from 'zustand';
 import { defaultCertificateFontSize } from '../lib/certificate-text';
+import { cleanCsvRows, type CsvReviewMetadata } from '../lib/csv-parser';
 import type {
   Font,
   CsvRow,
@@ -100,13 +101,14 @@ interface AppStore {
   csvFile: File | null;
   csvHeaders: string[];
   csvData: CsvRow[];
+  csvReview: CsvReviewMetadata;
   eventName: string;
   eventLabel: string;
   registrationEventId: string | null;
   issuanceStarted: boolean;
   setEventLabel: (label: string) => void;
   setEventName: (name: string) => void;
-  setCsvData: (file: File, headers: string[], data: CsvRow[]) => void;
+  setCsvData: (file: File, headers: string[], data: CsvRow[], review?: CsvReviewMetadata) => void;
   clearCsvData: () => void;
 
   // Email Column Selection
@@ -186,6 +188,7 @@ const initialState = {
   csvFile: null,
   csvHeaders: [] as string[],
   csvData: [] as CsvRow[],
+  csvReview: { numbers: [], ignored: [] } as CsvReviewMetadata,
   eventName: '',
   eventLabel: '',
   registrationEventId: null,
@@ -439,7 +442,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
       registrationDirty: state.isBatchRegistered ? true : state.registrationDirty,
     })),
 
-  setCsvData: (file, headers, data) => {
+  setCsvData: (file, headers, data, review) => {
+    const cleaned = Array.isArray(review?.numbers) && review.numbers.length === data.length
+      && review.numbers.every((number, index, numbers) => Number.isSafeInteger(number) && number > (numbers[index - 1] ?? 1))
+      && Array.isArray(review.ignored) ? { data, review } : cleanCsvRows(data);
     const lower = (h: string) => h.trim().toLowerCase();
     const emailCol =
       headers.find((h) => ['email', 'e-mail', 'email address'].includes(lower(h))) ||
@@ -480,7 +486,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       return {
         csvFile: file,
         csvHeaders: headers,
-        csvData: data,
+        csvData: cleaned.data,
+        csvReview: cleaned.review,
         eventName: state.eventName || defaultEventName || 'General Event',
         emailColumn: emailCol,
         emailSettings: newEmailSettings,
@@ -507,6 +514,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       csvFile: null,
       csvHeaders: [],
       csvData: [],
+      csvReview: { numbers: [], ignored: [] },
       eventName: '',
       emailColumn: '',
       isBatchRegistered: false,

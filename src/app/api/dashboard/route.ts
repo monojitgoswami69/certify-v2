@@ -7,6 +7,8 @@ import { requireIssuer } from '../../../lib/issuer-auth';
 import { eventCertificatesWhere, findOwnedEvent } from '../../../lib/event-records';
 import { env } from '../../../lib/env';
 import { log, requestIdOf } from '../../../lib/logger';
+import { currentMailStatus } from '../../../lib/mail-delivery';
+import type { PersistedMailStatus } from '../../../types';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,6 +21,10 @@ export interface DashboardParticipant {
   templateName: string | null;
   rowData?: Record<string, string> | null;
   renderFields?: Record<string, string> | null;
+  mailStatus: PersistedMailStatus;
+  mailVersion: string | null;
+  mailUpdatedAt: string | null;
+  mailDetail: string | null;
 }
 
 export interface DashboardEventSummary {
@@ -80,6 +86,10 @@ export async function GET(request: Request) {
         templateName: certificates.templateName,
         scanCount: certificates.scanCount,
         lastScannedAt: certificates.lastScannedAt,
+        mailStatus: currentMailStatus,
+        mailVersion: certificates.mailAttemptId,
+        mailUpdatedAt: certificates.mailUpdatedAt,
+        mailDetail: certificates.mailDetail,
         ...(includeRowData ? { rowData: certificates.rowData, renderFields: certificates.renderFields } : {}),
       };
 
@@ -117,6 +127,10 @@ export async function GET(request: Request) {
           templateName: r.templateName,
           rowData: includeRowData ? ((r.rowData as Record<string, string> | null) || null) : null,
           renderFields: r.renderFields ?? null,
+          mailStatus: r.mailStatus,
+          mailVersion: r.mailVersion,
+          mailUpdatedAt: r.mailUpdatedAt?.toISOString() ?? null,
+          mailDetail: r.mailDetail,
         };
       });
 

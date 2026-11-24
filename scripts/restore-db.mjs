@@ -45,6 +45,14 @@ function updatedValue(table, column) {
   if (table === 'certificates' && column === 'status') {
     return "CASE WHEN certificates.status = 'revoked' THEN certificates.status ELSE EXCLUDED.status END";
   }
+  if (table === 'certificates' && column.startsWith('mail_')) {
+    return `CASE WHEN EXCLUDED.mail_updated_at IS NOT NULL AND
+      (certificates.mail_updated_at IS NULL OR EXCLUDED.mail_updated_at > certificates.mail_updated_at)
+      THEN EXCLUDED.${column} ELSE certificates.${column} END`;
+  }
+  if (table === 'events' && column === 'mail_preferences') {
+    return 'CASE WHEN EXCLUDED.updated_at > events.updated_at THEN EXCLUDED.mail_preferences ELSE events.mail_preferences END';
+  }
   if (table === 'users' && column === 'sessions_valid_after') {
     return 'GREATEST(users.sessions_valid_after, EXCLUDED.sessions_valid_after)';
   }

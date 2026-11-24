@@ -33,7 +33,8 @@
     "db:drafts-access": "node scripts/db-migrate-sql.mjs drizzle/0005_drafts_and_access.sql",
     "db:mail-policy": "node scripts/db-migrate-sql.mjs drizzle/0006_mail_policy.sql",
     "db:issued-designs": "node scripts/db-migrate-sql.mjs drizzle/0007_issued_event_designs.sql",
-    "db:issuance-access": "node scripts/db-migrate-sql.mjs drizzle/0008_issuance_access.sql"
+    "db:issuance-access": "node scripts/db-migrate-sql.mjs drizzle/0008_issuance_access.sql",
+    "db:mail-delivery": "node scripts/db-migrate-sql.mjs drizzle/0009_certificate_mail_delivery.sql"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",

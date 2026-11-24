@@ -1,4 +1,5 @@
 import type { IssuedEventDesign } from '../lib/event-design';
+import type { EmailSettings, PersistedMailStatus } from '../types';
 import { sql } from 'drizzle-orm';
 import { DEFAULT_MAILS_PER_MINUTE, DEFAULT_MAILS_PER_SECOND, MAX_MAILS_PER_MINUTE, MAX_MAILS_PER_SECOND } from '../lib/mail-limits';
 import {
@@ -58,6 +59,11 @@ export const certificates = pgTable(
     status: text('status').notNull().default('issued'), // 'issued' | 'revoked' | 'static'
     rowData: jsonb('row_data'),
     renderFields: jsonb('render_fields').$type<Record<string, string>>(),
+    mailStatus: text('mail_status').$type<PersistedMailStatus>().notNull().default('unknown'),
+    mailAttemptId: uuid('mail_attempt_id'),
+    mailUpdatedAt: timestamp('mail_updated_at', { withTimezone: true }),
+    mailGmailId: text('mail_gmail_id'),
+    mailDetail: text('mail_detail'),
     // Aggregate verification counters (opt-in per event; see events.track_scans).
     scanCount: integer('scan_count').notNull().default(0),
     lastScannedAt: timestamp('last_scanned_at', { withTimezone: true }),
@@ -73,6 +79,7 @@ export const certificates = pgTable(
     index('certificates_event_id_idx').on(table.userId, table.eventId),
     index('certificates_event_name_idx').on(table.eventName),
     index('certificates_issued_at_idx').on(table.issuedAt),
+    check('certificates_mail_status_check', sql`${table.mailStatus} in ('pending', 'sending', 'accepted', 'failed', 'unknown')`),
   ]
 );
 
@@ -119,6 +126,7 @@ export const events = pgTable(
     name: text('name').notNull(),
     label: text('label'),
     issuedDesign: jsonb('issued_design').$type<IssuedEventDesign>(),
+    mailPreferences: jsonb('mail_preferences').$type<EmailSettings>(),
     // Opt-in verification counting: aggregate counters only, never scan logs.
     trackScans: boolean('track_scans').notNull().default(false),
     // Optional expiry for the whole event; public verify shows an expired

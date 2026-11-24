@@ -41,6 +41,7 @@ function WorkspaceContent() {
     boxes,
     qrZones,
     csvData,
+    csvReview,
     csvFile,
     eventName,
     eventLabel,
@@ -147,6 +148,7 @@ function WorkspaceContent() {
         eventLabel,
         csvHeaders,
         csvRows: csvData,
+        csvReview,
         csvFileName: csvFile?.name ?? null,
         boxes,
         qrZones,
@@ -177,6 +179,7 @@ function WorkspaceContent() {
     recoveringDraft,
     eventName,
     csvData,
+    csvReview,
     csvHeaders,
     csvFile,
     boxes,
@@ -235,7 +238,7 @@ function WorkspaceContent() {
         ].join('\n');
         const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
         const file = new File([blob], draft.csvFileName || 'recovered-roster.csv', { type: 'text/csv' });
-        setCsvData(file, draft.csvHeaders, draft.csvRows);
+        setCsvData(file, draft.csvHeaders, draft.csvRows, draft.csvReview);
       }
       setBoxes(draft.boxes || []);
       setQrZones(draft.qrZones || []);

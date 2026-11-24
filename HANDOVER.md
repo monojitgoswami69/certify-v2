@@ -19,9 +19,11 @@ The browser release pass for commit `00a1f1f` covered the Admin Overview and Acc
 
 Migrations applied to the live Neon DB: `0003_event_features`, `0004_template_versions`, `0005_drafts_and_access` (idempotent npm scripts; intentionally NOT in the drizzle journal — the project uses push + these scripts by design; `db:stamp` history explains).
 
-## 2. Deferred delivery changes
+## 2. Issuance review and delivery
 
-Email batches run in the open Studio tab and dispatch through the authenticated Gmail send endpoint. Closing the tab stops the remaining queue. A durable server queue, domain-based sending, and organization-level access are deferred.
+Studio and the dashboard CSV importer review the roster before issuing. CSV record numbers include the header and blank records, and quoted multiline values stay in a single record. Empty records and exact duplicates appear in Removed. Similar names or addresses stay visible for review. The fit check uses the shared canvas text layout and previews display a marked sample QR before issuance.
+
+Email batches run in the browser and closing the tab stops the remaining queue. Open the issued event and select **Email delivery** to resume pending or failed sends using the frozen design and saved email preferences. Gmail acceptance is recorded separately from delivery to the recipient. Review unknown outcomes in Gmail Sent before recording an acceptance or making the recipient eligible to send again.
 
 ## 3. Architecture quick-map (things that will bite you if unknown)
 
@@ -42,9 +44,11 @@ Email batches run in the open Studio tab and dispatch through the authenticated 
 - Before deploying, apply `npm run db:mail-policy` after the earlier migrations. This widens the Gmail token expiry column, removes credentials saved under the old sender policy, and adds quota fields. Each sender needs to authorize Gmail again in Studio with their sign-in email.
 - Apply `npm run db:issued-designs` after the mail-policy migration. Issued events use an immutable design and a public field snapshot per recipient. Older verification links retain their status and metadata. The issuer can restore downloads by reviewing and confirming the original design from the event dashboard.
 - Apply `npm run db:issuance-access` before deploying the issuance permission changes. Existing and new accounts, including the configured superadmin, start with issuance disabled. Grant issuance explicitly in Access management for each approved issuer.
+- Apply `npm run db:mail-delivery` after `db:issuance-access` and before deploying the app. Set `DATABASE_URL` explicitly for the target environment. The additive migration initializes preexisting certificates to Unknown and new issuance records as Pending. Old app builds can still register certificates during rollout, and those records also start Unknown. Have issuers reopen existing Studio tabs after deployment so their mail requests include certificate IDs.
+- Backups created after the migration contain delivery status, attempt versions, provider IDs, and event mail preferences. Apply the migration before creating or restoring those backups. When restoring an older snapshot into an empty database, review any historical records in Gmail Sent. A restored in-flight request becomes Unknown after two minutes. Check Gmail Sent for activity after the most recent snapshot before resuming affected batches after a recovery.
 
 - The super admin can adjust the rolling per-account limits under **Admin → Access**. Defaults are 55 sends per minute and 8 per second. Match per-account settings to your Gmail project and mailbox quotas. Gmail can also impose daily, concurrency, and project-wide limits. Certify pauses for its own rate limit and stops starting sends when Gmail reports a quota limit.
-- Delivery still runs from the open Studio tab. If a Gmail request timed out, check Gmail Sent before retrying. Confirm the live OAuth consent, reconnect, and test delivery in staging before deploying to production.
+- Confirm the live OAuth consent, reconnection, and delivery in staging before deploying to production.
 
 ## Canvas rendering and regression checks
 

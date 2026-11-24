@@ -64,7 +64,9 @@ export interface EmailSettings {
   attachPng?: boolean;
 }
 
-export type EmailDeliveryStatus = 'pending' | 'sending' | 'sent' | 'failed' | 'skipped' | 'unconfirmed';
+export type PersistedMailStatus = 'pending' | 'sending' | 'accepted' | 'failed' | 'unknown';
+
+export type EmailDeliveryStatus = 'pending' | 'sending' | 'sent' | 'failed' | 'skipped' | 'unconfirmed' | 'in_flight';
 
 export interface EmailDeliveryRecord {
   rowIndex: number;

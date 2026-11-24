@@ -1,4 +1,5 @@
 import type { IssuedEventDesign } from './event-design';
+import type { EmailSettings, PersistedMailStatus } from '../types';
 import { ISSUANCE_ACCESS_CHANGED_EVENT, ISSUANCE_REQUIRED_HEADER } from './access-role';
 
 /**
@@ -61,7 +62,7 @@ export interface RegistrationOutcome {
 /** Registers recipients against one immutable issued design. */
 export async function registerCertificates(
   items: RegisterCertificateItem[],
-  event: { eventId: string; eventName?: string; label?: string; design?: IssuedEventDesign }
+  event: { eventId: string; eventName?: string; label?: string; design?: IssuedEventDesign; mailPreferences?: EmailSettings }
 ): Promise<RegistrationOutcome[]> {
   const response = await apiFetch(`${API_BASE}/certificates/register`, {
     method: 'POST',
@@ -118,6 +119,8 @@ export class EmailRateLimitError extends Error {
 }
 
 export interface SendEmailV2Params {
+  certificateId: string;
+  resendVersion?: string;
   recipientEmail: string;
   emailSubject: string;
   emailBodyPlain: string;
@@ -137,6 +140,10 @@ export class EmailUnconfirmedError extends Error {
 
 export class IssuanceAccessRequiredError extends Error {}
 
+export class EmailDeliveryBlockedError extends Error {
+  constructor(message: string, readonly deliveryStatus: PersistedMailStatus) { super(message); }
+}
+
 export interface SendEmailResult {
   status: 'success' | 'reconnect_required';
   message: string;
@@ -151,6 +158,8 @@ export interface SendEmailResult {
  */
 export async function sendEmailV2(params: SendEmailV2Params): Promise<SendEmailResult> {
   const form = new FormData();
+  form.append('certificate_id', params.certificateId);
+  if (params.resendVersion) form.append('resend_version', params.resendVersion);
   form.append('recipient_email', params.recipientEmail);
   form.append('email_subject', params.emailSubject);
   form.append('email_body_plain', params.emailBodyPlain);
@@ -173,6 +182,7 @@ export async function sendEmailV2(params: SendEmailV2Params): Promise<SendEmailR
   }
 
   if (!response.ok) {
+    if (data?.status === 'delivery_blocked') throw new EmailDeliveryBlockedError(data.detail, data.deliveryStatus);
     if (response.headers.get(ISSUANCE_REQUIRED_HEADER) === '1') {
       throw new IssuanceAccessRequiredError(data?.detail || 'Certificate issuance access is required');
     }
@@ -205,6 +215,21 @@ export interface EventDesignResponse {
   event: { id: string; name: string; label: string | null; designLocked: boolean };
   design: IssuedEventDesign | null;
   revision: string | null;
+  mailPreferences?: EmailSettings | null;
+}
+
+export async function saveEventMailPreferences(eventId: string, mailPreferences: EmailSettings) {
+  const response = await apiFetch(`${API_BASE}/events/${encodeURIComponent(eventId)}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mailPreferences }),
+  });
+  if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || 'Could not save this event’s email preferences.');
+}
+
+export async function reviewCertificateMail(id: string, version: string | null, found: boolean) {
+  const response = await apiFetch(`${API_BASE}/certificates/${encodeURIComponent(id)}/mail`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ version, found }),
+  });
+  if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || 'Could not save this delivery review.');
 }
 
 export async function fetchEventDesign(eventId: string, signal?: AbortSignal): Promise<EventDesignResponse> {

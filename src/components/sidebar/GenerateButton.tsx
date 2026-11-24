@@ -14,25 +14,23 @@ import {
   FileSpreadsheet,
   Cpu,
   Zap,
-  ShieldCheck,
 } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import { useCertificateBatchGenerator } from './useCertificateBatchGenerator';
 import { useBatchRegistration } from './useBatchRegistration';
+import { ReviewBatchButton } from './ReviewBatchButton';
 import { CertificateGenerationModal } from '../modals/CertificateGenerationModal';
 
 export function GenerateButton() {
-  const { csvData, setViewMode, eventName, issuanceStarted } = useAppStore();
+  const { csvData, setViewMode, eventName } = useAppStore();
 
   const {
     isBatchRegistered,
-    isBatchRegistering,
     batchRegistrationError,
     registeredCertIds,
     registrationDirty,
     needsRegistration,
     canExport,
-    registerBatch,
   } = useBatchRegistration();
 
   const {
@@ -96,26 +94,7 @@ export function GenerateButton() {
               )}
             </div>
 
-            {!isBatchRegistered ? (
-              <button
-                type="button"
-                onClick={() => registerBatch()}
-                disabled={isBatchRegistering || csvData.length === 0}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-sm font-semibold transition-all shadow-sm disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed cursor-pointer"
-              >
-                {isBatchRegistering ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin text-white" />
-                    <span>Registering {csvData.length} Certificates...</span>
-                  </>
-                ) : (
-                  <>
-                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                    <span>{issuanceStarted ? 'Finish issuing' : 'Register Event Batch'} ({csvData.length} Certificates)</span>
-                  </>
-                )}
-              </button>
-            ) : null}
+            {!isBatchRegistered && <ReviewBatchButton />}
 
             {batchRegistrationError && (
               <div className="flex items-start gap-1.5 p-2 text-xs text-red-600 bg-red-50 rounded-lg">

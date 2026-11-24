@@ -7,6 +7,8 @@ import { requireIssuer } from '../../../../lib/issuer-auth';
 import { env } from '../../../../lib/env';
 import { isValidCertificateId } from '../../../../lib/verification';
 import { log, requestIdOf } from '../../../../lib/logger';
+import { readMailPreferences } from '../../../../lib/mail-preferences';
+import type { EmailSettings } from '../../../../types';
 
 /**
  * Per-event settings owned by the issuing account: opt-in verification
@@ -25,18 +27,24 @@ export async function PATCH(
     return NextResponse.json({ detail: 'Event not found' }, { status: 404 });
   }
 
-  let body: { trackScans?: unknown; validThrough?: unknown };
+  let body: { trackScans?: unknown; validThrough?: unknown; mailPreferences?: unknown };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ detail: 'Invalid request body' }, { status: 400 });
   }
 
-  const updates: { trackScans?: boolean; validThrough?: Date | null; updatedAt: Date } = {
+  if (!body || typeof body !== 'object') return NextResponse.json({ detail: 'Invalid request body' }, { status: 400 });
+  const updates: { trackScans?: boolean; validThrough?: Date | null; updatedAt: Date; mailPreferences?: EmailSettings } = {
     updatedAt: new Date(),
   };
   if (body.trackScans !== undefined) {
     updates.trackScans = Boolean(body.trackScans);
+  }
+  if (body.mailPreferences !== undefined) {
+    const preferences = readMailPreferences(body.mailPreferences);
+    if (!preferences) return NextResponse.json({ detail: 'The email preferences are invalid or exceed the size limit.' }, { status: 400 });
+    updates.mailPreferences = preferences;
   }
   if (body.validThrough !== undefined) {
     if (body.validThrough === null || body.validThrough === '') {

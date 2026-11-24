@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import { clearTextMeasurements, defaultCertificateFontSize, drawCertificateText } from './certificate-text';
+import { clearTextMeasurements, defaultCertificateFontSize, drawCertificateText, inspectCertificateText } from './certificate-text';
 import { getPreviewBackingSize } from '../components/canvas/canvas-geometry';
 import type { TextBox } from '../types';
 
@@ -41,4 +41,28 @@ it('fits long text, reuses metrics, and recalculates when fonts load', () => {
   clearTextMeasurements(context);
   drawCertificateText(context, text, box, 'sans-serif');
   expect(mock.measureText).toHaveBeenCalled();
+});
+
+it('shares text sizing with the renderer and detects ink past the artwork', () => {
+  const mock = {
+    font: '', save: vi.fn(), restore: vi.fn(), fillText: vi.fn(),
+    measureText: (text: string) => {
+      const size = parseFloat(mock.font);
+      const width = size * text.length;
+      return { width, actualBoundingBoxLeft: width / 2, actualBoundingBoxRight: width / 2,
+        actualBoundingBoxAscent: size, actualBoundingBoxDescent: size / 5 };
+    },
+  };
+  const context = mock as unknown as CanvasRenderingContext2D;
+  const box: TextBox = {
+    id: 'name', field: 'Name', x: 10, y: 10, w: 100, h: 50, fontSize: 20,
+    hAlign: 'center', vAlign: 'middle', fontColor: '#000', fontFamily: 'Test Family',
+  };
+  const text = 'A very long recipient';
+  const fitted = inspectCertificateText(context, text, box, '"Test Family"', 1000, 1000);
+  expect(fitted.status).toBe('tight');
+  expect(fitted.size).toBeLessThan(box.fontSize);
+  drawCertificateText(context, text, box, '"Test Family"');
+  expect(parseFloat(mock.font)).toBe(fitted.size);
+  expect(inspectCertificateText(context, 'Ada', { ...box, x: 970 }, '"Test Family"', 1000, 1000).status).toBe('overflow');
 });

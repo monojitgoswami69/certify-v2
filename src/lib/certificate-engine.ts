@@ -12,6 +12,8 @@ import { resolveFieldValue } from './utils';
 import { drawStyledQr } from './qr-renderer';
 import { drawCertificateText } from './certificate-text';
 
+export const SAMPLE_QR_URL = 'https://example.invalid/verify/sample-certificate';
+
 export interface QrPlacement {
   x: number;
   y: number;
@@ -68,6 +70,7 @@ export interface GenerateParams {
   images?: ImageElement[];
   /** Fully-qualified verification URL encoded into the QR (per record). */
   verificationUrl?: string;
+  sampleQr?: boolean;
   /**
    * Optional reusable canvas. When provided by a long-running caller (e.g. a
    * worker pool), allocation/GC churn is avoided across thousands of records.
@@ -130,6 +133,7 @@ export async function generateCertificate(
     qrZones,
     images,
     verificationUrl,
+    sampleQr,
     canvas: provided,
   } = params;
 
@@ -157,17 +161,30 @@ export async function generateCertificate(
   }
 
   const zonesToDraw = qrZones && qrZones.length > 0 ? qrZones : qrZone ? [qrZone] : [];
-  if (zonesToDraw.length > 0 && verificationUrl) {
+  const qrText = sampleQr ? SAMPLE_QR_URL : verificationUrl;
+  if (zonesToDraw.length > 0 && qrText) {
     for (const zone of zonesToDraw) {
       const logo = zone.style?.logo ? await decodeImageElement(zone.style.logo) : null;
       drawStyledQr(ctx, {
         x: zone.x,
         y: zone.y,
         size: zone.size,
-        text: verificationUrl,
+        text: qrText,
         style: zone.style,
         logoImg: logo,
       });
+      if (sampleQr) {
+        ctx.save();
+        const bannerHeight = zone.size * 0.21;
+        ctx.fillStyle = '#171717';
+        ctx.fillRect(zone.x, zone.y + zone.size - bannerHeight, zone.size, bannerHeight);
+        ctx.fillStyle = '#fff';
+        ctx.font = `bold ${bannerHeight * 0.72}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('SAMPLE', zone.x + zone.size / 2, zone.y + zone.size - bannerHeight / 2, zone.size * 0.9);
+        ctx.restore();
+      }
     }
   }
 

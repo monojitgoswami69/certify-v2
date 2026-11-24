@@ -852,7 +852,8 @@ export function useCertificateBatchGenerator() {
 
   const handleGenerate = useCallback(async () => {
     setIsReportOpen(false);
-    const records = csvData.map((row, i) => ({ rowIndex: i + 2, row }));
+    const { csvReview } = useAppStore.getState();
+    const records = csvData.map((row, i) => ({ rowIndex: csvReview.numbers[i], row }));
     await generateBatch(records, false);
   }, [csvData, generateBatch]);
 

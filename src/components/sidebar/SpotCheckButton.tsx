@@ -15,7 +15,7 @@ const PREVIEW_CACHE_LIMIT = 40;
  * real data instead of discovering them in an inbox.
  */
 export function SpotCheckButton({ disabled }: { disabled?: boolean }) {
-  const { templateImage, csvData, boxes, qrZones, images, eventName, registeredCertIds, isBatchRegistered, registrationDirty } =
+  const { templateImage, csvData, csvReview, boxes, qrZones, images, eventName, registeredCertIds, isBatchRegistered, registrationDirty } =
     useAppStore();
   const [open, setOpen] = useState(false);
   const [index, setIndex] = useState(0);
@@ -27,7 +27,7 @@ export function SpotCheckButton({ disabled }: { disabled?: boolean }) {
   const useQr = qrZones.length > 0;
   const validBoxes = useMemo(() => boxes.filter((b) => b.field || b.kind === 'static'), [boxes]);
   const canOpen = Boolean(templateImage && csvData.length > 0 && validBoxes.length > 0);
-  const qrBlocked = useQr && (!isBatchRegistered || registrationDirty);
+  const sampleQr = useQr && (!isBatchRegistered || registrationDirty);
 
   useEffect(() => {
     if (!open) {
@@ -59,7 +59,7 @@ export function SpotCheckButton({ disabled }: { disabled?: boolean }) {
 
   useEffect(() => {
     if (!open || !templateImage || !csvData[index]) return;
-    const rowIndex = index + 2;
+    const rowIndex = csvReview.numbers[index];
     const row = csvData[index];
     const seq = ++renderSeqRef.current;
 
@@ -90,7 +90,8 @@ export function SpotCheckButton({ disabled }: { disabled?: boolean }) {
           includeBase64: true,
           qrZones: useQr ? (qrZones as QrZone[]) : undefined,
           images,
-          verificationUrl: useQr && certId ? buildVerifyUrlFor(certId) : undefined,
+          verificationUrl: useQr && certId && !sampleQr ? buildVerifyUrlFor(certId) : undefined,
+          sampleQr: useQr && (sampleQr || !certId),
         });
         if (seq !== renderSeqRef.current || !cert.pngBase64) return;
 
@@ -107,7 +108,7 @@ export function SpotCheckButton({ disabled }: { disabled?: boolean }) {
         if (seq === renderSeqRef.current) setRendering(false);
       }
     })();
-  }, [open, index, templateImage, csvData, validBoxes, qrZones, useQr, registeredCertIds, images]);
+  }, [open, index, templateImage, csvData, csvReview, validBoxes, qrZones, useQr, registeredCertIds, images, sampleQr]);
 
   if (!canOpen) return null;
 
@@ -119,7 +120,7 @@ export function SpotCheckButton({ disabled }: { disabled?: boolean }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        disabled={disabled || qrBlocked}
+        disabled={disabled}
         className="w-full flex items-center justify-center gap-2 py-2 px-3 text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg hover:border-slate-400 hover:bg-slate-50 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
         title="Flip through rendered certificates before generating or sending"
       >
@@ -145,7 +146,7 @@ export function SpotCheckButton({ disabled }: { disabled?: boolean }) {
                   Spot check — {eventName || 'Untitled event'}
                 </h2>
                 <p className="text-xs text-stone-500">
-                  {displayName} · {index + 1} of {csvData.length}
+                  {displayName} · CSV record {csvReview.numbers[index]}{sampleQr ? ' · Sample QR' : ''}
                 </p>
               </div>
               <button

@@ -17,3 +17,22 @@ describe('CSV header collisions', () => {
     expect(Object.getPrototypeOf(data[0])).toBe(Object.prototype);
   });
 });
+
+describe('CSV record review', () => {
+  it('keeps source record numbers through quoted newlines, empty records and exact duplicates', () => {
+    const result = parseCsv('Name,Course\r\nAda,"First\r\nSecond"\r\n,\r\n" "," "\r\nAda,"First\r\nSecond"\r\nGrace,Math\r\n');
+    expect(result.data).toEqual([{ Name: 'Ada', Course: 'First\r\nSecond' }, { Name: 'Grace', Course: 'Math' }]);
+    expect(result.review.numbers).toEqual([2, 6]);
+    expect(result.review.ignored).toEqual([{ number: 3 }, { number: 4 }, { number: 5, duplicateOf: 2 }]);
+  });
+
+  it('retains extra values for review and reports ambiguous header renames', () => {
+    const result = parseCsv('Name,Name,,Course\nAda,Ada,,History\nAda,Ada,,History,2026\nAda,Ada,,History,2027');
+    expect(result.data).toHaveLength(3);
+    expect(result.review.extraColumns).toEqual([3, 4]);
+    expect(result.review.renamedHeaders).toEqual([
+      { column: 2, name: 'Name', header: 'Name_2' }, { column: 3, name: '', header: 'Column_3' },
+    ]);
+    expect(result.data.map((row) => row['Extra CSV values'])).toEqual(['', '["2026"]', '["2027"]']);
+  });
+});
