@@ -1,7 +1,5 @@
 /**
- * Worker Pool for Parallel Certificate Generation (core - 1 Concurrency)
- *
- * Distributes certificate generation across (hardwareConcurrency - 1) Web Workers.
+ * Parallel certificate generation with concurrency bounded by CPU and template memory.
  * Workers remain warm across chunks, sharing the template Blob with zero-copy.
  */
 
@@ -21,17 +19,22 @@ export interface WorkerTask {
 
 export class CertificateWorkerPool {
   private workers: Worker[] = [];
+  private failedWorkers = new Map<Worker, string>();
   private pendingResolves: Array<() => void> = [];
 
   /**
    * Concurrency is configured to (cores - 1) to saturate available multi-core hardware
    * while keeping 1 core dedicated to the main thread for smooth 60 FPS UI interaction.
    */
-  static getOptimalWorkerCount(): number {
+  static getOptimalWorkerCount(width: number, height: number): number {
     const cores = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 4 : 4;
-    // Clamp to 8 max workers to prevent tab memory exhaustion on mobile/tablets (e.g. iPad 1.5GB cap)
-    // and high-core desktop workstations (e.g. 32-128 core workstations)
-    return Math.max(1, Math.min(cores - 1, 8));
+    const memory = typeof navigator !== 'undefined'
+      ? (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 4
+      : 4;
+    // Each worker decodes the template and typically keeps two RGBA buffers.
+    const bytesPerWorker = Math.max(1, width * height) * 4 * 3;
+    const budget = (memory <= 4 ? 96 : 192) * 1024 ** 2;
+    return Math.max(1, Math.min(cores - 1, 8, Math.floor(budget / bytesPerWorker)));
   }
 
   static isSupported(): boolean {
@@ -72,7 +75,8 @@ export class CertificateWorkerPool {
     maxWorkers?: number,
     images?: ImageElement[]
   ): Promise<number> {
-    const workerCount = maxWorkers ?? CertificateWorkerPool.getOptimalWorkerCount();
+    const optimal = CertificateWorkerPool.getOptimalWorkerCount(templateWidth, templateHeight);
+    const workerCount = Math.max(1, Math.min(maxWorkers ?? optimal, optimal));
     const initPromises: Promise<void>[] = [];
 
     for (let i = 0; i < workerCount; i++) {
@@ -149,7 +153,8 @@ export class CertificateWorkerPool {
     tasks: WorkerTask[],
     onResult?: (result: BatchResultItem, completedInChunk: number, totalInChunk: number) => void
   ): Promise<void> {
-    if (tasks.length === 0 || this.workers.length === 0) return;
+    if (tasks.length === 0) return;
+    if (this.workers.length === 0) throw new Error('Worker pool not initialized');
 
     const workerCount = this.workers.length;
     const tasksPerWorker = Math.ceil(tasks.length / workerCount);
@@ -170,60 +175,60 @@ export class CertificateWorkerPool {
       return new Promise<void>((resolve) => {
         const worker = this.workers[workerIndex];
 
-        this.pendingResolves.push(resolve);
         const reportedTaskIds = new Set<number>();
-
-        const handler = (event: MessageEvent) => {
-          if (event.data.type === 'itemComplete') {
-            const r: BatchResultItem = event.data.result;
-            reportedTaskIds.add(r.id);
-            completedCount++;
-
-            onResult?.(
-              {
-                id: r.id,
-                rowIndex: r.rowIndex,
-                filename: r.filename,
-                verificationUrl: r.verificationUrl,
-                blobs: r.blobs,
-                error: r.error,
-              },
-              completedCount,
-              totalCount
-            );
-          } else if (event.data.type === 'batchComplete') {
-            cleanup();
-            resolve();
-          }
-        };
-
-        const errorHandler = (err: ErrorEvent) => {
+        let timer: ReturnType<typeof setTimeout>;
+        const finish = (error: string, failed = false) => {
           cleanup();
-          console.error(`[WorkerPool] Worker ${workerIndex} encountered an unhandled error:`, err);
+          if (failed) {
+            this.failedWorkers.set(worker, error);
+            worker.terminate();
+          }
           for (const task of batch) {
             if (reportedTaskIds.has(task.id)) continue;
             completedCount++;
-            onResult?.(
-              {
-                id: task.id,
-                rowIndex: task.rowIndex,
-                filename: task.filename,
-                error: err.message || 'Worker thread execution error',
-              },
-              completedCount,
-              totalCount
-            );
+            onResult?.({ id: task.id, rowIndex: task.rowIndex, filename: task.filename, error }, completedCount, totalCount);
           }
           resolve();
         };
-
+        const restartTimer = () => {
+          clearTimeout(timer);
+          timer = setTimeout(() => finish('Certificate rendering timed out', true), 90_000);
+        };
+        const cancel = () => {
+          cleanup();
+          resolve();
+        };
+        const handler = (event: MessageEvent) => {
+          if (event.data.type === 'itemComplete') {
+            const result: BatchResultItem = event.data.result;
+            if (reportedTaskIds.has(result.id)) return;
+            reportedTaskIds.add(result.id);
+            restartTimer();
+            completedCount++;
+            onResult?.(result, completedCount, totalCount);
+          } else if (event.data.type === 'batchComplete') {
+            finish('Worker finished without returning this certificate');
+          }
+        };
+        const errorHandler = (event: ErrorEvent) => finish(event.message || 'Worker thread execution error', true);
+        const messageErrorHandler = () => finish('Cannot read the worker output', true);
         const cleanup = () => {
+          clearTimeout(timer);
           worker.removeEventListener('message', handler);
           worker.removeEventListener('error', errorHandler);
+          worker.removeEventListener('messageerror', messageErrorHandler);
         };
 
+        const previousFailure = this.failedWorkers.get(worker);
+        if (previousFailure) {
+          finish(previousFailure);
+          return;
+        }
+        this.pendingResolves.push(cancel);
         worker.addEventListener('message', handler);
         worker.addEventListener('error', errorHandler);
+        worker.addEventListener('messageerror', messageErrorHandler);
+        restartTimer();
 
         worker.postMessage({
           type: 'generateBatch',
@@ -242,74 +247,6 @@ export class CertificateWorkerPool {
     this.pendingResolves = [];
   }
 
-  /**
-   * Generates a single probe certificate to determine format-specific byte sizes.
-   */
-  async generateSingle(task: WorkerTask): Promise<BatchResultItem> {
-    if (this.workers.length === 0) {
-      throw new Error('Worker pool not initialized');
-    }
-
-    const worker = this.workers[0];
-
-    return new Promise<BatchResultItem>((resolve) => {
-      let result: BatchResultItem | null = null;
-
-      const handler = (event: MessageEvent) => {
-        if (event.data.type === 'itemComplete') {
-          const r = event.data.result;
-          result = {
-            id: r.id,
-            rowIndex: r.rowIndex,
-            filename: r.filename,
-            verificationUrl: r.verificationUrl,
-            blobs: r.blobs,
-            error: r.error,
-          };
-        } else if (event.data.type === 'batchComplete') {
-          worker.removeEventListener('message', handler);
-          resolve(
-            result ?? {
-              id: task.id,
-              rowIndex: task.rowIndex,
-              filename: task.filename,
-              error: 'Probe generation failed',
-            }
-          );
-        }
-      };
-
-      worker.addEventListener('message', handler);
-
-      const noop = () => {
-        resolve({
-          id: task.id,
-          rowIndex: task.rowIndex,
-          filename: task.filename,
-          error: 'Worker pool terminated',
-        });
-      };
-      this.pendingResolves.push(noop);
-
-      worker.postMessage({
-        type: 'generateBatch',
-        items: [
-          {
-            id: task.id,
-            rowIndex: task.rowIndex,
-            row: task.row,
-            filename: task.filename,
-            verificationUrl: task.verificationUrl,
-          },
-        ],
-      });
-    });
-  }
-
-  getWorkerCount(): number {
-    return this.workers.length;
-  }
-
   terminate(): void {
     for (const resolve of this.pendingResolves) {
       resolve();
@@ -320,5 +257,6 @@ export class CertificateWorkerPool {
       worker.terminate();
     }
     this.workers = [];
+    this.failedWorkers.clear();
   }
 }

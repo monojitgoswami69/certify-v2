@@ -236,7 +236,9 @@ export function getFontFamilyCSS(family: string, category?: FontCategory): strin
     handwriting: 'cursive',
     monospace: 'ui-monospace, "Courier New", monospace',
   };
-  return `"${family}", ${fallbacks[category || 'sans-serif']}`;
+  const fallback = fallbacks[category || 'sans-serif'];
+  const name = family?.replace(/['"\\\r\n]/g, '').trim();
+  return name ? `"${name}", ${fallback}` : fallback;
 }
 
 export function searchFonts(query: string, fonts: Font[]): Font[] {

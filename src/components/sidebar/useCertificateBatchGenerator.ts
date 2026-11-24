@@ -502,7 +502,7 @@ export function useCertificateBatchGenerator() {
             qrZones,
             activeFormatsList,
             workerFonts,
-            undefined,
+            records.length,
             images
           );
 

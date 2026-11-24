@@ -9,15 +9,6 @@ import { env, isDevelopment } from '../../../../lib/env';
 import { log, requestIdOf } from '../../../../lib/logger';
 import { verificationMaintenanceResponse } from '../../../../lib/verification-maintenance';
 
-function maskEmail(email: string | null): string | null {
-  if (!email) return null;
-  const at = email.lastIndexOf('@');
-  if (at < 1) return null;
-  const local = email.slice(0, at);
-  const visible = local.length <= 2 ? local[0] : local.slice(0, 2);
-  return `${visible}${'•'.repeat(Math.max(3, local.length - visible.length))}${email.slice(at)}`;
-}
-
 /**
  * Public certificate verification endpoint backing the /verify/[id] page.
  * Malformed and unknown ids share the same neutral not_found response so the
@@ -163,7 +154,7 @@ export async function GET(
       {
         status: 'valid',
         recipientName: cert.recipientName,
-        recipientEmail: isOwner ? cert.recipientEmail : maskEmail(cert.recipientEmail),
+        ...(isOwner ? { recipientEmail: cert.recipientEmail } : {}),
         eventName: cert.eventName,
         issuedAt: cert.issuedAt,
         issuedBy,

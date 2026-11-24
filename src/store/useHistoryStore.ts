@@ -25,30 +25,25 @@ interface HistoryState {
   clearHistory: () => void;
 }
 
-function normalizeQrZones(input?: QrZone[] | QrZone | null): QrZone[] {
-  if (input === undefined) {
-    try {
-      const current = useAppStore.getState().qrZones;
-      return current ? JSON.parse(JSON.stringify(current)) : [];
-    } catch {
-      return [];
-    }
-  }
-  if (!input) return [];
-  if (Array.isArray(input)) return JSON.parse(JSON.stringify(input));
-  return [JSON.parse(JSON.stringify(input))];
-}
-
-function normalizeImages(input?: ImageElement[] | null): ImageElement[] {
-  if (input === undefined) {
-    try {
-      const current = useAppStore.getState().images;
-      return current ? JSON.parse(JSON.stringify(current)) : [];
-    } catch {
-      return [];
-    }
-  }
-  return input ? JSON.parse(JSON.stringify(input)) : [];
+function snapshotCanvas(
+  boxes: TextBox[],
+  qrZones?: QrZone[] | QrZone | null,
+  images?: ImageElement[] | null
+): CanvasSnapshot {
+  const current = useAppStore.getState();
+  const zones = qrZones === undefined ? current.qrZones
+    : Array.isArray(qrZones) ? qrZones : qrZones ? [qrZones] : [];
+  const snapshotZones = zones.map((zone) => ({
+    ...zone,
+    style: zone.style ? { ...zone.style } : undefined,
+  }));
+  // Asset data URLs are immutable strings. Keep their references across history entries.
+  return {
+    boxes: boxes.map((box) => ({ ...box })),
+    qrZones: snapshotZones,
+    images: (images === undefined ? current.images : images ?? []).map((image) => ({ ...image })),
+    qrZone: snapshotZones[0] ?? null,
+  };
 }
 
 export const useHistoryStore = create<HistoryState>((set, get) => ({
@@ -56,13 +51,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
   future: [],
 
   pushState: (boxes: TextBox[], qrZones?: QrZone[] | QrZone | null, images?: ImageElement[] | null) => {
-    const normalized = normalizeQrZones(qrZones);
-    const snapshot: CanvasSnapshot = {
-      boxes: JSON.parse(JSON.stringify(boxes)),
-      qrZones: normalized,
-      images: normalizeImages(images),
-      qrZone: normalized[0] || null,
-    };
+    const snapshot = snapshotCanvas(boxes, qrZones, images);
     set((state) => ({
       past: [...state.past.slice(-25), snapshot],
       future: [],
@@ -75,14 +64,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
 
     const previous = past[past.length - 1];
     const newPast = past.slice(0, past.length - 1);
-    const normalized = normalizeQrZones(currentQrZones);
-
-    const currentSnapshot: CanvasSnapshot = {
-      boxes: JSON.parse(JSON.stringify(currentBoxes)),
-      qrZones: normalized,
-      images: normalizeImages(currentImages),
-      qrZone: normalized[0] || null,
-    };
+    const currentSnapshot = snapshotCanvas(currentBoxes, currentQrZones, currentImages);
 
     set({
       past: newPast,
@@ -98,14 +80,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
 
     const next = future[0];
     const newFuture = future.slice(1);
-    const normalized = normalizeQrZones(currentQrZones);
-
-    const currentSnapshot: CanvasSnapshot = {
-      boxes: JSON.parse(JSON.stringify(currentBoxes)),
-      qrZones: normalized,
-      images: normalizeImages(currentImages),
-      qrZone: normalized[0] || null,
-    };
+    const currentSnapshot = snapshotCanvas(currentBoxes, currentQrZones, currentImages);
 
     set({
       past: [...past, currentSnapshot],

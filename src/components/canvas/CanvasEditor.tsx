@@ -1,12 +1,9 @@
 'use client';
 
-import React, { useRef, useEffect, useCallback, useState } from 'react';
+import React, { useRef, useEffect, useCallback, useState, useLayoutEffect } from 'react';
 import { Image as ImageIcon } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 
-// Deterministic QR ('CERTIFY-VERIFY-PLACEHOLDER', 512px, transparent bg) baked at build time.
-const PLACEHOLDER_QR_DATA_URL =
-  '${qr}';
 import { useHistoryStore } from '../../store/useHistoryStore';
 import {
   calculateMoveSnapping,
@@ -28,43 +25,46 @@ import {
   getQrZoneAtPoint,
   getQrResizeHandleAtPoint,
   getImageElementAtPoint,
-  QR_MIN_SIZE,
 } from './canvas-renderer';
-import { getCachedImage } from '../../lib/qr-renderer';
+import { subscribeToQrImage } from '../../lib/qr-renderer';
+import { clearTextMeasurements } from '../../lib/certificate-text';
+import { getPreviewBackingSize } from './canvas-geometry';
 import { CanvasToolbar } from './CanvasToolbar';
 
 type DragMode = 'none' | 'draw' | 'move' | 'resize' | 'qr-move' | 'qr-resize' | 'img-move' | 'img-resize' | 'pan';
 
-const MIN_BOX_SIZE = 20;
+const MIN_DRAG_SIZE = 12;
+type Bounds = Pick<TextBox, 'x' | 'y' | 'w' | 'h'>;
 
 /**
- * Keeps a resized box at least MIN_BOX_SIZE and inside the template, anchoring the edge
+ * Keeps a resized box inside the template, anchoring the edge
  * opposite the dragged handle so dragging past it cannot produce negative dimensions.
  */
 function constrainResizedBox(
-  box: { x: number; y: number; w: number; h: number },
-  original: TextBox,
+  box: Bounds,
+  original: Bounds,
   handle: HandleKey,
   templateWidth: number,
-  templateHeight: number
-): { x: number; y: number; w: number; h: number } {
+  templateHeight: number,
+  minimum: number
+): Bounds {
   let { x, y, w, h } = box;
 
   if (handle.includes('w')) {
     const right = original.x + original.w;
-    x = Math.max(0, Math.min(x, right - MIN_BOX_SIZE));
+    x = Math.max(0, Math.min(x, right - Math.min(right, minimum)));
     w = right - x;
   } else if (handle.includes('e')) {
-    w = Math.max(MIN_BOX_SIZE, Math.min(w, templateWidth - original.x));
+    w = Math.min(templateWidth - original.x, Math.max(minimum, w));
     x = original.x;
   }
 
   if (handle.includes('n')) {
     const bottom = original.y + original.h;
-    y = Math.max(0, Math.min(y, bottom - MIN_BOX_SIZE));
+    y = Math.max(0, Math.min(y, bottom - Math.min(bottom, minimum)));
     h = bottom - y;
   } else if (handle.includes('s')) {
-    h = Math.max(MIN_BOX_SIZE, Math.min(h, templateHeight - original.y));
+    h = Math.min(templateHeight - original.y, Math.max(minimum, h));
     y = original.y;
   }
 
@@ -116,6 +116,7 @@ export function CanvasEditor() {
 
   // Drag interaction state
   const [dragMode, setDragMode] = useState<DragMode>('none');
+  const dragMovedRef = useRef(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [panDragStart, setPanDragStart] = useState({ x: 0, y: 0 });
   const [panOrigin, setPanOrigin] = useState({ x: 0, y: 0 });
@@ -133,28 +134,29 @@ export function CanvasEditor() {
     z: QrZone[],
     im: ImageElement[]
   ): { boxes: TextBox[]; qrZones: QrZone[]; images: ImageElement[] } => ({
-    boxes: JSON.parse(JSON.stringify(b)),
-    qrZones: JSON.parse(JSON.stringify(z)),
-    images: JSON.parse(JSON.stringify(im)),
+    boxes: b,
+    qrZones: z,
+    images: im,
   });
 
   // Decoded image elements for on-canvas preview; keyed by src.
   const decodedImagesRef = useRef<Map<string, HTMLImageElement>>(new Map());
-  const [, bumpImageVersion] = useState(0);
+  const [imageVersion, bumpImageVersion] = useState(0);
   const ensureDecoded = useCallback((src: string): HTMLImageElement | null => {
     const cached = decodedImagesRef.current.get(src);
-    if (cached) return cached;
+    if (cached) return cached.complete && cached.naturalWidth > 0 ? cached : null;
     const img = new Image();
-    img.onload = () => {
-      decodedImagesRef.current.set(src, img);
-      bumpImageVersion((v) => v + 1);
-    };
-    img.onerror = () => {
-      decodedImagesRef.current.set(src, img); // cache broken src as failed
-    };
+    img.onload = () => bumpImageVersion((version) => version + 1);
+    decodedImagesRef.current.set(src, img);
     img.src = src;
     return null;
   }, []);
+
+  useEffect(() => {
+    for (const src of decodedImagesRef.current.keys()) {
+      if (!images.some((image) => image.src === src)) decodedImagesRef.current.delete(src);
+    }
+  }, [images]);
 
   // Undo / Redo / Delete callbacks
   const applySnapshot = useCallback(
@@ -274,37 +276,22 @@ export function CanvasEditor() {
     },
   });
 
-  // Placeholder QR shown inside zone while designing. Precomputed PNG so the
-  // editor bundle does not need to carry the qrcode encoder at runtime.
-  const placeholderImgRef = useRef<HTMLImageElement | null>(null);
-
-  useEffect(() => {
-    const img = new Image();
-    img.onload = () => {
-      placeholderImgRef.current = img;
-    };
-    img.src = PLACEHOLDER_QR_DATA_URL;
-  }, []);
-
   // Main Canvas Rendering Loop
   const render = useCallback(() => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx || !templateImage) return;
 
-    const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
-    const cssWidth = Math.floor(templateImage.width * effectiveScale);
-    const cssHeight = Math.floor(templateImage.height * effectiveScale);
-
-    if (canvas.width !== cssWidth * dpr || canvas.height !== cssHeight * dpr) {
-      canvas.width = cssWidth * dpr;
-      canvas.height = cssHeight * dpr;
-      canvas.style.width = `${cssWidth}px`;
-      canvas.style.height = `${cssHeight}px`;
-    }
+    const cssWidth = templateImage.width * effectiveScale;
+    const cssHeight = templateImage.height * effectiveScale;
+    const { width, height } = getPreviewBackingSize(cssWidth, cssHeight, window.devicePixelRatio);
+    if (canvas.width !== width) canvas.width = width;
+    if (canvas.height !== height) canvas.height = height;
+    canvas.style.width = `${cssWidth}px`;
+    canvas.style.height = `${cssHeight}px`;
 
     ctx.save();
-    ctx.scale(dpr, dpr);
+    ctx.setTransform(width / cssWidth, 0, 0, height / cssHeight, 0, 0);
 
     ctx.clearRect(0, 0, cssWidth, cssHeight);
     ctx.drawImage(templateImage, 0, 0, cssWidth, cssHeight);
@@ -313,6 +300,17 @@ export function CanvasEditor() {
     for (const el of images) {
       drawImageElementOnCanvas(ctx, el, ensureDecoded(el.src), el.id === activeImageId, effectiveScale);
     }
+
+    // Render QR Zones
+    drawQrZonesOnCanvas(
+      ctx,
+      qrZones,
+      activeQrId,
+      isPlacingQr,
+      qrGhostPos,
+      templateImage,
+      effectiveScale
+    );
 
     // Render active alignment guide lines behind elements
     if (activeGuides.length > 0) {
@@ -357,18 +355,6 @@ export function CanvasEditor() {
       drawBoxOnCanvas(ctx, tempBox, true, effectiveScale, previewEnabled, fontPreview);
     }
 
-    // Render QR Zones
-    drawQrZonesOnCanvas(
-      ctx,
-      qrZones,
-      activeQrId,
-      placeholderImgRef.current,
-      isPlacingQr,
-      qrGhostPos,
-      templateImage,
-      effectiveScale
-    );
-
     ctx.restore();
   }, [
     templateImage,
@@ -390,44 +376,51 @@ export function CanvasEditor() {
     qrGhostPos,
   ]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     render();
+  }, [render, imageVersion]);
+
+  const renderRef = useRef(render);
+  useLayoutEffect(() => {
+    renderRef.current = render;
   }, [render]);
 
-  // Re-render when custom web fonts finish loading in the browser
   useEffect(() => {
-    if (typeof document !== 'undefined' && 'fonts' in document) {
-      let active = true;
-      document.fonts.ready.then(() => {
-        if (active) render();
-      });
-      return () => {
-        active = false;
-      };
-    }
-  }, [render]);
-
-  // Re-render when custom QR logos/emblems finish loading
-  useEffect(() => {
-    const logos = qrZones.map((z) => z.style?.logo).filter(Boolean) as string[];
-    if (logos.length === 0) return;
-    let active = true;
-    logos.forEach((logoUrl) => {
-      getCachedImage(logoUrl);
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = () => {
-        if (active) render();
-      };
-      img.src = logoUrl;
-    });
-    return () => {
-      active = false;
+    const refreshFonts = () => {
+      const context = canvasRef.current?.getContext('2d');
+      if (context) clearTextMeasurements(context);
+      renderRef.current();
     };
-  }, [qrZones, render]);
+    document.fonts.addEventListener('loadingdone', refreshFonts);
+    return () => document.fonts.removeEventListener('loadingdone', refreshFonts);
+  }, []);
 
-  // ResizeObserver on container to automatically re-fit canvas when sidebar is resized
+  const qrImageSubscriptions = useRef(new Map<string, () => void>());
   useEffect(() => {
+    const subscriptions = qrImageSubscriptions.current;
+    const sources = new Set(qrZones.flatMap((zone) => zone.style?.logo ? [zone.style.logo] : []));
+    for (const [src, remove] of subscriptions) {
+      if (sources.has(src)) continue;
+      remove();
+      subscriptions.delete(src);
+    }
+    for (const src of sources) {
+      if (!subscriptions.has(src)) {
+        subscriptions.set(src, subscribeToQrImage(src, () => renderRef.current()));
+      }
+    }
+  }, [qrZones]);
+
+  useEffect(() => {
+    const subscriptions = qrImageSubscriptions.current;
+    return () => {
+      subscriptions.forEach((remove) => remove());
+      subscriptions.clear();
+    };
+  }, []);
+
+  // Refit after the sidebar or workspace changes size.
+  useLayoutEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
@@ -491,7 +484,7 @@ export function CanvasEditor() {
 
       // QR Placement Mode: Click to drop new QR code
       if (isPlacingQr) {
-        const defaultSize = Math.round(Math.min(templateImage.width, templateImage.height) * 0.15) || 180;
+        const defaultSize = Math.max(1, Math.round(Math.min(templateImage.width, templateImage.height) * 0.15));
         const targetX = Math.max(0, Math.min(imgX - defaultSize / 2, templateImage.width - defaultSize));
         const targetY = Math.max(0, Math.min(imgY - defaultSize / 2, templateImage.height - defaultSize));
         pushState(boxes, qrZones);
@@ -513,12 +506,7 @@ export function CanvasEditor() {
       }
 
       const activeImg = images.find((el) => el.id === activeImageId);
-      const imgHandle = getHandleAtPoint(
-        imgX,
-        imgY,
-        activeImg ? ({ ...activeImg } as unknown as TextBox) : undefined,
-        effectiveScale
-      );
+      const imgHandle = getHandleAtPoint(imgX, imgY, activeImg, effectiveScale);
       if (imgHandle && activeImg) {
         savedPreDragStateRef.current = snapPreDrag(boxes, qrZones, images);
         setDragMode('img-resize');
@@ -631,13 +619,17 @@ export function CanvasEditor() {
       const { x: imgX, y: imgY } = screenToImage(e.clientX, e.clientY);
       const clampedX = Math.max(0, Math.min(imgX, templateImage.width));
       const clampedY = Math.max(0, Math.min(imgY, templateImage.height));
+      if (!dragMovedRef.current && clampedX === dragStart.x && clampedY === dragStart.y) return;
+      dragMovedRef.current = true;
 
       if (dragMode === 'draw') {
         const x = Math.min(dragStart.x, clampedX);
         const y = Math.min(dragStart.y, clampedY);
         const w = Math.abs(clampedX - dragStart.x);
         const h = Math.abs(clampedY - dragStart.y);
-        setTempBox({ x, y, w, h });
+        const bounds = { x, y, w, h };
+        setTempBox(bounds);
+        return bounds;
       } else if (dragMode === 'move' && originalBox) {
         const dx = clampedX - dragStart.x;
         const dy = clampedY - dragStart.y;
@@ -654,7 +646,7 @@ export function CanvasEditor() {
             boxes,
             qrZones,
             false,
-            8 / zoom
+            8 / effectiveScale
           );
           updateBox(originalBox.id, { x: snap.x, y: snap.y });
           setActiveGuides(snap.guides);
@@ -691,17 +683,17 @@ export function CanvasEditor() {
             boxes,
             qrZones,
             false,
-            8 / zoom
+            8 / effectiveScale
           );
           updateBox(
             originalBox.id,
-            constrainResizedBox(snap, originalBox, activeHandle, templateImage.width, templateImage.height)
+            constrainResizedBox(snap, originalBox, activeHandle, templateImage.width, templateImage.height, MIN_DRAG_SIZE / effectiveScale)
           );
           setActiveGuides(snap.guides);
         } else {
           updateBox(
             originalBox.id,
-            constrainResizedBox(rawBox, originalBox, activeHandle, templateImage.width, templateImage.height)
+            constrainResizedBox(rawBox, originalBox, activeHandle, templateImage.width, templateImage.height, MIN_DRAG_SIZE / effectiveScale)
           );
           setActiveGuides([]);
         }
@@ -729,14 +721,10 @@ export function CanvasEditor() {
         if (activeHandle.includes('s')) {
           raw.h = originalImage.h + dy;
         }
-        const w = Math.max(16, Math.min(raw.w, templateImage.width));
-        const h = Math.max(16, Math.min(raw.h, templateImage.height));
-        updateImage(originalImage.id, {
-          x: Math.max(0, Math.min(raw.x, templateImage.width - 16)),
-          y: Math.max(0, Math.min(raw.y, templateImage.height - 16)),
-          w,
-          h,
-        });
+        updateImage(
+          originalImage.id,
+          constrainResizedBox(raw, originalImage, activeHandle, templateImage.width, templateImage.height, MIN_DRAG_SIZE / effectiveScale)
+        );
       } else if (dragMode === 'qr-move' && originalQrZone) {
         const dx = clampedX - dragStart.x;
         const dy = clampedY - dragStart.y;
@@ -752,7 +740,7 @@ export function CanvasEditor() {
             boxes,
             qrZones,
             true,
-            8 / zoom
+            8 / effectiveScale
           );
           updateQrZone(originalQrZone.id, { x: snap.x, y: snap.y });
           setActiveGuides(snap.guides);
@@ -763,12 +751,12 @@ export function CanvasEditor() {
       } else if (dragMode === 'qr-resize' && originalQrZone) {
         const dx = clampedX - dragStart.x;
         const dy = clampedY - dragStart.y;
-        const rawSize = originalQrZone.size + Math.max(dx, dy);
+        const rawSize = originalQrZone.size + (Math.abs(dx) > Math.abs(dy) ? dx : dy);
         const maxSize = Math.min(
           templateImage.width - originalQrZone.x,
           templateImage.height - originalQrZone.y
         );
-        const newSize = Math.max(QR_MIN_SIZE, Math.min(rawSize, maxSize));
+        const newSize = Math.min(maxSize, Math.max(MIN_DRAG_SIZE / effectiveScale, rawSize));
         updateQrZone(originalQrZone.id, { size: newSize });
       }
     };
@@ -780,22 +768,19 @@ export function CanvasEditor() {
       }
     };
 
-    const handleWindowMouseUp = () => {
-      if (rafId !== null) {
-        cancelAnimationFrame(rafId);
-        rafId = null;
-      }
-      if (latestEvent) {
-        processMove();
-        latestEvent = null;
-      }
+    const handleWindowMouseUp = (event: MouseEvent) => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      latestEvent = event;
+      const drawnBox = processMove();
+      latestEvent = null;
+      const currentState = useAppStore.getState();
 
-      if (dragMode === 'draw' && tempBox && tempBox.w > 15 && tempBox.h > 15) {
-        pushState(boxes, qrZones);
-        addBox(tempBox);
+      if (drawnBox && drawnBox.w * effectiveScale >= MIN_DRAG_SIZE && drawnBox.h * effectiveScale >= MIN_DRAG_SIZE) {
+        pushState(currentState.boxes, currentState.qrZones);
+        addBox(drawnBox);
       } else if (dragMode === 'move' || dragMode === 'resize') {
         if (originalBox && savedPreDragStateRef.current) {
-          const current = boxes.find((b) => b.id === originalBox.id);
+          const current = currentState.boxes.find((b) => b.id === originalBox.id);
           if (
             current &&
             (current.x !== originalBox.x ||
@@ -808,7 +793,7 @@ export function CanvasEditor() {
         }
       } else if (dragMode === 'qr-move' || dragMode === 'qr-resize') {
         if (originalQrZone && savedPreDragStateRef.current) {
-          const current = qrZones.find((z) => z.id === originalQrZone.id);
+          const current = currentState.qrZones.find((z) => z.id === originalQrZone.id);
           if (
             current &&
             (current.x !== originalQrZone.x ||
@@ -824,7 +809,7 @@ export function CanvasEditor() {
         }
       } else if (dragMode === 'img-move' || dragMode === 'img-resize') {
         if (originalImage && savedPreDragStateRef.current) {
-          const current = images.find((el) => el.id === originalImage.id);
+          const current = currentState.images.find((el) => el.id === originalImage.id);
           if (
             current &&
             (current.x !== originalImage.x ||
@@ -842,6 +827,7 @@ export function CanvasEditor() {
       }
 
       savedPreDragStateRef.current = null;
+      dragMovedRef.current = false;
       setDragMode('none');
       setActiveHandle(null);
       setOriginalBox(null);
@@ -877,17 +863,14 @@ export function CanvasEditor() {
     originalImage,
     activeHandle,
     originalQrZone,
-    zoom,
+    effectiveScale,
     boxes,
     qrZones,
-    images,
-    isPlacingQr,
     screenToImage,
     updateBox,
     updateQrZone,
     updateImage,
     templateImage,
-    tempBox,
     addBox,
     pushState,
     setPan,

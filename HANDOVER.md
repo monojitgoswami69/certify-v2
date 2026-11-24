@@ -1,6 +1,6 @@
-# HANDOVER — Certify v2 (updated 2026-10-27, commit `00a1f1f`)
+# Certify v2 handover
 
-For the next agent/session picking this up. Everything below is current as of commit `00a1f1f` on `main` (local; NOT pushed).
+Use the access, Gmail, and canvas notes below when testing a release.
 
 ## 0. Iron rules (from AGENTS.md + user instruction)
 
@@ -9,24 +9,19 @@ For the next agent/session picking this up. Everything below is current as of co
 - This is a modified Next.js 16 — read `node_modules/next/dist/docs/` before Next-specific work. Classic `dynamic='force-dynamic'` is GONE; use `await connection()` from `next/server` in server page components. Middleware is `src/proxy.ts`.
 - **Every new server-rendered page MUST use the `connection()` wrapper pattern** (see `src/app/*/page.tsx` + `*Client.tsx` split) — a bare client-component page prerenders statically and the nonce CSP blocks its inline scripts → silent white-screen. This bit /login and /admin; the e2e suite now sweeps all 7 pages for it.
 - UI rules in AGENTS.md: no cards/pills; editorial layouts with hairline rules.
-- Unpushed commits: `3651a56`, `5af7a6a`, `831a0b7`, `aaf6af6`, `90e6252`, `00a1f1f`, `2d0fb9d`.
 
-## 1. Current state (all verified)
+## 1. Earlier release fixes
 
-Everything from the user's feature wishlist is **implemented, typechecked, built, and e2e-verified (52/52)**, and the Admin console browser pass is **complete** (Overview + Access tabs render; allowlist grant/revoke exercised through the UI). Three bugs were found and fixed by that pass (commit `00a1f1f`):
+The browser release pass for commit `00a1f1f` covered the Admin Overview and Access tabs, including access grants and revocations. It found three bugs.
 1. `/admin` prerendered statically → nonce CSP blocked its scripts (fixed via `connection()` wrapper + e2e nonce sweep for all 7 pages).
 2. **Session poisoning**: a stale legacy bearer token in localStorage masked a valid cookie (header took unconditional precedence) and the 401→logout loop bumped `sessions_valid_after`, killing fresh cookie sessions. `getSessionFromRequest` now falls through to the cookie when the bearer fails.
 3. `/api/admin/accounts` returned snake_case SQL keys; mapped to the camelCase client contract.
 
 Migrations applied to the live Neon DB: `0003_event_features`, `0004_template_versions`, `0005_drafts_and_access` (idempotent npm scripts; intentionally NOT in the drizzle journal — the project uses push + these scripts by design; `db:stamp` history explains).
 
-Demo data left in the dev DB for user review: account `verify-demo@certify.test` (**super_admin** in `platform_access`), template "Sample Data", event "AI & Society Hackathon 2026" with 2 certificates. `/tmp/certify-demo-token.txt` holds a 1-day session token (re-mint pattern: sign `{userId, email, role:'user', name}` with JWT_SECRET, HS256). Offer cleanup when the user is done.
+## 2. Deferred delivery changes
 
-## 2. Remaining work (user-approved backlog)
-
-1. **Email queue (server-side sending)** — user approved; architecture agreed: `email_jobs` + `email_job_items` tables, short tick invocations (relay-race model), browser becomes a tracking screen; on Vercel use **Inngest/QStash** as the tick source (Hobby cron is once/day), on a VPS an in-process `setInterval` worker. **Open decision the user must make before building**: server-side PDF rendering (new native dep) vs **client pre-render + upload with the job (recommended v1)**.
-2. **Delivery provider choice** (SMTP/SendGrid/SES alongside Gmail) — user asked for the integration plan first; answer given (user brings credentials, stored server-side like `google_credentials`, MIME already built, per-provider pace, SPF/DKIM warning in UI). Awaiting go-ahead.
-3. Deferred by choice: Playwright suite, zustand slice refactor, object storage for template images, admin TOTP 2FA, PII retention policy, dashboard virtualization/server-side CSV export.
+Email batches run in the open Studio tab and dispatch through the authenticated Gmail send endpoint. Closing the tab stops the remaining queue. A durable server queue, domain-based sending, and organization-level access are deferred.
 
 ## 3. Architecture quick-map (things that will bite you if unknown)
 
@@ -34,17 +29,11 @@ Demo data left in the dev DB for user review: account `verify-demo@certify.test`
 - **Platform access**: `platform_access` table (user/admin/super_admin); sign-in gate in `src/app/api/auth/google/route.ts`; admin guard in `src/app/api/admin/_guard.ts`; analytics are AGGREGATES ONLY (no recipient PII).
 - **Registration**: `src/lib/registration-service.ts` — unique `(user_id, record_fingerprint)` + `ON CONFLICT DO NOTHING`; identity = event+email+name deterministic; legacy fingerprints adopted on reuse; ambiguous email-less duplicate names → 400. Events are real rows (`events`); every batch writes a `registration_batches` audit row.
 - **CSP**: per-request nonce in `src/proxy.ts` (no `unsafe-inline` scripts); pages are `connection()`-wrapped server components + `*Client.tsx`.
-- **Render paths** (keep all 4 in sync): `canvas-renderer.ts` (editor), `certificate-engine.ts` (main thread), `certificate-worker.ts` (pool), `CertificatePreview.tsx` (verify page). TextBox uses **w/h** (a width/height seed bug was fixed — don't regress). Static text = `kind:'static'` + `staticText`; decorative bitmaps = `layoutConfig.images`.
+- **Render paths**: `canvas-renderer.ts` (editor), `certificate-engine.ts` (main thread), `certificate-worker.ts` (pool), `CertificatePreview.tsx` (verify page). TextBox uses **w/h** (a width/height seed bug was fixed — don't regress). Static text = `kind:'static'` + `staticText`; decorative bitmaps = `layoutConfig.images`.
 - **Rate limits**: trusted-XFF-tail IP limiter (`TRUSTED_PROXY_COUNT`, default 1) + per-user buckets on register/templates/save/send.
 - **Logging**: `src/lib/logger.ts` JSON lines with `x-request-id` from proxy.
 - e2e (`scripts/e2e-smoke.mjs <port>`) mints its own JWT from `.env` values — never prints secrets. Covers: registration race/idempotency, cookie+CSRF matrix, asset endpoint, event settings (trackScans/expiry), admin (403→200→grant/revoke→403), nonce sweep for all 7 pages.
 - A production server may be left running on port 3005 — kill via `lsof -nP -iTCP:3005 -sTCP:LISTEN -t` before rebuilding.
-
-## 4. Next-session opening moves
-
-1. Read AGENTS.md + this file; `git log --oneline -10` to orient.
-2. Ask the user the email-queue render-side decision (§2.1), then build the queue (migration → job tables → service → tick endpoint → UI polling).
-3. Remember: no pushes without approval; the gauntlet before any push proposal.
 
 ## Gmail sender and access policy
 
@@ -56,3 +45,11 @@ Demo data left in the dev DB for user review: account `verify-demo@certify.test`
 
 - The super admin can adjust the rolling per-account limits under **Admin → Access**. Defaults are 55 sends per minute and 8 per second. Match per-account settings to your Gmail project and mailbox quotas. Gmail can also impose daily, concurrency, and project-wide limits. Certify pauses for its own rate limit and stops starting sends when Gmail reports a quota limit.
 - Delivery still runs from the open Studio tab. If a Gmail request timed out, check Gmail Sent before retrying. Confirm the live OAuth consent, reconnect, and test delivery in staging before deploying to production.
+
+## Canvas rendering and regression checks
+
+- Layouts save coordinates and font sizes in native template pixels. New text starts at 6% of the shorter template edge. Fit may enlarge small artwork and pointer targets, snapping, and drag thresholds use screen pixels. Saved font sizes are reused when opening a design.
+- The canvas editor, the main-thread renderer, and the export worker share text fitting in `src/lib/certificate-text.ts`. Editor font loads invalidate cached measurements. The preview buffer has an eight-million-pixel budget and a 4,096-pixel edge limit. Exports use the template's native resolution.
+- The export pool budgets workers by CPU and decoded image size. Each worker uses one drawing buffer for large artwork. If a worker stalls or crashes, outstanding rows fail with a reason so they can be retried. Email workers share in-flight render chunks and accounts are still rate-limited by the send endpoint.
+- Run `npm test` for text fit, viewport allocation, and concurrent mail rendering regression coverage. Run `node scripts/e2e-smoke.mjs <port>` against a local production build configured with a disposable database. The suite writes test records and checks account isolation, immutable issued data, and the public field snapshot.
+- For a browser release check, compare 400 × 300, 1,200 × 900, and 4,000 × 3,000 artwork at Fit. Resize a text area and undo and redo the change. Issue a batch with QR codes, inspect the PNG, JPEG, and PDF ZIP, and check a certificate link in a signed-out window. Confirm the Issued By label and public download. Use a simulated Gmail API when stress-testing email batches and a staging mailbox when verifying Google consent and delivery.

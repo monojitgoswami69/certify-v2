@@ -3,6 +3,7 @@
  */
 
 import { create } from 'zustand';
+import { defaultCertificateFontSize } from '../lib/certificate-text';
 import type {
   Font,
   CsvRow,
@@ -227,6 +228,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       templateFile: file,
       templateImage: image,
       templateInfo: info,
+      defaultFontSize: defaultCertificateFontSize(image.naturalWidth || image.width, image.naturalHeight || image.height),
       boxes: [],
       activeBoxId: null,
       images: [],

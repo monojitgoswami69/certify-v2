@@ -18,30 +18,19 @@ export class PooledCertificateRenderer {
   private inflight: Promise<void> | null = null;
 
   constructor(
-    private readonly pool: CertificateWorkerPool,
+    private readonly pool: Pick<CertificateWorkerPool, 'processChunk'>,
     private readonly tasks: WorkerTask[],
     private readonly chunkSize: number
   ) {}
-
-  /** Number of tasks still awaiting a render (for progress/bounds checks). */
-  get pendingCount(): number {
-    return Math.max(0, this.tasks.length - this.nextIndex);
-  }
 
   async render(task: WorkerTask): Promise<BatchResultItem> {
     // Drive chunk-ahead rendering until this task's result exists. Concurrent
     // callers await the same in-flight chunk promise.
     while (!this.cache.has(task.rowIndex)) {
-      if (this.nextIndex >= this.tasks.length) {
-        // Should not happen: every render caller has a task in the list.
-        return {
-          id: task.id,
-          rowIndex: task.rowIndex,
-          filename: task.filename,
-          error: 'Render task was not scheduled',
-        };
-      }
       if (!this.inflight) {
+        if (this.nextIndex >= this.tasks.length) {
+          return { id: task.id, rowIndex: task.rowIndex, filename: task.filename, error: 'Render task was not scheduled' };
+        }
         const chunk = this.tasks.slice(this.nextIndex, this.nextIndex + this.chunkSize);
         this.nextIndex += chunk.length;
         this.inflight = this.pool
@@ -91,7 +80,7 @@ export async function createPooledRenderer(
       params.qrZones,
       params.formats,
       params.fonts,
-      undefined,
+      params.tasks.length,
       params.images
     );
     return {

@@ -69,36 +69,33 @@ export const PRESET_EMBLEMS: PresetEmblem[] = [
   },
 ];
 
-// In-memory image cache for instant canvas rendering without re-fetching
-const imageElementCache = new Map<string, HTMLImageElement | ImageBitmap>();
+// Preview decoding is shared by redraws and their load listeners.
+const imageElementCache = new Map<string, HTMLImageElement>();
 
-export function getCachedImage(src: string): CanvasImageSource | null {
-  const existing = imageElementCache.get(src);
-  if (existing) {
-    if ('complete' in existing) {
-      if (existing.complete && existing.naturalWidth > 0) return existing;
-    } else {
-      return existing; // ImageBitmap
-    }
+function getQrImage(src: string): HTMLImageElement {
+  const cached = imageElementCache.get(src);
+  if (cached) return cached;
+  const image = new Image();
+  image.crossOrigin = 'anonymous';
+  image.src = src;
+  if (imageElementCache.size >= 24) {
+    const oldest = imageElementCache.keys().next().value;
+    if (oldest !== undefined) imageElementCache.delete(oldest);
   }
-  if (typeof window !== 'undefined') {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      imageElementCache.set(src, img);
-    };
-    img.src = src;
-    imageElementCache.set(src, img);
-  } else if (typeof fetch !== 'undefined' && typeof createImageBitmap === 'function') {
-    fetch(src)
-      .then((res) => res.blob())
-      .then((blob) => createImageBitmap(blob))
-      .then((bitmap) => {
-        imageElementCache.set(src, bitmap);
-      })
-      .catch(() => {});
-  }
-  return null;
+  imageElementCache.set(src, image);
+  return image;
+}
+
+function getCachedImage(src: string): HTMLImageElement | null {
+  if (typeof Image === 'undefined') return null;
+  const image = getQrImage(src);
+  return image.complete && image.naturalWidth > 0 ? image : null;
+}
+
+export function subscribeToQrImage(src: string, onLoad: () => void): () => void {
+  const image = getQrImage(src);
+  image.addEventListener('load', onLoad, { once: true });
+  return () => image.removeEventListener('load', onLoad);
 }
 
 // Canvas-safe roundRect fallback

@@ -74,7 +74,7 @@ export function useCanvasZoomPan({
 
     const scaleX = availableWidth / templateImage.width;
     const scaleY = availableHeight / templateImage.height;
-    const fitScale = Math.min(scaleX, scaleY, 1);
+    const fitScale = Math.min(scaleX, scaleY);
 
     setBaseFitScale(fitScale);
   }, [templateImage, containerRef]);

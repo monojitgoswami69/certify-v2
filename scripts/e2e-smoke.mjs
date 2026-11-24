@@ -124,6 +124,9 @@ try {
   await sql`UPDATE platform_access SET can_issue_certificates = true WHERE email = ${TEST_EMAIL}`;
   check('issuance grant appears in an existing session', (await verifyProfile(cookieAuth))?.canIssueCertificates === true);
 
+  const issuerName = 'Smoke Test Issuer';
+  await sql`UPDATE users SET issued_by_name = ${issuerName} WHERE id = ${user.id}`;
+
   // 1. First registration
   const batch1 = {
     eventName: EVENT,
@@ -181,6 +184,11 @@ try {
   const vd = await v.json();
   check('original certificate still verifies as Alice', v.status === 200 && vd.status === 'valid' && vd.recipientName === 'Alice Smith',
     `status=${vd.status} name=${vd.recipientName}`);
+
+  check('public verification includes the configured issuer and withholds the recipient email',
+    vd.issuedBy === issuerName && !('recipientEmail' in vd));
+  const ownerVerification = await (await fetch(`${BASE}/api/verify/${r1.data.ids[0]}`, { headers: cookieAuth })).json();
+  check('the issuer can see the full recipient email on verification', ownerVerification.recipientEmail === 'alice@example.com');
 
   check('verification responses are protected against stale caches', v.headers.get('cache-control')?.includes('no-store'));
 
@@ -490,6 +498,23 @@ try {
   check('delegated admin can grant issuance to a regular user',
     (await setIssuance(auth, INVITED_EMAIL, true)).status === 200 &&
     (await verifyProfile(inviteAuth))?.canIssueCertificates === true);
+  const foreignOverview = await (await fetch(`${BASE}/api/dashboard`, { headers: inviteAuth })).json();
+  check('another issuer cannot list the owner’s event',
+    Array.isArray(foreignOverview.events) && !foreignOverview.events.some((event) => event.eventId === EVENT_ID));
+  const foreignEvent = await fetch(`${BASE}/api/dashboard?eventId=${EVENT_ID}`, { headers: inviteAuth });
+  const foreignDesign = await fetch(`${BASE}/api/events/${EVENT_ID}/design`, { headers: inviteAuth });
+  const foreignTemplate = await fetch(`${BASE}/api/templates/${saved.id}`, { headers: inviteAuth });
+  check('another issuer cannot read the private event, design, or template',
+    foreignEvent.status === 404 && foreignDesign.status === 404 && foreignTemplate.status === 404);
+  const foreignDraft = await (await fetch(`${BASE}/api/workspace-draft`, { headers: inviteAuth })).json();
+  check('another issuer cannot read the owner’s workspace draft', foreignDraft.draft === null);
+  const foreignVerification = await (await fetch(`${BASE}/api/verify/${bobId}`, { headers: inviteAuth })).json();
+  check('another issuer receives public verification fields only',
+    foreignVerification.status === 'valid' && !('recipientEmail' in foreignVerification));
+  const foreignEdit = await fetch(`${BASE}/api/events/${EVENT_ID}`, {
+    method: 'PATCH', headers: inviteAuth, body: JSON.stringify({ trackScans: true }),
+  });
+  check('another issuer cannot update event settings', foreignEdit.status === 404);
   check('issuance revocation immediately blocks registration and mail in the same session',
     (await setIssuance(auth, INVITED_EMAIL, false)).status === 200 &&
     (await register({}, inviteAuth)).status === 403 &&

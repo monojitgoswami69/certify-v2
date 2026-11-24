@@ -10,28 +10,14 @@
  */
 
 import { jsPDF } from 'jspdf';
-import QRCode from 'qrcode';
-import type { QrStyleConfig, ImageElement } from '../types';
+import type { QrStyleConfig, ImageElement, TextBox } from '../types';
 import { resolveFieldValue } from './utils';
 import { drawStyledQr } from './qr-renderer';
+import { getFontFamilyCSS } from './font-loader';
+import { drawCertificateText } from './certificate-text';
 
 export type OutputFormat = 'png' | 'jpg' | 'pdf';
 
-export interface TextBox {
-  id: string;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  field: string;
-  fontSize: number;
-  fontColor: string;
-  fontFamily: string;
-  hAlign: 'left' | 'center' | 'right';
-  vAlign: 'top' | 'middle' | 'bottom';
-  kind?: 'field' | 'static';
-  staticText?: string;
-}
 
 export interface QrPlacement {
   x: number;
@@ -94,8 +80,6 @@ export interface WorkerResponse {
 interface BoxRenderInfo {
   box: TextBox;
   fontBase: string;
-  textX: number;
-  textAlign: CanvasTextAlign;
 }
 
 // =============================================================================
@@ -113,84 +97,8 @@ let cachedFormats: OutputFormat[] = [];
 let cachedJpegQuality = 0.92;
 let cachedPdfOrientation: 'landscape' | 'portrait' = 'landscape';
 
-let reusableCanvases: [OffscreenCanvas, OffscreenCanvas] | null = null;
-let reusableContexts: [OffscreenCanvasRenderingContext2D, OffscreenCanvasRenderingContext2D] | null = null;
-
-// =============================================================================
-// Text Fitting & Rendering
-// =============================================================================
-
-const fontSizeCache = new Map<string, number>();
-
-function findFittingFontSize(
-  ctx: OffscreenCanvasRenderingContext2D,
-  text: string,
-  box: TextBox,
-  fontBase: string
-): number {
-  const cacheKey = `${text}:${box.w}:${box.h}:${box.fontSize}:${box.fontFamily}`;
-  const cached = fontSizeCache.get(cacheKey);
-  if (cached !== undefined) return cached;
-
-  const padding = 8;
-  const maxW = box.w - padding;
-  const maxH = box.h - padding;
-  const minFontSize = 8;
-  const maxFontSize = box.fontSize;
-
-  ctx.font = `${maxFontSize}px ${fontBase}`;
-  if (ctx.measureText(text).width <= maxW && maxFontSize * 1.2 <= maxH) {
-    fontSizeCache.set(cacheKey, maxFontSize);
-    return maxFontSize;
-  }
-
-  let low = minFontSize;
-  let high = maxFontSize;
-  let result = minFontSize;
-
-  while (low <= high) {
-    const mid = Math.floor((low + high) / 2);
-    ctx.font = `${mid}px ${fontBase}`;
-
-    if (ctx.measureText(text).width <= maxW && mid * 1.2 <= maxH) {
-      result = mid;
-      low = mid + 1;
-    } else {
-      high = mid - 1;
-    }
-  }
-
-  fontSizeCache.set(cacheKey, result);
-  return result;
-}
-
-function drawTextBox(
-  ctx: OffscreenCanvasRenderingContext2D,
-  text: string,
-  info: BoxRenderInfo
-): void {
-  if (!text || !text.trim()) return;
-
-  const box = info.box;
-  const fontSize = findFittingFontSize(ctx, text, box, info.fontBase);
-
-  ctx.font = `${fontSize}px ${info.fontBase}`;
-  ctx.fillStyle = box.fontColor;
-  ctx.textAlign = info.textAlign;
-  ctx.textBaseline = 'alphabetic';
-
-  let textY: number;
-  const vAlign = box.vAlign || 'bottom';
-  if (vAlign === 'top') {
-    textY = box.y + fontSize;
-  } else if (vAlign === 'middle') {
-    textY = box.y + (box.h + fontSize) / 2 - 2;
-  } else {
-    textY = box.y + box.h - 8;
-  }
-
-  ctx.fillText(text, info.textX, textY);
-}
+let reusableCanvases: OffscreenCanvas[] | null = null;
+let reusableContexts: OffscreenCanvasRenderingContext2D[] | null = null;
 
 // =============================================================================
 // Direct Bit-Matrix QR Code Rendering (Vector Accurate, Zero DOM)
@@ -313,10 +221,6 @@ async function generateBatch(items: BatchItem[]): Promise<void> {
     return;
   }
 
-  if (fontSizeCache.size > 2000) {
-    fontSizeCache.clear();
-  }
-
   const needJpeg = cachedFormats.includes('jpg') || cachedFormats.includes('pdf');
   const needPng = cachedFormats.includes('png');
 
@@ -325,9 +229,13 @@ async function generateBatch(items: BatchItem[]): Promise<void> {
 
   for (const item of items) {
     try {
+      if (pending && reusableCanvases.length === 1) {
+        await flushPending(pending);
+        pending = null;
+      }
       const canvas = reusableCanvases[activeBufferIdx];
       const ctx = reusableContexts[activeBufferIdx];
-      activeBufferIdx = 1 - activeBufferIdx;
+      activeBufferIdx = (activeBufferIdx + 1) % reusableCanvases.length;
 
       // 1. DRAW: Background Template
       ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -355,7 +263,7 @@ async function generateBatch(items: BatchItem[]): Promise<void> {
           info.box.kind === 'static'
             ? info.box.staticText ?? ''
             : resolveFieldValue(info.box.field, item.row);
-        drawTextBox(ctx, text, info);
+        drawCertificateText(ctx, text, info.box, info.fontBase);
       }
 
       // 4. ENCODE: Non-blocking OffscreenCanvas toBlob
@@ -405,8 +313,6 @@ self.onmessage = async (event: MessageEvent<InitMessage | GenerateBatchMessage>)
 
   if (message.type === 'init') {
     try {
-      fontSizeCache.clear();
-
       // 1. Load custom web fonts into worker's FontFaceSet
       if (message.fonts && message.fonts.length > 0 && typeof FontFace !== 'undefined') {
         const fontSet = (self as unknown as { fonts?: FontFaceSet }).fonts;
@@ -477,34 +383,14 @@ self.onmessage = async (event: MessageEvent<InitMessage | GenerateBatchMessage>)
 
       cachedBoxRenderInfo = message.boxes
         .filter((box) => box.field || box.kind === 'static')
-        .map((box) => {
-          const hAlign = box.hAlign || 'center';
-          let textX: number;
-          let textAlign: CanvasTextAlign;
-
-          if (hAlign === 'left') {
-            textAlign = 'left';
-            textX = box.x + 5;
-          } else if (hAlign === 'right') {
-            textAlign = 'right';
-            textX = box.x + box.w - 5;
-          } else {
-            textAlign = 'center';
-            textX = box.x + box.w / 2;
-          }
-
-          const cleanFamily = box.fontFamily?.replace(/['"]/g, '').trim() || 'system-ui';
-          const fontBase = `"${cleanFamily}", system-ui, -apple-system, sans-serif`;
-          return { box, fontBase, textX, textAlign };
-        });
+        .map((box) => ({ box, fontBase: getFontFamilyCSS(box.fontFamily) }));
 
       const createBuffer = () => {
         const c = new OffscreenCanvas(cachedTemplateWidth, cachedTemplateHeight);
         let cx = c.getContext('2d', {
-          alpha: false,
           desynchronized: true,
         });
-        // Fallback for Safari/Firefox where desynchronized: true or alpha: false can return null
+        // Fall back when the browser cannot honor the requested context attributes.
         if (!cx) {
           cx = c.getContext('2d');
         }
@@ -514,10 +400,10 @@ self.onmessage = async (event: MessageEvent<InitMessage | GenerateBatchMessage>)
         return { c, cx };
       };
 
-      const buf0 = createBuffer();
-      const buf1 = createBuffer();
-      reusableCanvases = [buf0.c, buf1.c];
-      reusableContexts = [buf0.cx, buf1.cx];
+      const bufferCount = cachedTemplateWidth * cachedTemplateHeight >= 8_000_000 ? 1 : 2;
+      const buffers = Array.from({ length: bufferCount }, createBuffer);
+      reusableCanvases = buffers.map(({ c }) => c);
+      reusableContexts = buffers.map(({ cx }) => cx);
 
       self.postMessage({ type: 'ready' } as WorkerResponse);
     } catch (err) {

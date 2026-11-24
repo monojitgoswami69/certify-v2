@@ -33,6 +33,7 @@ export function BoxCustomizer() {
 
   const activeBox = boxes.find((b) => b.id === activeBoxId);
   const activeQr = qrZones.find((z) => z.id === activeQrId);
+  const maximumFontSize = Math.max(200, Math.ceil(Math.min(templateImage?.width ?? 0, templateImage?.height ?? 0) / 3), activeBox?.fontSize ?? 0);
 
   const focusedInputRef = useRef<string | null>(null);
   const isInputEditingRef = useRef(false);
@@ -145,10 +146,10 @@ export function BoxCustomizer() {
           onClick={() => {
             pushState(boxes, qrZones);
             addStaticTextBox({
-              x: Math.round((templateImage?.naturalWidth || 1000) * 0.3),
-              y: Math.round((templateImage?.naturalHeight || 700) * 0.45),
-              w: Math.round((templateImage?.naturalWidth || 1000) * 0.4),
-              h: Math.max(40, Math.round((templateImage?.naturalHeight || 700) * 0.06)),
+              x: (templateImage?.naturalWidth || 1000) * 0.3,
+              y: (templateImage?.naturalHeight || 700) * 0.45,
+              w: (templateImage?.naturalWidth || 1000) * 0.4,
+              h: (templateImage?.naturalHeight || 700) * 0.10,
             });
           }}
           className="w-full py-2 px-3 text-xs font-semibold text-stone-700 border border-dashed border-stone-300 rounded-lg hover:border-stone-500 hover:bg-stone-50 transition-colors cursor-pointer"
@@ -177,7 +178,7 @@ export function BoxCustomizer() {
   const handleFontSizeChange = (value: string) => {
     setFontSizeInput(value);
     const num = parseInt(value);
-    if (!isNaN(num) && num >= 10 && num <= 200) {
+    if (!isNaN(num) && num >= 1 && num <= maximumFontSize) {
       startInputEdit();
       updateBox(activeBox.id, { fontSize: num });
     }
@@ -186,12 +187,10 @@ export function BoxCustomizer() {
   const handleFontSizeBlur = () => {
     finishInputEdit();
     const num = parseInt(fontSizeInput);
-    if (isNaN(num) || num < 10) {
-      setFontSizeInput('10');
-      updateBox(activeBox.id, { fontSize: 10 });
-    } else if (num > 200) {
-      setFontSizeInput('200');
-      updateBox(activeBox.id, { fontSize: 200 });
+    if (isNaN(num) || num < 1 || num > maximumFontSize) {
+      const size = Number.isFinite(num) ? Math.max(1, Math.min(num, maximumFontSize)) : activeBox.fontSize;
+      setFontSizeInput(String(size));
+      if (size !== activeBox.fontSize) updateBox(activeBox.id, { fontSize: size });
     }
   };
 
@@ -369,11 +368,12 @@ export function BoxCustomizer() {
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="block text-xs font-semibold text-slate-600 mb-1.5">Size (px)</label>
+          <label htmlFor="certificate-text-size" className="block text-xs font-semibold text-slate-600 mb-1.5">Size (px)</label>
           <input
+            id="certificate-text-size"
             type="number"
-            min={10}
-            max={200}
+            min={1}
+            max={maximumFontSize}
             value={fontSizeInput}
             onFocus={() => {
               focusedInputRef.current = 'fontSize';

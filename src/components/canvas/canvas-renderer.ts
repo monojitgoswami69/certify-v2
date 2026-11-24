@@ -4,17 +4,11 @@ import { isFontLoaded, loadGoogleFont, getFontFamilyCSS } from '../../lib/font-l
 import type { HandleKey } from '../../lib/canvas-snapping';
 import { drawStyledQr } from '../../lib/qr-renderer';
 import { getVerifyBaseUrl } from '../../lib/cert-registration';
+import { drawCertificateText } from '../../lib/certificate-text';
 
 export const HANDLE_SIZE = 8;
 export const LABEL_HEIGHT = 20;
 export const LABEL_PADDING = 6;
-export const QR_MIN_SIZE = 40;
-
-const canvasFontSizeCache = new Map<string, number>();
-
-export function clearCanvasFontSizeCache() {
-  canvasFontSizeCache.clear();
-}
 
 export function getHandlePositions(sel: { x: number; y: number; w: number; h: number }) {
   const mx = sel.x + sel.w / 2;
@@ -79,88 +73,14 @@ export function drawBoxOnCanvas(
   }
 
   if (previewEnabled && previewText && 'fontSize' in box) {
-    let currentFontSize = box.fontSize;
-    const minFontSize = 10;
-    const previewFontFamily = fontPreview?.boxId === box.id ? fontPreview.fontFamily : null;
-    const actualFontFamily = 'fontFamily' in box ? box.fontFamily : '';
-    const useFontFamily = previewFontFamily || actualFontFamily;
+    const previewFamily = fontPreview?.boxId === box.id ? fontPreview.fontFamily : null;
+    const family = previewFamily || box.fontFamily;
+    if (family && !isFontLoaded(family)) void loadGoogleFont(family);
 
-    const fontFamily = useFontFamily ? getFontFamilyCSS(useFontFamily) : 'system-ui, sans-serif';
-
-    if (useFontFamily && !isFontLoaded(useFontFamily)) {
-      loadGoogleFont(useFontFamily);
-    }
-
-    // High-performance cached binary search text fitting
-    const maxW = displayBox.w - 10;
-    const maxH = displayBox.h - 10;
-    const cacheKey = `${previewText}:${Math.round(displayBox.w)}:${Math.round(displayBox.h)}:${box.fontSize}:${fontFamily}:${effectiveScale}`;
-    let displayFontSize = canvasFontSizeCache.get(cacheKey);
-
-    if (displayFontSize === undefined) {
-      displayFontSize = minFontSize * effectiveScale;
-      if (maxW > 0 && maxH > 0) {
-        let low = minFontSize;
-        let high = box.fontSize;
-
-        // Fast path: check if maximum font size fits immediately
-        const testMaxDisplay = high * effectiveScale;
-        ctx.font = `${testMaxDisplay}px ${fontFamily}`;
-        if (ctx.measureText(previewText).width <= maxW && testMaxDisplay * 1.2 <= maxH) {
-          displayFontSize = testMaxDisplay;
-        } else {
-          while (low <= high) {
-            const mid = (low + high) >> 1;
-            const testDisplay = mid * effectiveScale;
-            ctx.font = `${testDisplay}px ${fontFamily}`;
-            const textW = ctx.measureText(previewText).width;
-            const textH = testDisplay * 1.2;
-
-            if (textW <= maxW && textH <= maxH) {
-              displayFontSize = testDisplay;
-              low = mid + 1;
-            } else {
-              high = mid - 1;
-            }
-          }
-        }
-      }
-
-      if (canvasFontSizeCache.size > 1000) {
-        canvasFontSizeCache.clear();
-      }
-      canvasFontSizeCache.set(cacheKey, displayFontSize);
-    }
-
-    ctx.font = `${displayFontSize}px ${fontFamily}`;
-    ctx.fillStyle = box.fontColor;
-
-    const hAlign = 'hAlign' in box ? box.hAlign : 'center';
-    const vAlign = 'vAlign' in box ? box.vAlign : 'bottom';
-
-    let textX: number;
-    if (hAlign === 'left') {
-      ctx.textAlign = 'left';
-      textX = displayBox.x + 5;
-    } else if (hAlign === 'right') {
-      ctx.textAlign = 'right';
-      textX = displayBox.x + displayBox.w - 5;
-    } else {
-      ctx.textAlign = 'center';
-      textX = displayBox.x + displayBox.w / 2;
-    }
-
-    let textY: number;
-    ctx.textBaseline = 'alphabetic';
-    if (vAlign === 'top') {
-      textY = displayBox.y + displayFontSize;
-    } else if (vAlign === 'middle') {
-      textY = displayBox.y + (displayBox.h + displayFontSize) / 2 - 2;
-    } else {
-      textY = displayBox.y + displayBox.h - 8;
-    }
-
-    ctx.fillText(previewText, textX, textY);
+    ctx.save();
+    ctx.scale(effectiveScale, effectiveScale);
+    drawCertificateText(ctx, previewText, box, family ? getFontFamilyCSS(family) : 'system-ui, sans-serif');
+    ctx.restore();
   }
 
   if (isActive) {
@@ -182,7 +102,6 @@ export function drawQrZonesOnCanvas(
   ctx: CanvasRenderingContext2D,
   qrZones: QrZone[],
   activeQrId: string | null,
-  placeholderImg: HTMLImageElement | null,
   isPlacingQr: boolean,
   qrGhostPos: { x: number; y: number } | null,
   templateImage: HTMLImageElement | null,
@@ -196,19 +115,13 @@ export function drawQrZonesOnCanvas(
 
     ctx.save();
 
-    try {
-      drawStyledQr(ctx, {
-        x: dx,
-        y: dy,
-        size: ds,
-        text: `${getVerifyBaseUrl()}/verify/DEMO`,
-        style: zone.style,
-      });
-    } catch {
-      if (placeholderImg && placeholderImg.complete && placeholderImg.naturalWidth > 0) {
-        ctx.drawImage(placeholderImg, dx, dy, ds, ds);
-      }
-    }
+    drawStyledQr(ctx, {
+      x: dx,
+      y: dy,
+      size: ds,
+      text: `${getVerifyBaseUrl()}/verify/DEMO`,
+      style: zone.style,
+    });
 
     // Selection overlay across the entire QR code (including center cutout badge & logo)
     if (isActive) {
@@ -258,7 +171,7 @@ export function drawQrZonesOnCanvas(
   // Ghost preview when hovering in click-to-place QR mode
   if (isPlacingQr && qrGhostPos && templateImage) {
     const defaultSize =
-      Math.round(Math.min(templateImage.width, templateImage.height) * 0.15) || 180;
+      Math.max(1, Math.round(Math.min(templateImage.width, templateImage.height) * 0.15));
     const gx =
       Math.max(
         0,
@@ -273,23 +186,14 @@ export function drawQrZonesOnCanvas(
 
     ctx.save();
 
-    try {
-      ctx.save();
-      ctx.globalAlpha = 0.55;
-      drawStyledQr(ctx, {
-        x: gx,
-        y: gy,
-        size: gs,
-        text: `${getVerifyBaseUrl()}/verify/DEMO`,
-      });
-      ctx.restore();
-    } catch {
-      if (placeholderImg && placeholderImg.complete && placeholderImg.naturalWidth > 0) {
-        ctx.globalAlpha = 0.55;
-        ctx.drawImage(placeholderImg, gx, gy, gs, gs);
-        ctx.globalAlpha = 1.0;
-      }
-    }
+    ctx.globalAlpha = 0.55;
+    drawStyledQr(ctx, {
+      x: gx,
+      y: gy,
+      size: gs,
+      text: `${getVerifyBaseUrl()}/verify/DEMO`,
+    });
+    ctx.globalAlpha = 1;
 
     ctx.fillStyle = 'rgba(139, 92, 246, 0.2)';
     ctx.fillRect(gx, gy, gs, gs);
@@ -322,7 +226,7 @@ export function drawQrZonesOnCanvas(
 export function getHandleAtPoint(
   imgX: number,
   imgY: number,
-  activeBox: TextBox | undefined,
+  activeBox: Pick<TextBox, 'x' | 'y' | 'w' | 'h'> | undefined,
   effectiveScale: number
 ): HandleKey | null {
   if (!activeBox) return null;
@@ -330,12 +234,16 @@ export function getHandleAtPoint(
   const handles = getHandlePositions(activeBox);
   const threshold = (HANDLE_SIZE * 1.5) / effectiveScale;
 
+  let nearest: HandleKey | null = null;
+  let best = threshold ** 2;
   for (const [key, pos] of Object.entries(handles)) {
-    if (Math.abs(imgX - pos.x) < threshold && Math.abs(imgY - pos.y) < threshold) {
-      return key as HandleKey;
+    const distance = (imgX - pos.x) ** 2 + (imgY - pos.y) ** 2;
+    if (distance < best) {
+      nearest = key as HandleKey;
+      best = distance;
     }
   }
-  return null;
+  return nearest;
 }
 
 /**
