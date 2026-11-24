@@ -332,7 +332,7 @@ export function EmailDeliveryModal({
                     badge = (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                        Sent
+                        Accepted
                       </span>
                     );
                   } else if (record.status === 'failed') {
@@ -349,6 +349,8 @@ export function EmailDeliveryModal({
                         Sending
                       </span>
                     );
+                  } else if (record.status === 'unconfirmed') {
+                    badge = <span className="text-xs font-semibold text-amber-700">Unconfirmed</span>;
                   } else if (record.status === 'skipped') {
                     badge = (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">

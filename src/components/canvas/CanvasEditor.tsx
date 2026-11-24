@@ -1020,10 +1020,10 @@ export function CanvasEditor() {
         }}
       >
         <ImageIcon className="w-10 h-10 text-slate-400 stroke-[1.5] mb-3" />
-        <h3 className="text-base sm:text-lg font-jura font-bold text-slate-700 mb-1">
+        <h3 className="text-base sm:text-lg font-semibold text-slate-700 mb-1">
           Upload a template to get started
         </h3>
-        <p className="text-sm font-quicksand text-slate-500 max-w-sm leading-relaxed">
+        <p className="text-sm text-slate-500 max-w-sm leading-relaxed">
           Select a certificate template image on the left sidebar to begin placing text fields and verification QR codes.
         </p>
       </div>

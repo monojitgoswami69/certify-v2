@@ -22,15 +22,15 @@ import { CsvPreviewModal } from '../../components/modals/CsvPreviewModal';
 import { ResizeHandle } from '../../components/ui/ResizeHandle';
 import { useAppStore } from '../../store/useAppStore';
 import { useHistoryStore } from '../../store/useHistoryStore';
-import { useAuthStore } from '../../store/useAuthStore';
-import { loadWorkspace, isWorkspaceLoadedFor } from '../../lib/workspace-loader';
+import { IssuerWorkspace } from '../../components/account/IssuerWorkspace';
+import { loadWorkspace } from '../../lib/workspace-loader';
 import {
   fetchWorkspaceDraft,
   saveWorkspaceDraft,
   deleteWorkspaceDraft,
   type DraftState,
 } from '../../lib/draft-autosave';
-import { getAuthToken } from '../../lib/api-client';
+import { apiFetch } from '../../lib/api-client';
 import { imageSourceToBlob } from '../../lib/utils';
 import { useRouter, useSearchParams } from 'next/navigation';
 
@@ -43,6 +43,11 @@ function WorkspaceContent() {
     csvData,
     csvFile,
     eventName,
+    eventLabel,
+    setEventLabel,
+    issuanceStarted,
+    isBatchRegistering,
+    registrationEventId,
     setEventName,
     setCsvData,
     setBoxes,
@@ -68,17 +73,18 @@ function WorkspaceContent() {
     setImages,
   } = useAppStore();
 
-  const { isAuthenticated, isLoading, initialize, token } = useAuthStore();
   const router = useRouter();
   const searchParams = useSearchParams();
   const templateIdParam = searchParams.get('templateId');
-  const eventParam = searchParams.get('event');
+  const legacyEventName = searchParams.get('event');
+  const legacyEventId = searchParams.get('eventId');
+  const copyEventId = searchParams.get('copyEvent');
   const [showCsvPreview, setShowCsvPreview] = useState(false);
   const [showStarterGallery, setShowStarterGallery] = useState(false);
   const [showCsvDrafter, setShowCsvDrafter] = useState(false);
   const [isNarrowScreen, setIsNarrowScreen] = useState(false);
   const [dismissNarrowWarning, setDismissNarrowWarning] = useState(false);
-  const [isHydrating, setIsHydrating] = useState(false);
+  const [isHydrating, setIsHydrating] = useState(Boolean(copyEventId || templateIdParam));
 
   useEffect(() => {
     const checkWidth = () => {
@@ -89,28 +95,21 @@ function WorkspaceContent() {
     return () => window.removeEventListener('resize', checkWidth);
   }, []);
 
-  useEffect(() => {
-    initialize();
-  }, [initialize]);
-
-  useEffect(() => {
-    if (!isLoading && !isAuthenticated) {
-      router.push('/login');
-    }
-  }, [isLoading, isAuthenticated, router]);
-
   // -----------------------------------------------------------------
   // Draft workspaces: debounced server autosave + one-click recovery, so a
   // closed tab loses nothing. Skipped while hydrating from a URL (event /
   // templateId) or while the canvas is empty-and-clean.
   // -----------------------------------------------------------------
   const [draftRecovery, setDraftRecovery] = useState<DraftState | null>(null);
+  const [draftNotice, setDraftNotice] = useState<string | null>(null);
+  const [recoveringDraft, setRecoveringDraft] = useState(false);
+  const missingArtworkDraftRef = useRef<DraftState | null>(null);
   const draftCheckedRef = useRef(false);
   const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const hydratedFromEvent = Boolean(eventParam || templateIdParam);
+  const hydratedFromEvent = Boolean(copyEventId || templateIdParam || legacyEventName || legacyEventId);
 
   useEffect(() => {
-    if (!isAuthenticated || isLoading || hydratedFromEvent || draftCheckedRef.current) return;
+    if (hydratedFromEvent || draftCheckedRef.current) return;
     draftCheckedRef.current = true;
     const state = useAppStore.getState();
     const clean =
@@ -120,17 +119,34 @@ function WorkspaceContent() {
       if (draft && (draft.templateRef || draft.csvRows.length > 0 || draft.boxes.length > 0 || draft.eventName)) {
         setDraftRecovery(draft);
       }
-    });
-  }, [isAuthenticated, isLoading, hydratedFromEvent]);
+    }).catch(() => setDraftNotice('Could not check for a previous workspace draft.'));
+  }, [hydratedFromEvent]);
 
   useEffect(() => {
-    if (!isAuthenticated || isLoading || hydratedFromEvent || !templateImage) return;
+    const draft = missingArtworkDraftRef.current;
+    if (!draft?.templateRef || !templateImage || !templateFile) return;
+    missingArtworkDraftRef.current = null;
+    const { fileName, width, height } = draft.templateRef;
+    if (templateFile.name !== fileName || templateImage.naturalWidth !== width || templateImage.naturalHeight !== height) {
+      setDraftNotice('The draft layout was designed for the original image and was not applied to this replacement.');
+      return;
+    }
+    setBoxes(draft.boxes);
+    setQrZones(draft.qrZones);
+    setImages(draft.images);
+    setDraftNotice(null);
+  }, [templateFile, templateImage, setBoxes, setQrZones, setImages]);
+
+  useEffect(() => {
+    if (hydratedFromEvent || !templateImage || draftRecovery || recoveringDraft || issuanceStarted || isBatchRegistering) return;
     if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
+    let current = true;
     draftSaveTimerRef.current = setTimeout(() => {
       void saveWorkspaceDraft({
         eventName,
+        eventLabel,
         csvHeaders,
-        csvRows: csvData.slice(0, 2000),
+        csvRows: csvData,
         csvFileName: csvFile?.name ?? null,
         boxes,
         qrZones,
@@ -142,15 +158,23 @@ function WorkspaceContent() {
         templateRef: templateFile
           ? { fileName: templateFile.name, width: templateImage.naturalWidth, height: templateImage.naturalHeight }
           : null,
+      }).then(() => {
+        if (current) setDraftNotice(null);
+      }).catch((error: unknown) => {
+        if (current) setDraftNotice(error instanceof Error ? error.message : 'Workspace autosave failed.');
       });
     }, 2500);
     return () => {
+      current = false;
       if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
     };
   }, [
-    isAuthenticated,
-    isLoading,
     hydratedFromEvent,
+    eventLabel,
+    issuanceStarted,
+    isBatchRegistering,
+    draftRecovery,
+    recoveringDraft,
     eventName,
     csvData,
     csvHeaders,
@@ -168,10 +192,41 @@ function WorkspaceContent() {
 
   const recoverDraft = useCallback(async () => {
     const draft = draftRecovery;
-    if (!draft) return;
-    setDraftRecovery(null);
+    if (!draft || recoveringDraft) return;
+    setRecoveringDraft(true);
+    setDraftNotice(null);
+    if (draft.templateRef) {
+      try {
+        const base = draft.templateRef.fileName.replace(/\.[^/.]+$/, '').trim().toLowerCase();
+        const names = [base, draft.eventName.trim().toLowerCase()].filter(Boolean);
+        const res = await apiFetch('/api/templates');
+        if (!res.ok) throw new Error('Could not load saved templates');
+        const data = await res.json();
+        const templates: Array<{ id: string; name: string; width?: number; height?: number }> = data.templates ?? [];
+        const match = names.map((name) => templates.find((template) =>
+          template.name.trim().toLowerCase() === name &&
+          (!template.width || template.width === draft.templateRef?.width) &&
+          (!template.height || template.height === draft.templateRef?.height)
+        )).find(Boolean);
+        if (!match) throw new Error('Saved artwork not found');
+
+        const full = await apiFetch(`/api/templates/${match.id}`);
+        if (!full.ok) throw new Error('Could not load saved artwork');
+        const { template } = await full.json();
+        const blob = await imageSourceToBlob(template.imageData);
+        const file = new File([blob], draft.templateRef.fileName, { type: blob.type || 'image/png' });
+        const image = new Image();
+        image.src = template.imageData;
+        await image.decode();
+        setTemplate(file, image, `${template.name} (recovered)`);
+      } catch {
+        missingArtworkDraftRef.current = draft;
+        setDraftNotice(`Upload ${draft.templateRef.fileName} again to restore the recovered layout on its original artwork.`);
+      }
+    }
     try {
       setEventName(draft.eventName || '');
+      setEventLabel(draft.eventLabel || '');
       if (draft.csvRows.length > 0 && draft.csvHeaders.length > 0) {
         const esc = (v: string) => `"${String(v).replace(/"/g, '""')}"`;
         const csvContent = [
@@ -190,48 +245,17 @@ function WorkspaceContent() {
       if (draft.defaultFontSize) setDefaultFontSize(draft.defaultFontSize);
       if (draft.defaultFontColor) setDefaultFontColor(draft.defaultFontColor);
 
-      // Best-effort template restore: match a saved template by the original file name.
-      if (draft.templateRef) {
-        const base = draft.templateRef.fileName.replace(/\.[^/.]+$/, '').trim().toLowerCase();
-        const tokenNow = token || getAuthToken();
-        const res = await fetch('/api/templates', {
-          credentials: 'same-origin',
-          headers: tokenNow ? { Authorization: `Bearer ${tokenNow}` } : {},
-        });
-        if (res.ok) {
-          const data = await res.json();
-          const match = (data.templates ?? []).find(
-            (t: { name: string }) => t.name.trim().toLowerCase() === base
-          );
-          if (match) {
-            const full = await fetch(`/api/templates/${match.id}`, {
-              credentials: 'same-origin',
-              headers: tokenNow ? { Authorization: `Bearer ${tokenNow}` } : {},
-            });
-            if (full.ok) {
-              const { template } = await full.json();
-              if (template?.imageData) {
-                const blob = await imageSourceToBlob(template.imageData);
-                const file = new File([blob], template.name + '.png', { type: blob.type || 'image/png' });
-                const img = document.createElement('img');
-                await new Promise<void>((resolve, reject) => {
-                  img.onload = () => resolve();
-                  img.onerror = () => reject(new Error('decode failed'));
-                  img.src = template.imageData;
-                });
-                setTemplate(file, img, `${template.name} (recovered)`);
-              }
-            }
-          }
-        }
-      }
-      void deleteWorkspaceDraft();
-    } catch (err) {
-      console.warn('[Draft recovery] failed:', err);
+      setDraftRecovery(null);
+    } catch {
+      setDraftNotice('Could not recover the workspace draft.');
+    } finally {
+      setRecoveringDraft(false);
     }
   }, [
     draftRecovery,
+    recoveringDraft,
     setEventName,
+    setEventLabel,
     setCsvData,
     setBoxes,
     setQrZones,
@@ -241,54 +265,40 @@ function WorkspaceContent() {
     setDefaultFontSize,
     setDefaultFontColor,
     setTemplate,
-    token,
   ]);
 
-  // Fresh Studio entry: If no event or templateId query param is present, ensure workspace state is clean
   useEffect(() => {
-    if (!eventParam && !templateIdParam) {
+    if (legacyEventId || legacyEventName) {
+      const query = legacyEventId ? new URLSearchParams({ eventId: legacyEventId }) : new URLSearchParams({ event: legacyEventName! });
+      router.replace(`/dashboard?${query}`);
+      return;
+    }
+
+    if (!copyEventId && !templateIdParam) {
       const state = useAppStore.getState();
       if (state.templateImage || state.csvData.length > 0 || state.boxes.length > 0 || state.eventName) {
         state.reset();
         useHistoryStore.getState().clearHistory();
       }
-    }
-  }, [eventParam, templateIdParam]);
-
-  // Pre-load template, layout, and CSV dataset if event or templateId query param is supplied
-  useEffect(() => {
-    if ((!eventParam && !templateIdParam) || !isAuthenticated) return;
-
-    let isCancelled = false;
-    const activeToken = token || getAuthToken();
-    if (!activeToken) return;
-
-    // Already hydrated (e.g. by the dashboard's "Open in Studio" before navigating)
-    if (eventParam && isWorkspaceLoadedFor(eventParam)) {
-      setIsHydrating(false);
       return;
     }
-
+    useAppStore.getState().reset();
+    useHistoryStore.getState().clearHistory();
+    let cancelled = false;
     setIsHydrating(true);
-    loadWorkspace({
-      eventName: eventParam,
-      templateId: templateIdParam,
-      token: activeToken,
-      shouldApply: () => !isCancelled,
-    })
-      .catch((err) => {
-        console.warn('[Auto-load workspace from query error]:', err);
+    setDraftNotice(null);
+    loadWorkspace({ copyEventId, templateId: templateIdParam, shouldApply: () => !cancelled })
+      .catch((error: unknown) => {
+        if (!cancelled) setDraftNotice(error instanceof Error ? error.message : 'Could not load the workspace.');
       })
       .finally(() => {
-        if (!isCancelled) setIsHydrating(false);
+        if (!cancelled) setIsHydrating(false);
       });
 
-    return () => {
-      isCancelled = true;
-    };
-  }, [templateIdParam, eventParam, isAuthenticated, token]);
+    return () => { cancelled = true; };
+  }, [copyEventId, templateIdParam, legacyEventName, legacyEventId, router]);
 
-  if ((isLoading && !isAuthenticated) || isHydrating) {
+  if (isHydrating || legacyEventName || legacyEventId) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 animate-smooth-fade">
         <div className="flex flex-col items-center gap-4">
@@ -299,10 +309,6 @@ function WorkspaceContent() {
         </div>
       </div>
     );
-  }
-
-  if (!isAuthenticated) {
-    return null;
   }
 
   const step1Complete = Boolean(templateImage);
@@ -340,8 +346,9 @@ function WorkspaceContent() {
         {/* Scrollable Steps Content */}
         <div className="flex-1 p-3.5 space-y-3.5 overflow-y-auto">
           {/* Step 1 */}
+          {draftNotice && <p role="status" className="text-xs font-semibold text-amber-800">{draftNotice}</p>}
           {draftRecovery && (
-            <div className="mb-3 p-3 rounded-xl border border-amber-200 bg-amber-50/80 text-xs font-quicksand">
+            <div className="mb-3 p-3 rounded-xl border border-amber-200 bg-amber-50/80 text-xs">
               <p className="font-semibold text-amber-800">
                 Recover your previous session?
               </p>
@@ -352,16 +359,22 @@ function WorkspaceContent() {
               <div className="flex gap-2 mt-2">
                 <button
                   type="button"
+                  disabled={recoveringDraft}
                   onClick={() => void recoverDraft()}
                   className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-[11px] font-semibold transition-colors cursor-pointer"
                 >
-                  Recover session
+                  {recoveringDraft ? 'Recovering…' : 'Recover session'}
                 </button>
                 <button
                   type="button"
+                  disabled={recoveringDraft}
                   onClick={() => {
-                    void deleteWorkspaceDraft();
-                    setDraftRecovery(null);
+                    setRecoveringDraft(true);
+                    void deleteWorkspaceDraft().then(() => {
+                      setDraftRecovery(null);
+                      setDraftNotice(null);
+                    }).catch(() => setDraftNotice('Could not discard the previous draft.'))
+                      .finally(() => setRecoveringDraft(false));
                   }}
                   className="px-3 py-1.5 text-stone-600 border border-stone-200 rounded-lg text-[11px] font-semibold hover:bg-stone-50 transition-colors cursor-pointer"
                 >
@@ -370,6 +383,17 @@ function WorkspaceContent() {
               </div>
             </div>
           )}
+          {issuanceStarted ? (
+            <div className="space-y-1 border-b border-stone-200 pb-3">
+              <p className="text-sm font-semibold text-slate-900">{eventName}{eventLabel ? ` · ${eventLabel}` : ''}</p>
+              <p className="text-xs text-slate-600">Issued design locked</p>
+              <button type="button" className="text-xs font-semibold text-primary-700 underline"
+                onClick={() => router.push(`/dashboard?eventId=${registrationEventId}`)}>
+                View issued event
+              </button>
+            </div>
+          ) : (
+            <div inert={isBatchRegistering} className="space-y-3.5">
           <StepCard number={1} title="Upload Template" status={step1Status}>
             {templateImage ? (
               <div className="flex items-center justify-between px-3.5 py-2.5 bg-white border border-slate-200 shadow-xs rounded-xl">
@@ -443,6 +467,16 @@ function WorkspaceContent() {
                     placeholder="e.g. Annual Tech Symposium 2026"
                     className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-0 focus:border-slate-400 font-medium text-slate-800 placeholder:text-slate-400 transition-colors"
                   />
+                  <label className="block pt-2 text-xs font-semibold text-slate-700">
+                    Batch label <span className="font-normal text-slate-500">(optional)</span>
+                    <input
+                      value={eventLabel}
+                      onChange={(e) => setEventLabel(e.target.value)}
+                      maxLength={120}
+                      placeholder="e.g. Speakers"
+                      className="mt-1 w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
+                    />
+                  </label>
                 </div>
               </div>
             ) : (
@@ -501,6 +535,9 @@ function WorkspaceContent() {
           <ImagesCard />
           </StepCard>
 
+            </div>
+          )}
+
           {/* Step 5 */}
           <StepCard number={5} title="Generate & Deliver" status={step5Status}>
             <GenerateButton />
@@ -514,10 +551,10 @@ function WorkspaceContent() {
         </div>
       </aside>
 
-      <CanvasEditor />
+      <div inert={issuanceStarted || isBatchRegistering} className="contents"><CanvasEditor /></div>
 
-      <StarterGalleryModal open={showStarterGallery} onClose={() => setShowStarterGallery(false)} />
-      <CsvDrafterModal open={showCsvDrafter} onClose={() => setShowCsvDrafter(false)} />
+      <StarterGalleryModal open={showStarterGallery && !issuanceStarted && !isBatchRegistering} onClose={() => setShowStarterGallery(false)} />
+      <CsvDrafterModal open={showCsvDrafter && !issuanceStarted && !isBatchRegistering} onClose={() => setShowCsvDrafter(false)} />
       <CsvPreviewModal isOpen={showCsvPreview} onClose={() => setShowCsvPreview(false)} />
 
       {/* Small Screen / Mobile Warning Modal */}
@@ -567,7 +604,9 @@ export default function CertificateStudioPage() {
           </div>
         }
       >
-        <WorkspaceContent />
+        <IssuerWorkspace>
+          <WorkspaceContent />
+        </IssuerWorkspace>
       </Suspense>
     </ErrorBoundary>
   );

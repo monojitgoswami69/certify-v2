@@ -109,7 +109,7 @@ export function CsvDrafterModal({ open, onClose }: { open: boolean; onClose: () 
           <div className="flex items-center gap-2.5">
             <Table2 className="w-5 h-5 text-primary-600" />
             <div>
-              <h2 className="font-jura font-bold text-lg text-stone-900">Draft your roster</h2>
+              <h2 className="font-semibold text-lg text-stone-900">Draft your roster</h2>
               <p className="text-xs text-stone-500">
                 First row is the header set — e.g. Name, Email, Course. Every row below is one recipient.
               </p>
@@ -136,7 +136,7 @@ export function CsvDrafterModal({ open, onClose }: { open: boolean; onClose: () 
                       <input
                         value={h}
                         onChange={(e) => renameColumn(c, e.target.value)}
-                        className="flex-1 px-2 py-1.5 text-xs font-bold font-quicksand uppercase tracking-wide text-slate-700 bg-slate-100 border border-stone-200 rounded-md focus:outline-none focus:border-slate-400"
+                        className="flex-1 px-2 py-1.5 text-xs font-bold uppercase tracking-wide text-slate-700 bg-slate-100 border border-stone-200 rounded-md focus:outline-none focus:border-slate-400"
                         aria-label={`Column ${c + 1} header`}
                       />
                       <button
@@ -174,7 +174,7 @@ export function CsvDrafterModal({ open, onClose }: { open: boolean; onClose: () 
                       <input
                         value={row[c] ?? ''}
                         onChange={(e) => setCell(r, c, e.target.value)}
-                        className="w-full px-2 py-1.5 text-xs font-quicksand bg-white border border-stone-200 rounded-md focus:outline-none focus:border-primary-400"
+                        className="w-full px-2 py-1.5 text-xs bg-white border border-stone-200 rounded-md focus:outline-none focus:border-primary-400"
                         aria-label={`Row ${r + 1} ${headers[c]}`}
                       />
                     </td>

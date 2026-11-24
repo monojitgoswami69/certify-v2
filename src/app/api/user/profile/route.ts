@@ -1,3 +1,4 @@
+import { log, requestIdOf } from '../../../../lib/logger';
 import { NextResponse } from 'next/server';
 import { mutationAllowed, forbiddenCsrfResponse } from '../../../../lib/server-auth';
 import { unauthorizedResponse } from '../../../../lib/server-auth';
@@ -31,13 +32,13 @@ export async function PATCH(request: Request) {
       ...(typeof body.issuedByName === 'string' ? { issuedByName: body.issuedByName } : {}),
     });
     if (!updated) return unauthorizedResponse('Invalid or expired token');
-    return NextResponse.json({ user: toPublicUser(updated) });
+    return NextResponse.json({ user: toPublicUser(updated, user) });
   } catch (error) {
     const message = error instanceof Error ? error.message : '';
     if (message === 'Name cannot be empty') {
       return NextResponse.json({ detail: message }, { status: 400 });
     }
-    console.error('[Profile update error]:', error);
+    log.warn('profile', 'Profile update failed', { requestId: requestIdOf(request) }, error);
     return NextResponse.json({ detail: 'Failed to update profile' }, { status: 500 });
   }
 }

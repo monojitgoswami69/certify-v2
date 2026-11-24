@@ -1,10 +1,10 @@
+import { log, requestIdOf } from '../../../../../lib/logger';
 import { NextResponse } from 'next/server';
 import { mutationAllowed, forbiddenCsrfResponse } from '../../../../../lib/server-auth';
 import { and, eq, ne, or } from 'drizzle-orm';
 import { db } from '../../../../../lib/db';
 import { certificates } from '../../../../../db/schema';
-import { unauthorizedResponse } from '../../../../../lib/server-auth';
-import { getAuthenticatedUser } from '../../../../../lib/accounts';
+import { requireIssuer } from '../../../../../lib/issuer-auth';
 import { hashToken, isValidCertificateId } from '../../../../../lib/verification';
 
 /**
@@ -15,10 +15,8 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   if (!mutationAllowed(request)) return forbiddenCsrfResponse();
-  const user = await getAuthenticatedUser(request);
-  if (!user) {
-    return unauthorizedResponse('Invalid or expired token');
-  }
+  const { user, denial } = await requireIssuer(request);
+  if (denial) return denial;
 
   const { id } = await params;
   if (!id || typeof id !== 'string') {
@@ -83,7 +81,7 @@ export async function POST(
       message: reinstated ? 'Certificate reinstated' : 'Certificate revoked',
     });
   } catch (error) {
-    console.error('[Certificate revoke error]:', error);
+    log.warn('certificates', 'Certificate status update failed', { requestId: requestIdOf(request) }, error);
     return NextResponse.json({ detail: 'Failed to update certificate' }, { status: 500 });
   }
 }

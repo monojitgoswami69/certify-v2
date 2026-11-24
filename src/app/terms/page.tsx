@@ -34,7 +34,7 @@ export default async function TermsOfServicePage() {
       {/* Main Editorial Content */}
       <main className="max-w-3xl mx-auto px-6 py-12 sm:py-16">
         <header className="pb-8 border-b border-stone-200/70">
-          <h1 className="text-3xl sm:text-4xl font-saira font-bold tracking-tight text-stone-950">
+          <h1 className="page-title text-stone-950">
             Terms of Service
           </h1>
           <p className="mt-2 text-sm text-stone-700 font-sans">
@@ -42,27 +42,21 @@ export default async function TermsOfServicePage() {
           </p>
         </header>
 
-        <div className="mt-8 space-y-10 text-stone-800 text-[15px] sm:text-base leading-relaxed font-sans">
+        <div className="mt-8 space-y-10 text-stone-800 text-sm leading-relaxed">
           {/* Section 1 */}
           <section className="space-y-3">
-            <h2 className="text-xl font-saira font-semibold text-stone-900">
+            <h2 className="section-title text-stone-900">
               1. Acceptance of Terms
             </h2>
             <p>
-              By accessing or using Certify (&quot;the Service&quot;), hosted at{' '}
-              <a
-                href="https://certify.mgbuilds.in"
-                className="text-stone-900 underline underline-offset-2 hover:text-stone-600 transition-colors"
-              >
-                https://certify.mgbuilds.in
-              </a>
-              , you agree to be bound by these Terms of Service (&quot;Terms&quot;). If you do not agree to these Terms, you may not access or use the Service.
+              By accessing or using <Link href="/" className="underline underline-offset-2">Certify</Link>{' '}
+              (&quot;the Service&quot;), you agree to be bound by these Terms of Service (&quot;Terms&quot;). If you do not agree to these Terms, you may not access or use the Service.
             </p>
           </section>
 
           {/* Section 2 */}
           <section className="space-y-3">
-            <h2 className="text-xl font-saira font-semibold text-stone-900">
+            <h2 className="section-title text-stone-900">
               2. Description of the Service
             </h2>
             <p>
@@ -72,7 +66,7 @@ export default async function TermsOfServicePage() {
 
           {/* Section 3 */}
           <section className="space-y-3">
-            <h2 className="text-xl font-saira font-semibold text-stone-900">
+            <h2 className="section-title text-stone-900">
               3. Permitted & Acceptable Use
             </h2>
             <p>
@@ -96,11 +90,11 @@ export default async function TermsOfServicePage() {
 
           {/* Section 4 */}
           <section className="space-y-3">
-            <h2 className="text-xl font-saira font-semibold text-stone-900">
+            <h2 className="section-title text-stone-900">
               4. Third-Party Integrations & Google APIs
             </h2>
             <p>
-              Certify provides optional integration with Google OAuth and the Gmail API to send generated credentials directly from your email account. When using Google integrations:
+              Certify supports Google sign-in and a separate, optional Gmail connection for sending generated credentials from your account. When using Google integrations:
             </p>
             <ul className="list-disc pl-5 space-y-2 text-stone-700">
               <li>
@@ -110,14 +104,14 @@ export default async function TermsOfServicePage() {
                 You acknowledge that email delivery speed and quota limits are governed by Google&apos;s API policies and your Google Workspace / Gmail account tier.
               </li>
               <li>
-                You can disconnect your Google Account from Certify at any time.
+                You can disconnect Gmail from Certify at any time.
               </li>
             </ul>
           </section>
 
           {/* Section 5 */}
           <section className="space-y-3">
-            <h2 className="text-xl font-saira font-semibold text-stone-900">
+            <h2 className="section-title text-stone-900">
               5. Intellectual Property & User Content
             </h2>
             <p>
@@ -127,7 +121,7 @@ export default async function TermsOfServicePage() {
 
           {/* Section 6 */}
           <section className="space-y-3">
-            <h2 className="text-xl font-saira font-semibold text-stone-900">
+            <h2 className="section-title text-stone-900">
               6. Disclaimer of Warranties
             </h2>
             <p>
@@ -137,7 +131,7 @@ export default async function TermsOfServicePage() {
 
           {/* Section 7 */}
           <section className="space-y-3">
-            <h2 className="text-xl font-saira font-semibold text-stone-900">
+            <h2 className="section-title text-stone-900">
               7. Limitation of Liability
             </h2>
             <p>
@@ -147,7 +141,7 @@ export default async function TermsOfServicePage() {
 
           {/* Section 8 */}
           <section className="space-y-3">
-            <h2 className="text-xl font-saira font-semibold text-stone-900">
+            <h2 className="section-title text-stone-900">
               8. Modifications to Terms
             </h2>
             <p>
@@ -157,17 +151,13 @@ export default async function TermsOfServicePage() {
 
           {/* Section 9 */}
           <section className="space-y-3">
-            <h2 className="text-xl font-saira font-semibold text-stone-900">
+            <h2 className="section-title text-stone-900">
               9. Contact Information
             </h2>
             <p>
               For any questions regarding these Terms of Service, please contact:
             </p>
-            <p className="font-mono text-sm text-stone-800">
-              Email: contact@mgbuilds.in
-              <br />
-              Website: https://certify.mgbuilds.in
-            </p>
+            <a href="mailto:contact@mgbuilds.in" className="text-primary-800 underline underline-offset-2">contact@mgbuilds.in</a>
           </section>
         </div>
 

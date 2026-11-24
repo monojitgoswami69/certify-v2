@@ -1,117 +1,61 @@
+import { apiFetch, fetchEventDesign } from './api-client';
 import { useAppStore } from '../store/useAppStore';
 import { useHistoryStore } from '../store/useHistoryStore';
-import { sanitizeFilename, buildVirtualCsvFile, imageSourceToBlob } from './utils';
+import { sanitizeFilename, imageSourceToBlob } from './utils';
+import type { EventLayout, IssuedEventDesign } from './event-design';
+
+export async function decodeDesignImage(design: Pick<IssuedEventDesign, 'imageData'>): Promise<HTMLImageElement> {
+  const image = new Image();
+  image.src = design.imageData;
+  await image.decode();
+  return image;
+}
 
 interface LoadWorkspaceParams {
-  eventName?: string | null;
+  copyEventId?: string | null;
   templateId?: string | null;
-  token: string;
   shouldApply?: () => boolean;
 }
 
-interface LoadedTemplate {
-  id?: string;
-  name: string;
-  imageData: string;
-  layoutConfig?: any;
-}
+/** Loads only artwork and layout into an empty, editable draft. */
+export async function loadWorkspace({ copyEventId, templateId, shouldApply }: LoadWorkspaceParams): Promise<void> {
+  let name: string;
+  let template: { imageData: string; layoutConfig: EventLayout };
 
-export function isWorkspaceLoadedFor(eventName: string): boolean {
-  const state = useAppStore.getState();
-  return Boolean(state.templateImage) && state.eventName === eventName;
-}
-
-function decodeImage(src: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error('Failed to decode template image'));
-    img.src = src;
-  });
-}
-
-/**
- * Fetches an event's (or template's) data and fully decodes the template image
- * before touching the store, so the canvas is never shown half-populated.
- */
-export async function loadWorkspace({ eventName, templateId, token, shouldApply }: LoadWorkspaceParams): Promise<void> {
-  const authHeaders = { Authorization: `Bearer ${token}` };
-  let tpl: LoadedTemplate | null = null;
-  let participants: any[] = [];
-
-  if (eventName) {
-    const res = await fetch(
-      `/api/dashboard?event=${encodeURIComponent(eventName)}&includeRowData=true&includeTemplate=true`,
-      { cache: 'no-store', headers: authHeaders }
-    );
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw new Error(data.detail || 'Failed to load event workspace');
-    }
-    const data = await res.json();
-    participants = data.participants || [];
-    tpl = data.template || null;
+  if (copyEventId) {
+    const { design, event } = await fetchEventDesign(copyEventId);
+    if (!design) throw new Error('The original artwork for this event is unavailable.');
+    template = design;
+    name = event.name;
+  } else if (templateId) {
+    const response = await apiFetch(`/api/templates/${encodeURIComponent(templateId)}`);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || 'Failed to load saved template');
+    name = data.template.name;
+    template = data.template;
+  } else {
+    return;
   }
 
-  if (!tpl && templateId) {
-    const tplRes = await fetch(`/api/templates/${templateId}`, { headers: authHeaders });
-    if (tplRes.ok) {
-      const tplData = await tplRes.json();
-      tpl = tplData.template || null;
-    }
-  }
-
-  let templateFile: File | null = null;
-  let templateImage: HTMLImageElement | null = null;
-  if (tpl?.imageData) {
-    const [blob, img] = await Promise.all([
-      imageSourceToBlob(tpl.imageData),
-      decodeImage(tpl.imageData),
-    ]);
-    templateFile = new File([blob], `${sanitizeFilename(eventName || tpl.name)}.png`, { type: blob.type || 'image/png' });
-    templateImage = img;
-  }
-
+  const [blob, image] = await Promise.all([imageSourceToBlob(template.imageData), decodeDesignImage(template)]);
   if (shouldApply && !shouldApply()) return;
 
   const store = useAppStore.getState();
-  if (eventName) {
-    store.reset();
-    useHistoryStore.getState().clearHistory();
-  }
+  store.reset();
+  useHistoryStore.getState().clearHistory();
+  const extension = blob.type === 'image/jpeg' ? 'jpg' : blob.type === 'image/webp' ? 'webp' : 'png';
+  const file = new File([blob], `${sanitizeFilename(name)}.${extension}`, { type: blob.type || 'image/png' });
+  store.setTemplate(file, image, `${file.name} (${image.width}×${image.height})`);
 
-  if (templateFile && templateImage) {
-    store.setTemplate(templateFile, templateImage, `${templateFile.name} (${templateImage.width}×${templateImage.height})`);
-    const layout = tpl?.layoutConfig;
-    if (Array.isArray(layout?.boxes)) {
-      const normalizedBoxes = layout.boxes.map((b: any) => ({
-        ...b,
-        w: b.w ?? b.width ?? 200,
-        h: b.h ?? b.height ?? 50,
-      }));
-      store.setBoxes(normalizedBoxes);
-    }
-    if (Array.isArray(layout?.qrZones)) store.setQrZones(layout.qrZones);
-    if (Array.isArray(layout?.images)) store.setImages(layout.images);
-    if (layout?.defaultFont) store.setDefaultFont(layout.defaultFont);
-    if (layout?.defaultFontSize) store.setDefaultFontSize(layout.defaultFontSize);
-    if (layout?.defaultFontColor) store.setDefaultFontColor(layout.defaultFontColor);
-  }
-
-  if (eventName) {
-    if (participants.length > 0) {
-      const { file, headers, rows } = buildVirtualCsvFile(eventName, participants);
-      store.setCsvData(file, headers, rows);
-    }
-    store.setEventName(eventName);
-
-    const certIds = new Map<number, string>();
-    participants.forEach((p: { id?: string }, idx: number) => {
-      if (p.id) certIds.set(idx + 2, p.id);
-    });
-    if (certIds.size > 0) {
-      store.setBatchRegistered(true, certIds);
-    }
+  const layout = template.layoutConfig;
+  if (Array.isArray(layout?.boxes)) store.setBoxes(layout.boxes);
+  if (Array.isArray(layout?.qrZones)) store.setQrZones(layout.qrZones);
+  if (Array.isArray(layout?.images)) store.setImages(layout.images);
+  if (layout?.defaultFont) store.setDefaultFont(layout.defaultFont);
+  if (layout?.defaultFontSize) store.setDefaultFontSize(layout.defaultFontSize);
+  if (layout?.defaultFontColor) store.setDefaultFontColor(layout.defaultFontColor);
+  if (copyEventId) {
+    store.setEventName(name);
+    store.setEventLabel('Copy');
   }
 }

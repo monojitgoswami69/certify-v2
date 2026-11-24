@@ -1,14 +1,14 @@
 import { NextResponse } from 'next/server';
 import { mutationAllowed, forbiddenCsrfResponse } from '../../../lib/server-auth';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { createHash } from 'crypto';
 import { db } from '../../../lib/db';
-import { templates, templateVersions } from '../../../db/schema';
-import { unauthorizedResponse } from '../../../lib/server-auth';
-import { getAuthenticatedUser } from '../../../lib/accounts';
+import { templates } from '../../../db/schema';
+import { requireIssuer } from '../../../lib/issuer-auth';
 import { env } from '../../../lib/env';
 import { checkRateLimit } from '../../../lib/rate-limit';
 import { parseImageDataUrl } from '../../../lib/image-validation';
+import { snapshotTemplateVersion } from '../../../lib/template-versions';
 import { log, requestIdOf } from '../../../lib/logger';
 
 const MAX_IMAGE_DATA_LENGTH = 20 * 1024 * 1024;
@@ -17,10 +17,8 @@ const MAX_LAYOUT_LENGTH = 1024 * 1024;
 const SAVE_RATE_LIMIT = 30; // saves per minute
 
 export async function GET(request: Request) {
-  const user = await getAuthenticatedUser(request);
-  if (!user) {
-    return unauthorizedResponse('Invalid or expired session');
-  }
+  const { user, denial } = await requireIssuer(request);
+  if (denial) return denial;
 
   if (!env.DATABASE_URL) {
     return NextResponse.json(
@@ -56,10 +54,8 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   if (!mutationAllowed(request)) return forbiddenCsrfResponse();
-  const user = await getAuthenticatedUser(request);
-  if (!user) {
-    return unauthorizedResponse('Invalid or expired session');
-  }
+  const { user, denial } = await requireIssuer(request);
+  if (denial) return denial;
 
   const rate = checkRateLimit(`templates:save:${user.userId}`, SAVE_RATE_LIMIT, 60_000);
   if (!rate.allowed) {
@@ -78,7 +74,7 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const { name, imageData, width, height, layoutConfig, imageHash } = body;
+    const { name, imageData, width, height, layoutConfig } = body;
 
     if (!name || typeof name !== 'string' || !name.trim() || name.trim().length > 200) {
       return NextResponse.json(
@@ -127,12 +123,9 @@ export async function POST(request: Request) {
     // Server-side hash of the payload image. When it matches the stored row's
     // hash, the multi-MB image column is left untouched (layout-only save).
     const serverImageHash = createHash('sha256').update(imageData).digest('hex');
-    const clientImageHash = typeof imageHash === 'string' && imageHash.length === 64 ? imageHash : null;
-    const effectiveHash = clientImageHash === serverImageHash ? serverImageHash : null;
-
     // Single-statement upsert on the unique (userId, name) index: concurrent
     // saves can never race into an unhandled unique violation.
-    const [savedTemplate] = await db
+    const save = db
       .insert(templates)
       .values({
         userId: user.userId,
@@ -146,66 +139,29 @@ export async function POST(request: Request) {
       .onConflictDoUpdate({
         target: [templates.userId, templates.name],
         set: {
-          ...(effectiveHash
-            ? // Hash matches what is (or was just) stored: skip the image rewrite.
-              {}
-            : { imageData, imageHash: serverImageHash }),
+          imageData: sql`CASE WHEN ${templates.imageHash} = excluded.image_hash THEN ${templates.imageData} ELSE excluded.image_data END`,
+          imageHash: serverImageHash,
           width: typeof width === 'number' ? width : null,
           height: typeof height === 'number' ? height : null,
           layoutConfig: layoutConfig || { boxes: [], qrZones: [] },
           updatedAt: new Date(),
         },
-        // Guard against a stale client overwriting a newer save: only update
-        // when the stored hash matches the client's last-known image hash (or
-        // the client sent none, meaning first save of this image).
-        setWhere: effectiveHash
-          ? sql`${templates.imageHash} = ${effectiveHash} OR ${templates.imageHash} IS NULL OR ${templates.imageHash} = ${serverImageHash}`
-          : undefined,
       })
-      .returning();
-
-    if (!savedTemplate) {
-      // setWhere rejected the write: a newer version exists server-side.
-      const [current] = await db
-        .select({
-          id: templates.id,
-          name: templates.name,
-          width: templates.width,
-          height: templates.height,
-          layoutConfig: templates.layoutConfig,
-          createdAt: templates.createdAt,
-          updatedAt: templates.updatedAt,
-        })
-        .from(templates)
-        .where(and(eq(templates.userId, user.userId), eq(templates.name, name.trim())))
-        .limit(1);
-      return NextResponse.json({
-        success: true,
-        conflict: true,
-        template: current ?? null,
-        detail: 'A newer version of this template was saved elsewhere; kept the newest copy.',
+      .returning({
+        id: templates.id,
+        name: templates.name,
+        width: templates.width,
+        height: templates.height,
+        layoutConfig: templates.layoutConfig,
+        createdAt: templates.createdAt,
+        updatedAt: templates.updatedAt,
       });
-    }
 
-    // Snapshot the saved layout (last 10 kept) for rollback in the library.
-    try {
-      await db.insert(templateVersions).values({
-        templateId: savedTemplate.id,
-        layoutConfig: savedTemplate.layoutConfig,
-        imageHash: savedTemplate.imageHash ?? null,
-      });
-      const old = await db
-        .select({ id: templateVersions.id })
-        .from(templateVersions)
-        .where(eq(templateVersions.templateId, savedTemplate.id))
-        .orderBy(desc(templateVersions.createdAt))
-        .offset(10);
-      if (old.length > 0) {
-        await db.delete(templateVersions).where(inArray(templateVersions.id, old.map((o) => o.id)));
-      }
-    } catch (verErr) {
-      console.warn('[Templates] version snapshot failed:', verErr);
-    }
+    const [[savedTemplate]] = await db.batch([
+      save,
+      ...snapshotTemplateVersion(user.userId, { name: name.trim() }),
+    ]);
+    if (!savedTemplate) throw new Error('Template save returned no row');
 
     return NextResponse.json({
       success: true,

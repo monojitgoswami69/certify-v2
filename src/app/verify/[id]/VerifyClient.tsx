@@ -199,7 +199,7 @@ export function VerifyClient({
 
         {/* Status Headline */}
         <div className="max-w-md mx-auto">
-          <h1 className="text-2xl sm:text-3xl font-jura font-bold text-stone-900 tracking-tight font-[700]">
+          <h1 className="page-title text-stone-900">
             Verifying Certificate Authenticity
           </h1>
         </div>
@@ -214,11 +214,14 @@ export function VerifyClient({
     return (
       <div className="w-full flex flex-col items-center text-center">
         {/* Celebratory Professional Confetti (Portaled to Full Viewport) */}
-        {!confettiComplete && (
+        {!state.expired && !confettiComplete && (
           <ConfettiCanvas trigger={true} onComplete={() => setConfettiComplete(true)} />
         )}
 
         {/* Redesigned High-Definition Verification Seal */}
+        {state.expired ? (
+          <Clock aria-hidden="true" className="mb-3 h-16 w-16 text-amber-600" />
+        ) : (
         <div className="relative flex items-center justify-center verify-pop-badge mb-3">
           {/* Ambient breathing aura glow behind seal */}
           <div className="absolute w-32 h-32 rounded-full bg-emerald-400/25 blur-2xl pointer-events-none verify-aura-breath" />
@@ -261,10 +264,12 @@ export function VerifyClient({
           </svg>
         </div>
 
+        )}
+
         {/* Verification Headline */}
         <div className="max-w-md mx-auto mt-2 animate-fade-in" style={{ animationDelay: '150ms' }}>
-          <h1 className="text-2xl sm:text-3xl font-jura font-bold text-stone-900 tracking-tight font-[700]">
-            Valid Certificate
+          <h1 className="page-title text-stone-900">
+            {state.expired ? 'Expired Certificate' : 'Valid Certificate'}
           </h1>
           {state.expired && state.expiresAt && (
             <div
@@ -272,13 +277,13 @@ export function VerifyClient({
               role="status"
             >
               <Clock className="w-4 h-4 text-amber-600 shrink-0" />
-              <p className="text-xs sm:text-sm font-quicksand font-semibold text-amber-800 text-left">
+              <p className="text-xs sm:text-sm font-semibold text-amber-800 text-left">
                 This credential expired on {formatDate(state.expiresAt)} and is no longer current.
               </p>
             </div>
           )}
           {typeof state.verificationCount === 'number' && (
-            <p className="mt-2 text-xs font-quicksand font-semibold text-stone-500">
+            <p className="mt-2 text-xs font-semibold text-stone-500">
               Viewed {state.verificationCount.toLocaleString()} time
               {state.verificationCount === 1 ? '' : 's'}
             </p>
@@ -298,10 +303,10 @@ export function VerifyClient({
             className="py-3.5 sm:py-4 flex flex-col items-center sm:flex-row sm:items-center justify-between gap-1 sm:gap-4 verify-row-animate text-center sm:text-left"
             style={{ animationDelay: '240ms' }}
           >
-            <span className="font-quicksand font-bold text-xs tracking-[0.14em] uppercase text-stone-500 shrink-0 sm:w-44 select-none font-[700] text-center sm:text-left">
+            <span className="text-sm font-medium text-stone-700 shrink-0 sm:w-44 text-center sm:text-left">
               Certificate Holder
             </span>
-            <span className="font-jura font-bold text-base sm:text-lg text-stone-900 break-words text-center sm:text-right font-[700]">
+            <span className="text-sm font-semibold text-stone-900 break-words text-center sm:text-right">
               {state.recipientName}
             </span>
           </div>
@@ -312,10 +317,10 @@ export function VerifyClient({
               className="py-3.5 sm:py-4 flex flex-col items-center sm:flex-row sm:items-center justify-between gap-1 sm:gap-4 verify-row-animate text-center sm:text-left"
               style={{ animationDelay: '320ms' }}
             >
-              <span className="font-quicksand font-bold text-xs tracking-[0.14em] uppercase text-stone-500 shrink-0 sm:w-44 select-none font-[700] text-center sm:text-left">
+              <span className="text-sm font-medium text-stone-700 shrink-0 sm:w-44 text-center sm:text-left">
                 Event
               </span>
-              <span className="font-jura font-bold text-base sm:text-lg text-stone-900 break-words text-center sm:text-right font-[700]">
+              <span className="text-sm font-semibold text-stone-900 break-words text-center sm:text-right">
                 {state.eventName}
               </span>
             </div>
@@ -327,10 +332,10 @@ export function VerifyClient({
               className="py-3.5 sm:py-4 flex flex-col items-center sm:flex-row sm:items-center justify-between gap-1 sm:gap-4 verify-row-animate text-center sm:text-left"
               style={{ animationDelay: '360ms' }}
             >
-              <span className="font-quicksand font-bold text-xs tracking-[0.14em] uppercase text-stone-500 shrink-0 sm:w-44 select-none font-[700] text-center sm:text-left">
+              <span className="text-sm font-medium text-stone-700 shrink-0 sm:w-44 text-center sm:text-left">
                 Issued By
               </span>
-              <span className="font-jura font-bold text-base sm:text-lg text-stone-900 break-words text-center sm:text-right font-[700]">
+              <span className="text-sm font-semibold text-stone-900 break-words text-center sm:text-right">
                 {state.issuedBy || defaultIssuedBy}
               </span>
             </div>
@@ -342,10 +347,10 @@ export function VerifyClient({
               className="py-3.5 sm:py-4 flex flex-col items-center sm:flex-row sm:items-center justify-between gap-1 sm:gap-4 verify-row-animate text-center sm:text-left"
               style={{ animationDelay: '400ms' }}
             >
-              <span className="font-quicksand font-bold text-xs tracking-[0.14em] uppercase text-stone-500 shrink-0 sm:w-44 select-none font-[700] text-center sm:text-left">
+              <span className="text-sm font-medium text-stone-700 shrink-0 sm:w-44 text-center sm:text-left">
                 Registered Email
               </span>
-              <span className="font-jura font-bold text-base sm:text-lg text-stone-900 break-all text-center sm:text-right font-[700]">
+              <span className="text-sm font-semibold text-stone-900 break-all text-center sm:text-right">
                 {state.recipientEmail}
               </span>
             </div>
@@ -356,10 +361,10 @@ export function VerifyClient({
             className="py-3.5 sm:py-4 flex flex-col items-center sm:flex-row sm:items-center justify-between gap-1 sm:gap-4 verify-row-animate text-center sm:text-left"
             style={{ animationDelay: '480ms' }}
           >
-            <span className="font-quicksand font-bold text-xs tracking-[0.14em] uppercase text-stone-500 shrink-0 sm:w-44 select-none font-[700] text-center sm:text-left">
+            <span className="text-sm font-medium text-stone-700 shrink-0 sm:w-44 text-center sm:text-left">
               Issue Date
             </span>
-            <span className="font-jura font-bold text-base sm:text-lg text-stone-900 text-center sm:text-right font-[700]">
+            <span className="text-sm font-semibold text-stone-900 text-center sm:text-right">
               {formatDate(state.issuedAt)}
             </span>
           </div>
@@ -415,11 +420,11 @@ export function VerifyClient({
 
         {/* Revocation Headline */}
         <div className="space-y-2 max-w-md mx-auto mt-2">
-          <h1 className="text-2xl sm:text-3xl font-jura font-bold text-stone-900 tracking-tight font-[700]">
+          <h1 className="page-title text-stone-900">
             Certificate Revoked
           </h1>
 
-          <p className="text-sm sm:text-base font-quicksand font-semibold text-red-700 font-[600] leading-relaxed">
+          <p className="text-sm sm:text-base font-semibold text-red-700 font-[600] leading-relaxed">
             This certificate is no longer valid. It has been officially revoked in the verification registry.
           </p>
         </div>
@@ -462,11 +467,11 @@ export function VerifyClient({
         </div>
 
         <div className="space-y-2 max-w-md mx-auto mt-2">
-          <h1 className="text-2xl sm:text-3xl font-jura font-bold text-stone-900 tracking-tight font-[700]">
+          <h1 className="page-title text-stone-900">
             Certificate Not Found
           </h1>
 
-          <p className="text-sm sm:text-base font-quicksand font-semibold text-stone-600 font-[600] leading-relaxed">
+          <p className="text-sm sm:text-base font-semibold text-stone-600 font-[600] leading-relaxed">
             No issued credential matches this identifier in our verification registry. Please ensure the link or QR code is intact and was generated via Certify.
           </p>
         </div>
@@ -484,11 +489,11 @@ export function VerifyClient({
       </div>
 
       <div className="space-y-2 max-w-md mx-auto">
-        <h1 className="text-2xl sm:text-3xl font-jura font-bold text-stone-900 tracking-tight font-[700]">
+        <h1 className="page-title text-stone-900">
           {state.status === 'rate_limited' ? 'Too Many Requests' : 'Verification Unavailable'}
         </h1>
 
-        <p className="text-sm sm:text-base font-quicksand font-semibold text-stone-600 font-[600] leading-relaxed">
+        <p className="text-sm sm:text-base font-semibold text-stone-600 font-[600] leading-relaxed">
           {state.status === 'rate_limited'
             ? state.detail || 'Rate limit reached. Please wait a moment before trying again.'
             : state.detail || 'The verification service is momentarily unable to reach the registry.'}
@@ -499,7 +504,7 @@ export function VerifyClient({
         <button
           type="button"
           onClick={fetchVerification}
-          className="inline-flex items-center gap-2 px-4.5 py-2.5 bg-stone-900 hover:bg-stone-800 text-white rounded-lg text-xs font-saira font-bold tracking-wider uppercase transition-all shadow-2xs hover:shadow-xs active:scale-[0.98] font-[700]"
+          className="inline-flex items-center gap-2 px-4.5 py-2.5 bg-stone-900 hover:bg-stone-800 text-white rounded-lg text-sm font-semibold transition-all shadow-2xs hover:shadow-xs active:scale-[0.98]"
         >
           <RotateCcw className="w-3.5 h-3.5" />
           <span>Try Again</span>
@@ -539,7 +544,7 @@ function ShareRow({ eventName, issuedBy }: { eventName: string; issuedBy: string
         href={linkedIn}
         target="_blank"
         rel="noopener noreferrer"
-        className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-quicksand font-semibold text-stone-700 bg-white border border-stone-300 rounded-lg hover:border-stone-500 hover:bg-stone-50 transition-colors"
+        className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-stone-700 bg-white border border-stone-300 rounded-lg hover:border-stone-500 hover:bg-stone-50 transition-colors"
       >
         <LinkedInGlyph className="w-3.5 h-3.5 text-[#0a66c2]" />
         Add to LinkedIn
@@ -548,7 +553,7 @@ function ShareRow({ eventName, issuedBy }: { eventName: string; issuedBy: string
         href={tweet}
         target="_blank"
         rel="noopener noreferrer"
-        className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-quicksand font-semibold text-stone-700 bg-white border border-stone-300 rounded-lg hover:border-stone-500 hover:bg-stone-50 transition-colors"
+        className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-stone-700 bg-white border border-stone-300 rounded-lg hover:border-stone-500 hover:bg-stone-50 transition-colors"
       >
         <XGlyph className="w-3 h-3 text-stone-900" />
         Share on X
@@ -556,7 +561,7 @@ function ShareRow({ eventName, issuedBy }: { eventName: string; issuedBy: string
       <button
         type="button"
         onClick={() => void copy()}
-        className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-quicksand font-semibold text-stone-700 bg-white border border-stone-300 rounded-lg hover:border-stone-500 hover:bg-stone-50 transition-colors cursor-pointer"
+        className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-stone-700 bg-white border border-stone-300 rounded-lg hover:border-stone-500 hover:bg-stone-50 transition-colors cursor-pointer"
       >
         {copied ? (
           <>

@@ -1,40 +1,35 @@
-import { describe, it, expect } from 'vitest';
-import { pickRenderFields } from './render-fields';
+import { describe, expect, it } from 'vitest';
+import { freezeRenderFields } from './render-fields';
 
-describe('pickRenderFields (public asset field filter)', () => {
-  const layout = { boxes: [{ field: 'Name' }, { field: 'Course' }] };
-
-  it('returns only fields referenced by template boxes', () => {
-    const row = { Name: 'Ada', Course: 'CS', 'Internal Notes': 'salary=low', Phone: '555' };
-    expect(pickRenderFields(row, layout)).toEqual({ Name: 'Ada', Course: 'CS' });
+describe('freezeRenderFields', () => {
+  it('keeps the values printed at issuance and excludes private columns', () => {
+    const layout = { boxes: [{ field: 'Name' }, { field: 'Course' }] };
+    const row = { Name: 'Ada', Course: 'CS', 'Internal Note': 'Private' };
+    const fields = freezeRenderFields(layout, row);
+    row.Name = 'Changed';
+    layout.boxes.push({ field: 'Internal Note' });
+    expect(fields).toEqual({ Name: 'Ada', Course: 'CS' });
   });
 
-  it('matches case-insensitively and ignores whitespace/punctuation in keys', () => {
-    const row = { 'FULL NAME': 'Ada', course_code: 'CS101' };
-    const layout2 = { boxes: [{ field: 'Full Name' }, { field: 'Course Code' }] };
-    expect(pickRenderFields(row, layout2)).toEqual({ 'FULL NAME': 'Ada', course_code: 'CS101' });
+  it('stores only the selected value when the row contains competing aliases', () => {
+    const row = { 'Full Name': 'Ada', 'Student Name': 'Private', Mail: 'ada@example.test' };
+    expect(freezeRenderFields({ boxes: [{ field: 'Recipient Name' }, { field: 'Email' }] }, row))
+      .toEqual({ 'Recipient Name': 'Ada', Email: 'ada@example.test' });
   });
 
-  it('expands alias groups so resolveFieldValue finds its data on the client', () => {
-    const row = { 'Student Name': 'Ada' };
-    const layout3 = { boxes: [{ field: 'Recipient Name' }] };
-    expect(pickRenderFields(row, layout3)).toEqual({ 'Student Name': 'Ada' });
-
-    const emailRow = { Mail: 'a@b.c' };
-    expect(pickRenderFields(emailRow, { boxes: [{ field: 'email' }] })).toEqual({ Mail: 'a@b.c' });
+  it('preserves a blank and ignores field bindings on static boxes', () => {
+    expect(freezeRenderFields({
+      boxes: [{ field: 'Course' }, { field: 'Hidden', kind: 'static' }, { field: '' }],
+    }, { Hidden: 'Never printed' })).toEqual({ Course: '' });
   });
 
-  it('returns empty for null/missing inputs and empty boxes', () => {
-    expect(pickRenderFields(null, layout)).toEqual({});
-    expect(pickRenderFields({ Name: 'x' }, null)).toEqual({});
-    expect(pickRenderFields({ Name: 'x' }, { boxes: [] })).toEqual({});
-    expect(pickRenderFields({ Name: 'x' }, { boxes: [{ field: '' }] })).toEqual({});
+  it('treats inherited object members as absent data', () => {
+    expect(freezeRenderFields({ boxes: [{ field: '__proto__' }, { field: 'constructor' }] }, {}))
+      .toEqual(Object.fromEntries([['__proto__', ''], ['constructor', '']]));
   });
 
-  it('never leaks unreferenced PII even when keys look similar', () => {
-    const row = { Name: 'Ada', NameOfGuardian: 'Bob', EmailAddress2: 'side@b.c' };
-    expect(pickRenderFields(row, { boxes: [{ field: 'Name' }, { field: 'email' }] })).toEqual({
-      Name: 'Ada',
-    });
+  it('retains literal prototype-like headers provided by the roster', () => {
+    const row = Object.fromEntries([['__proto__', 'A real column']]);
+    expect(Object.hasOwn(freezeRenderFields({ boxes: [{ field: '__proto__' }] }, row), '__proto__')).toBe(true);
   });
 });

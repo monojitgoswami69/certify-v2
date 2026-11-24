@@ -141,7 +141,7 @@ export function StarterGalleryModal({ open, onClose }: { open: boolean; onClose:
           <div className="flex items-center gap-2.5">
             <Sparkles className="w-5 h-5 text-primary-600" />
             <div>
-              <h2 className="font-jura font-bold text-lg text-stone-900">Start from a template</h2>
+              <h2 className="font-semibold text-lg text-stone-900">Start from a template</h2>
               <p className="text-xs text-stone-500">
                 Professionally designed layouts — pick one, then drag the text boxes to fit.
               </p>

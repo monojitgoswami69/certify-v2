@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { mutationAllowed, forbiddenCsrfResponse } from '../../../../lib/server-auth';
-import { unauthorizedResponse } from '../../../../lib/server-auth';
-import { getAuthenticatedUser } from '../../../../lib/accounts';
+import { requireIssuer } from '../../../../lib/issuer-auth';
 import { env } from '../../../../lib/env';
 import { checkRateLimit } from '../../../../lib/rate-limit';
 import { log, requestIdOf } from '../../../../lib/logger';
@@ -16,10 +15,8 @@ const REGISTER_RATE_LIMIT = 20; // batches per minute
 
 export async function POST(request: Request) {
   if (!mutationAllowed(request)) return forbiddenCsrfResponse();
-  const user = await getAuthenticatedUser(request);
-  if (!user) {
-    return unauthorizedResponse('Invalid or expired token');
-  }
+  const { user, denial } = await requireIssuer(request);
+  if (denial) return denial;
 
   const rate = checkRateLimit(`register:user:${user.userId}`, REGISTER_RATE_LIMIT, 60_000);
   if (!rate.allowed) {

@@ -1,5 +1,8 @@
+import type { IssuedEventDesign } from './event-design';
+import { ISSUANCE_ACCESS_CHANGED_EVENT, ISSUANCE_REQUIRED_HEADER } from './access-role';
+
 /**
- * Authenticated API Client with JWT Bearer Token Injection
+ * Authenticated browser requests using the session cookie.
  */
 
 const API_BASE = '/api';
@@ -7,7 +10,11 @@ const API_BASE = '/api';
 /** The single source of truth for reading the session token client-side. */
 export function getAuthToken(): string | null {
   if (typeof window === 'undefined') return null;
-  return localStorage.getItem('certify_auth_token') || sessionStorage.getItem('certify_session_token');
+  try {
+    return localStorage.getItem('certify_auth_token') || sessionStorage.getItem('certify_session_token');
+  } catch {
+    return null;
+  }
 }
 
 function getAuthHeader(): Record<string, string> {
@@ -22,6 +29,18 @@ function getAuthHeader(): Record<string, string> {
  */
 const CSRF_HEADERS = { 'X-Certify-Request': '1' };
 
+/** Browser requests use the session cookie and support legacy bearer sessions. */
+export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers({ ...CSRF_HEADERS, ...getAuthHeader() });
+  new Headers(init.headers).forEach((value, name) => headers.set(name, value));
+  const response = await fetch(path, { ...init, credentials: 'same-origin', headers });
+  if (typeof window !== 'undefined' && response.headers.get(ISSUANCE_REQUIRED_HEADER) === '1') {
+    window.dispatchEvent(new Event(ISSUANCE_ACCESS_CHANGED_EVENT));
+  }
+  return response;
+}
+
+
 export interface GoogleAccount {
   email: string;
   name?: string;
@@ -32,48 +51,38 @@ export interface RegisterCertificateItem {
   recipientName: string;
   recipientEmail?: string;
   rowData?: Record<string, string>;
-  templateName?: string;
-  eventName?: string;
-  isStatic?: boolean;
 }
 
-/**
- * Bulk-registers certificates on the server before QR rendering. Returns the
- * raw verification UUIDs in input order.
- */
+export interface RegistrationOutcome {
+  id: string;
+  status: 'issued' | 'existing' | 'conflict';
+}
+
+/** Registers recipients against one immutable issued design. */
 export async function registerCertificates(
   items: RegisterCertificateItem[],
-  eventName?: string,
-  isStatic?: boolean
-): Promise<string[]> {
-  const response = await fetch(`${API_BASE}/certificates/register`, {
+  event: { eventId: string; eventName?: string; label?: string; design?: IssuedEventDesign }
+): Promise<RegistrationOutcome[]> {
+  const response = await apiFetch(`${API_BASE}/certificates/register`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...CSRF_HEADERS,
-      ...getAuthHeader(),
-    },
-    body: JSON.stringify({ certificates: items, eventName, isStatic }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ certificates: items, ...event }),
   });
-
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(data.detail || 'Failed to register certificates');
-  }
-  const ids: unknown = data.ids;
-  if (!Array.isArray(ids) || ids.length !== items.length || !ids.every((id) => typeof id === 'string' && id)) {
+  if (!response.ok) throw new Error(data.detail || 'Failed to register certificates');
+  const outcomes = data.outcomes as RegistrationOutcome[] | undefined;
+  if (!Array.isArray(outcomes) || outcomes.length !== items.length || outcomes.some(({ id, status }) =>
+    typeof id !== 'string' || !['issued', 'existing', 'conflict'].includes(status))) {
     throw new Error('Invalid registration response from server');
   }
-  return ids as string[];
+  return outcomes;
 }
 
 export async function exchangeGoogleCode(code: string): Promise<GoogleAccount> {
-  const response = await fetch(`${API_BASE}/auth/google/tokens`, {
+  const response = await apiFetch(`${API_BASE}/auth/google/tokens`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...CSRF_HEADERS,
-      ...getAuthHeader(),
     },
     body: JSON.stringify({ code }),
   });
@@ -86,12 +95,26 @@ export async function exchangeGoogleCode(code: string): Promise<GoogleAccount> {
   return response.json();
 }
 
-/** Best-effort: the local disconnect must still succeed when the server is unreachable. */
+export async function getGoogleConnection(signal: AbortSignal): Promise<GoogleAccount | null> {
+  const response = await apiFetch(`${API_BASE}/auth/google/tokens`, {
+    signal,
+  });
+  if (!response.ok) throw new Error('Could not check your Gmail connection');
+  const { account } = await response.json();
+  return account;
+}
+
 export async function disconnectGoogleAccount(): Promise<void> {
-  await fetch(`${API_BASE}/auth/google/tokens`, {
+  const response = await apiFetch(`${API_BASE}/auth/google/tokens`, {
     method: 'DELETE',
-    headers: { ...CSRF_HEADERS, ...getAuthHeader() },
-  }).catch(() => undefined);
+  });
+  if (!response.ok) throw new Error('Could not disconnect Gmail. Try again.');
+}
+
+export class EmailRateLimitError extends Error {
+  constructor(message: string, readonly retryAfter: number, readonly source: 'account' | 'gmail') {
+    super(message);
+  }
 }
 
 export interface SendEmailV2Params {
@@ -103,8 +126,16 @@ export interface SendEmailV2Params {
   jpgBlob?: Blob;
   pngBlob?: Blob;
   pdfBlob?: Blob;
-  senderEmail?: string;
 }
+
+export class EmailUnconfirmedError extends Error {
+  constructor(public readonly networkFailure = false) {
+    super('Gmail acceptance could not be confirmed. Check Gmail Sent before sending again.');
+    this.name = 'EmailUnconfirmedError';
+  }
+}
+
+export class IssuanceAccessRequiredError extends Error {}
 
 export interface SendEmailResult {
   status: 'success' | 'reconnect_required';
@@ -125,21 +156,26 @@ export async function sendEmailV2(params: SendEmailV2Params): Promise<SendEmailR
   form.append('email_body_plain', params.emailBodyPlain);
   form.append('email_body_html', params.emailBodyHtml);
   form.append('filename', params.filename);
-  if (params.senderEmail) form.append('sender_email', params.senderEmail);
   if (params.jpgBlob) form.append('jpg', params.jpgBlob, `${params.filename}.jpg`);
   if (params.pngBlob) form.append('png', params.pngBlob, `${params.filename}.png`);
   if (params.pdfBlob) form.append('pdf', params.pdfBlob, `${params.filename}.pdf`);
 
-  const response = await fetch(`${API_BASE}/send-email-v2`, {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { ...CSRF_HEADERS, ...getAuthHeader() },
-    body: form,
-  });
+  let response: Response;
+  try {
+    response = await apiFetch(`${API_BASE}/send-email-v2`, { method: 'POST', body: form });
+  } catch {
+    throw new EmailUnconfirmedError(true);
+  }
 
-  const data = await response.json().catch(() => ({}));
+  const data = await response.json().catch(() => null);
+  if (data?.status === 'unconfirmed' || (!data && (response.ok || response.status >= 500))) {
+    throw new EmailUnconfirmedError();
+  }
 
   if (!response.ok) {
+    if (response.headers.get(ISSUANCE_REQUIRED_HEADER) === '1') {
+      throw new IssuanceAccessRequiredError(data?.detail || 'Certificate issuance access is required');
+    }
     // Soft signal: Google session expired and needs interactive reconnect.
     if (response.status === 401 && data?.status === 'reconnect_required') {
       return {
@@ -148,13 +184,32 @@ export async function sendEmailV2(params: SendEmailV2Params): Promise<SendEmailR
         recipient: params.recipientEmail,
       };
     }
-    throw new Error(data.detail || 'Failed to send email');
+    if (response.status === 429 && data?.status === 'rate_limited') {
+      const seconds = Number(response.headers.get('Retry-After')) || 1;
+      const source = data.source === 'account' ? 'account' : 'gmail';
+      throw new EmailRateLimitError(`${data.detail} Try again in ${seconds} seconds.`, seconds, source);
+    }
+    throw new Error(data?.detail || 'Failed to send email');
   }
 
+  if (data?.status !== 'success') throw new EmailUnconfirmedError();
   return {
     status: 'success',
-    message: data.message || 'Email sent',
+    message: data.message || 'Email accepted by Gmail',
     recipient: params.recipientEmail,
   };
 }
 
+
+export interface EventDesignResponse {
+  event: { id: string; name: string; label: string | null; designLocked: boolean };
+  design: IssuedEventDesign | null;
+  revision: string | null;
+}
+
+export async function fetchEventDesign(eventId: string, signal?: AbortSignal): Promise<EventDesignResponse> {
+  const response = await apiFetch(`/api/events/${encodeURIComponent(eventId)}/design`, { signal, cache: 'no-store' });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.detail || 'Could not load the certificate design');
+  return data;
+}

@@ -23,16 +23,5 @@ CREATE TABLE IF NOT EXISTS "platform_access" (
   "updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 
--- Bootstrap: existing accounts keep access; ADMIN_EMAIL becomes super_admin.
-INSERT INTO "platform_access" ("email", "role")
-SELECT u.email, 'user' FROM "users" u
-ON CONFLICT ("email") DO NOTHING;
-
-UPDATE "platform_access" p
-SET role = 'super_admin'
-FROM "users" u
-WHERE u.email = p.email
-  AND u.email = lower(trim(coalesce(NULLIF(current_setting('certify.admin_email', true), ''), '')));
-
--- The env-based bootstrap below is applied at sign-in time by the app
--- (ADMIN_EMAIL lives in the app env, not the database).
+-- The app bootstraps ADMIN_EMAIL. Grant other accounts through the Admin
+-- console so reapplying this migration cannot restore previously revoked access.

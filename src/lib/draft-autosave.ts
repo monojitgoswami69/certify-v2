@@ -6,12 +6,13 @@
  * artwork is not stored in the draft — drafts reference it by file name and
  * the matching saved template is restored on recovery (best effort).
  */
-import { getAuthToken } from './api-client';
+import { apiFetch } from './api-client';
 import type { TextBox, QrZone, ImageElement, EmailSettings } from '../types';
 
 export interface DraftState {
   savedAt: string;
   eventName: string;
+  eventLabel?: string;
   csvHeaders: string[];
   csvRows: Array<Record<string, string>>;
   csvFileName: string | null;
@@ -29,39 +30,41 @@ interface DraftResponse {
   draft: { state: DraftState; updatedAt: string } | null;
 }
 
-function authHeaders(json = false): Record<string, string> {
-  const headers: Record<string, string> = { 'X-Certify-Request': '1' };
-  const token = getAuthToken();
-  if (token) headers.Authorization = `Bearer ${token}`;
-  if (json) headers['Content-Type'] = 'application/json';
-  return headers;
+export function isDraftState(value: unknown): value is DraftState {
+  if (!value || typeof value !== 'object') return false;
+  const draft = value as Partial<DraftState>;
+  return typeof draft.savedAt === 'string'
+    && Number.isFinite(Date.parse(draft.savedAt))
+    && typeof draft.eventName === 'string'
+    && Array.isArray(draft.csvHeaders)
+    && draft.csvHeaders.every((header) => typeof header === 'string')
+    && Array.isArray(draft.csvRows)
+    && draft.csvRows.every((row) => row && typeof row === 'object' && !Array.isArray(row))
+    && Array.isArray(draft.boxes)
+    && Array.isArray(draft.qrZones)
+    && Array.isArray(draft.images)
+    && (!draft.templateRef || typeof draft.templateRef.fileName === 'string');
 }
 
 export async function fetchWorkspaceDraft(): Promise<DraftState | null> {
-  try {
-    const res = await fetch('/api/workspace-draft', { credentials: 'same-origin', headers: authHeaders() });
-    if (!res.ok) return null;
-    const data = (await res.json()) as DraftResponse;
-    return data.draft?.state ?? null;
-  } catch {
-    return null;
-  }
+  const response = await apiFetch('/api/workspace-draft', { cache: 'no-store' });
+  if (!response.ok) throw new Error('Could not load the workspace draft.');
+  const data = (await response.json()) as DraftResponse;
+  return isDraftState(data.draft?.state) ? data.draft.state : null;
 }
 
 export async function saveWorkspaceDraft(state: Omit<DraftState, 'savedAt'>): Promise<void> {
   const payload: DraftState = { ...state, savedAt: new Date().toISOString() };
-  await fetch('/api/workspace-draft', {
+  const response = await apiFetch('/api/workspace-draft', {
     method: 'PUT',
-    credentials: 'same-origin',
-    headers: authHeaders(true),
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ state: payload }),
-  }).catch(() => undefined);
+  });
+  if (response.status === 413) throw new Error('This workspace is too large to autosave. Your previous draft was kept.');
+  if (!response.ok) throw new Error('Could not autosave the workspace. Your previous draft was kept.');
 }
 
 export async function deleteWorkspaceDraft(): Promise<void> {
-  await fetch('/api/workspace-draft', {
-    method: 'DELETE',
-    credentials: 'same-origin',
-    headers: authHeaders(),
-  }).catch(() => undefined);
+  const response = await apiFetch('/api/workspace-draft', { method: 'DELETE' });
+  if (!response.ok) throw new Error('Could not discard the previous draft.');
 }

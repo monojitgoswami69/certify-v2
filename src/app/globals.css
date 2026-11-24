@@ -6,12 +6,8 @@
  * family picked in the FontSelector) stay dynamic Google Fonts by design.
  */
 @theme {
-  --font-sans: var(--gf-quicksand), var(--gf-inter), var(--gf-plus-jakarta), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: var(--gf-tomorrow), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-sans: var(--gf-inter), system-ui, sans-serif;
   --font-jura: var(--gf-jura), sans-serif;
-  --font-quicksand: var(--gf-quicksand), sans-serif;
-  --font-saira: var(--gf-saira), sans-serif;
-  --font-tomorrow: var(--gf-tomorrow), sans-serif;
   --font-electrolize: 'Electrolize', sans-serif;
 
   --color-primary-50: #eef2ff;
@@ -24,6 +20,33 @@
   --color-primary-700: #4338ca;
   --color-primary-800: #3730a3;
   --color-primary-900: #312e81;
+  --color-app-background: #fbfaf5;
+  --color-app-header: #fbf4e2;
+  --color-app-border: #e5dac3;
+}
+
+@utility page-title {
+  @apply text-xl leading-tight font-semibold tracking-tight;
+
+  @variant sm {
+    @apply text-2xl leading-tight;
+  }
+}
+
+@utility section-title {
+  @apply text-base leading-snug font-semibold tracking-tight;
+
+  @variant sm {
+    @apply text-lg leading-snug;
+  }
+}
+
+@utility form-control-text {
+  @apply text-sm;
+
+  @media (width < 40rem) and (pointer: coarse) {
+    @apply text-base;
+  }
 }
 
 html,
@@ -198,10 +221,6 @@ button:focus-visible {
 }
 
 /* Login Card & Form Styling */
-.login-page {
-  font-family: var(--gf-plus-jakarta), system-ui, sans-serif;
-}
-
 .login-mountain-bg {
   background: linear-gradient(to bottom, #dbeafe, #93c5fd);
   position: fixed;
@@ -548,18 +567,6 @@ button:focus-visible {
 /* ------------------------------------------------------------- */
 .font-quantico {
   font-family: 'Quantico', sans-serif;
-}
-
-.font-jura {
-  font-family: var(--gf-jura), sans-serif;
-}
-
-.font-quicksand {
-  font-family: var(--gf-quicksand), sans-serif;
-}
-
-.font-tomorrow {
-  font-family: var(--gf-tomorrow), sans-serif;
 }
 
 .font-electrolize {

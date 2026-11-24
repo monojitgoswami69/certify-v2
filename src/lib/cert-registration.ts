@@ -3,30 +3,13 @@
  * (GenerateButton) and email (EmailSendButton) batch flows.
  */
 import { registerCertificates } from './api-client';
+import type { IssuedEventDesign } from './event-design';
 import type { CsvRow } from '../types';
 
 export function getVerifyBaseUrl(): string {
-  // 1. If running in the browser and not on localhost, always prioritize the active production origin
-  if (typeof window !== 'undefined' && window.location?.origin) {
-    const origin = window.location.origin.replace(/\/+$/, '');
-    if (!origin.includes('localhost') && !origin.includes('127.0.0.1')) {
-      return origin;
-    }
-  }
-
-  // 2. If explicit NEXT_PUBLIC_APP_URL is configured (e.g. set in .env for local testing with production URLs)
-  const envUrl = process.env.NEXT_PUBLIC_APP_URL?.trim();
-  if (envUrl) {
-    return envUrl.replace(/\/+$/, '');
-  }
-
-  // 3. Browser fallback for localhost development
-  if (typeof window !== 'undefined' && window.location?.origin) {
-    return window.location.origin.replace(/\/+$/, '');
-  }
-
-  // 4. Default fallback
-  return 'http://localhost:3000';
+  const origin = process.env.NEXT_PUBLIC_APP_URL?.trim()
+    || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000');
+  return origin.replace(/\/+$/, '');
 }
 
 export function buildVerifyUrlFor(id: string): string {
@@ -49,63 +32,36 @@ export async function ensureCertificateIds(params: {
   existingIds: Map<number, string>;
   getDisplayName: (row: CsvRow) => string;
   getEmail?: (row: CsvRow) => string;
-  templateName: string;
-  eventName?: string;
-  isStatic?: boolean;
-  activeFields?: string[];
+  eventId: string;
+  eventName: string;
+  label: string;
+  design?: IssuedEventDesign;
+  onIssued: (ids: Map<number, string>) => void;
 }): Promise<Map<number, string>> {
-  const {
-    records,
-    existingIds,
-    getDisplayName,
-    getEmail,
-    templateName,
-    eventName,
-    isStatic,
-    activeFields,
-  } = params;
-
+  const { records, existingIds, getDisplayName, getEmail, eventId, eventName, label, design, onIssued } = params;
   const pending = records.filter(({ rowIndex }) => !existingIds.has(rowIndex));
-  if (pending.length === 0) return existingIds;
+  const merged = new Map(existingIds);
 
-  const activeFieldSet =
-    activeFields && activeFields.length > 0 ? new Set(activeFields) : null;
-
-  const items = pending.map(({ row }) => {
-      // Preserve full CSV row data so all recipient columns remain intact in database
-      const rowData =
-        activeFieldSet && activeFieldSet.size > 0
-          ? {
-              ...row,
-              ...Object.fromEntries(
-                Object.entries(row).filter(([key]) => activeFieldSet.has(key))
-              ),
-            }
-          : row;
-
-      return {
-        recipientName: getDisplayName(row) || 'Certificate Holder',
-        recipientEmail: getEmail ? getEmail(row) : undefined,
-        rowData,
-        templateName,
-        eventName,
-        isStatic,
-      };
+  for (let index = 0; index < pending.length;) {
+    // Submit the design with one recipient so artwork and a full roster
+    // never share the largest request.
+    const firstDesign = index === 0 ? design : undefined;
+    const chunk = pending.slice(index, index + (firstDesign ? 1 : REGISTER_CHUNK_SIZE));
+    const items = chunk.map(({ row }) => ({
+      recipientName: getDisplayName(row) || 'Certificate Holder',
+      recipientEmail: getEmail?.(row),
+      rowData: row,
+    }));
+    const outcomes = await registerCertificates(items, { eventId, eventName, label, design: firstDesign });
+    outcomes.forEach((outcome, offset) => {
+      if (outcome.status !== 'conflict') merged.set(chunk[offset].rowIndex, outcome.id);
     });
-
-  const ids: string[] = [];
-  for (let i = 0; i < items.length; i += REGISTER_CHUNK_SIZE) {
-    const chunk = items.slice(i, i + REGISTER_CHUNK_SIZE);
-    const chunkIds = await registerCertificates(chunk, eventName, isStatic);
-    if (chunkIds.length !== chunk.length) {
-      throw new Error('Registration response did not match the submitted records. Please retry.');
+    onIssued(new Map(merged));
+    if (outcomes.some(({ status }) => status === 'conflict')) {
+      throw new Error('A recipient already has a certificate with different values. Open the event to review it.');
     }
-    ids.push(...chunkIds);
+    index += chunk.length;
   }
 
-  const merged = new Map(existingIds);
-  pending.forEach(({ rowIndex }, i) => {
-    merged.set(rowIndex, ids[i]);
-  });
   return merged;
 }

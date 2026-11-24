@@ -87,25 +87,29 @@ export function parseCsv(text: string): ParsedCsv {
   }
 
   const rawHeaders = rows[0];
-  const seenHeaders = new Map<string, number>();
-  const headers = rawHeaders.map((h, idx) => {
-    let clean = h.replace(/^\uFEFF/, '').replace(/^"|"$/g, '').trim();
-    if (!clean) clean = `Column_${idx + 1}`;
-    const count = seenHeaders.get(clean) || 0;
-    seenHeaders.set(clean, count + 1);
-    return count > 0 ? `${clean}_${count + 1}` : clean;
+  const cleanHeaders = rawHeaders.map((header, index) =>
+    header.replace(/^\uFEFF/, '').replace(/^"|"$/g, '').trim() || `Column_${index + 1}`
+  );
+  const reservedHeaders = new Set(cleanHeaders);
+  const usedHeaders = new Set<string>();
+  const nextSuffixes = new Map<string, number>();
+  const headers = cleanHeaders.map((header) => {
+    if (!usedHeaders.has(header)) {
+      usedHeaders.add(header);
+      return header;
+    }
+    let suffix = nextSuffixes.get(header) ?? 2;
+    while (reservedHeaders.has(`${header}_${suffix}`) || usedHeaders.has(`${header}_${suffix}`)) suffix++;
+    const unique = `${header}_${suffix}`;
+    usedHeaders.add(unique);
+    nextSuffixes.set(header, suffix + 1);
+    return unique;
   });
 
   const data: Record<string, string>[] = [];
 
-  const headerCount = headers.length;
-  for (let i = 1; i < rows.length; i++) {
-    const values = rows[i];
-    const rowObj: Record<string, string> = {};
-    for (let j = 0; j < headerCount; j++) {
-      rowObj[headers[j]] = values[j] !== undefined ? values[j] : '';
-    }
-    data.push(rowObj);
+  for (const values of rows.slice(1)) {
+    data.push(Object.fromEntries(headers.map((header, index) => [header, values[index] ?? ''])));
   }
 
   return { headers, data };

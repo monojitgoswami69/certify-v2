@@ -1,8 +1,13 @@
+import type { IssuedEventDesign } from '../lib/event-design';
+import { sql } from 'drizzle-orm';
+import { DEFAULT_MAILS_PER_MINUTE, DEFAULT_MAILS_PER_SECOND, MAX_MAILS_PER_MINUTE, MAX_MAILS_PER_SECOND } from '../lib/mail-limits';
 import {
   pgTable,
   uuid,
   text,
   integer,
+  bigint,
+  check,
   boolean,
   jsonb,
   timestamp,
@@ -52,6 +57,7 @@ export const certificates = pgTable(
     templateName: text('template_name'),
     status: text('status').notNull().default('issued'), // 'issued' | 'revoked' | 'static'
     rowData: jsonb('row_data'),
+    renderFields: jsonb('render_fields').$type<Record<string, string>>(),
     // Aggregate verification counters (opt-in per event; see events.track_scans).
     scanCount: integer('scan_count').notNull().default(0),
     lastScannedAt: timestamp('last_scanned_at', { withTimezone: true }),
@@ -111,6 +117,8 @@ export const events = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
+    label: text('label'),
+    issuedDesign: jsonb('issued_design').$type<IssuedEventDesign>(),
     // Opt-in verification counting: aggregate counters only, never scan logs.
     trackScans: boolean('track_scans').notNull().default(false),
     // Optional expiry for the whole event; public verify shows an expired
@@ -120,7 +128,7 @@ export const events = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex('events_user_name_idx').on(table.userId, table.name),
+    index('events_user_display_name_idx').on(table.userId, table.name),
     index('events_user_id_idx').on(table.userId),
   ]
 );
@@ -182,10 +190,17 @@ export const workspaceDrafts = pgTable('workspace_drafts', {
 export const platformAccess = pgTable('platform_access', {
   email: text('email').primaryKey(),
   role: text('role').notNull().default('user'),
+  canIssueCertificates: boolean('can_issue_certificates').notNull().default(false),
+  mailsPerMinute: integer('mails_per_minute').notNull().default(DEFAULT_MAILS_PER_MINUTE),
+  mailsPerSecond: integer('mails_per_second').notNull().default(DEFAULT_MAILS_PER_SECOND),
+  mailAttempts: timestamp('mail_attempts', { withTimezone: true }).array().notNull().default(sql`'{}'`),
   addedBy: uuid('added_by').references(() => users.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => [
+  check('platform_access_mails_per_minute_check', sql`${table.mailsPerMinute} BETWEEN 1 AND ${sql.raw(String(MAX_MAILS_PER_MINUTE))}`),
+  check('platform_access_mails_per_second_check', sql`${table.mailsPerSecond} BETWEEN 1 AND ${sql.raw(String(MAX_MAILS_PER_SECOND))}`),
+]);
 
 /**
  * Gmail OAuth credentials per account. Persisted in Postgres (not memory) so
@@ -198,7 +213,7 @@ export const googleCredentials = pgTable('google_credentials', {
     .references(() => users.id, { onDelete: 'cascade' }),
   accessToken: text('access_token'),
   refreshToken: text('refresh_token'),
-  expiryDate: integer('expiry_date'),
+  expiryDate: bigint('expiry_date', { mode: 'number' }),
   scope: text('scope'),
   tokenType: text('token_type'),
   email: text('email'),

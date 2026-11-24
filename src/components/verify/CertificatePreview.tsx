@@ -116,6 +116,7 @@ export function CertificatePreview({
           templateImage: img,
           boxes,
           row: fieldsRef.current,
+          frozenFields: true,
           filename: baseName,
           includePng: true,
           qrZones: asset.layoutConfig.qrZones?.length
@@ -206,6 +207,7 @@ export function CertificatePreview({
           templateImage: templateImageRef.current!,
           boxes: layout.boxes ?? [],
           row: fieldsRef.current,
+          frozenFields: true,
           filename: baseName,
           includePng: format === 'png',
           includeJpg: format === 'jpg',
@@ -263,7 +265,7 @@ export function CertificatePreview({
             type="button"
             onClick={() => setMenuOpen((v) => !v)}
             disabled={Boolean(busyFormat)}
-            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-quicksand font-semibold text-sm disabled:opacity-60 disabled:cursor-not-allowed transition-colors cursor-pointer"
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-semibold text-sm disabled:opacity-60 disabled:cursor-not-allowed transition-colors cursor-pointer"
           >
             {busyFormat ? (
               <>
@@ -292,7 +294,7 @@ export function CertificatePreview({
                   key={format}
                   type="button"
                   onClick={() => handleDownload(format)}
-                  className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm font-quicksand font-semibold text-stone-700 hover:bg-stone-50 transition-colors cursor-pointer"
+                  className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm font-semibold text-stone-700 hover:bg-stone-50 transition-colors cursor-pointer"
                 >
                   <Icon className="w-4 h-4 text-stone-400" />
                   {label}

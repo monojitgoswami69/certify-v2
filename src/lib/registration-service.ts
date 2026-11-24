@@ -1,464 +1,227 @@
-/**
- * Certificate registration service (server-only).
- *
- * Domain layer beneath the /api/certificates/register route: owns the
- * identity fingerprint rules, event anchoring, idempotent batch writes, and
- * the per-batch audit record. HTTP concerns (auth, rate limits, status
- * mapping) stay in the route.
- */
-import { inArray, eq, and, sql } from 'drizzle-orm';
-import { db } from './db';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { certificates, events, registrationBatches } from '../db/schema';
-import { generateCertificateId, hashToken } from './verification';
-import {
-  computeIdentityFingerprint,
-  computeLegacyEmailFingerprint,
-  pickEmailFromRowData,
-} from './record-fingerprint';
 import type { PublicUser } from './accounts';
+import { db } from './db';
+import type { EventLayout, IssuedEventDesign } from './event-design';
+import { freezeRenderFields } from './render-fields';
+import { eventCertificatesWhere } from './event-records';
+import { readIssuedDesign } from './event-design-validation';
+import { log } from './logger';
+import { computeIdentityFingerprint, computeLegacyEmailFingerprint, normalizeName, pickEmailFromRowData } from './record-fingerprint';
+import { generateCertificateId, hashToken, isValidCertificateId } from './verification';
 
 const MAX_BATCH = 2000;
+const CHUNK_SIZE = 500;
 const EMAIL_RE = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/;
-const MAX_TEXT_LENGTH = 500;
-const MAX_ROW_FIELDS = 100;
-const FINGERPRINT_CHUNK_SIZE = 500;
-const INSERT_CHUNK_SIZE = 500;
 
 export class RegistrationError extends Error {
-  constructor(
-    message: string,
-    public readonly status: number = 400
-  ) {
+  constructor(message: string, public readonly status: number = 400) {
     super(message);
     this.name = 'RegistrationError';
   }
 }
 
-export interface RegisterItemInput {
+interface RegisterItemInput {
   recipientName?: unknown;
   recipientEmail?: unknown;
   rowData?: unknown;
-  templateName?: unknown;
-  eventName?: unknown;
-  isStatic?: unknown;
 }
 
 export interface RegisterBatchCommand {
   certificates?: RegisterItemInput[];
+  eventId?: unknown;
   eventName?: unknown;
-  isStatic?: unknown;
+  label?: unknown;
+  design?: unknown;
 }
 
-export interface RegisterBatchResult {
-  ids: string[];
-  count: number;
-  reusedCount: number;
-  newlyRegisteredCount: number;
-  eventId: string;
+function boundedText(input: unknown, max: number): string {
+  return typeof input === 'string' ? input.trim().slice(0, max) : '';
 }
 
-function sanitizeRowData(value: unknown): Record<string, string> | null {
+function readRow(value: unknown): Record<string, string> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const out: Record<string, string> = {};
-  let count = 0;
-  for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
-    if (count >= MAX_ROW_FIELDS) break;
-    if (val === null || val === undefined) continue;
-    if (typeof val !== 'string' && typeof val !== 'number' && typeof val !== 'boolean') continue;
-    out[key.slice(0, 200)] = String(val).slice(0, MAX_TEXT_LENGTH * 4);
-    count++;
-  }
-  return out;
+  const entries = Object.entries(value).filter(([, item]) =>
+    typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean'
+  );
+  return Object.fromEntries(entries.map(([key, item]) => [key, String(item)]));
 }
 
-interface ParsedItem {
-  index: number;
-  name: string;
-  email: string | null;
-  eventName: string;
-  templateName: string | null;
-  fingerprint: string;
-  legacyFingerprint: string | null;
-  isStatic: boolean;
-  rowData: Record<string, string> | null;
+function storeRosterRow(row: Record<string, string> | null): Record<string, string> | null {
+  return row && Object.fromEntries(Object.entries(row).slice(0, 100)
+    .map(([key, value]) => [key.slice(0, 200), value.slice(0, 2000)]));
 }
 
-/** Resolves (creating on first use) the events row anchoring this batch. */
-export async function ensureEvent(userId: string, name: string): Promise<{ id: string; name: string }> {
-  const trimmed = name.trim().slice(0, MAX_TEXT_LENGTH) || 'General Event';
-  await db.insert(events).values({ userId, name: trimmed }).onConflictDoNothing({
-    target: [events.userId, events.name],
-  });
-  const [row] = await db
-    .select({ id: events.id, name: events.name })
-    .from(events)
-    .where(and(eq(events.userId, userId), eq(events.name, trimmed)))
-    .limit(1);
-  if (!row) throw new RegistrationError('Failed to resolve event', 500);
-  return row;
+function findOwnedEvent(userId: string, eventId: string, design: IssuedEventDesign | null) {
+  return db.select({
+    name: events.name,
+    label: events.label,
+    layout: sql<EventLayout | null>`${events.issuedDesign}->'layoutConfig'`,
+    matchesDesign: design ? sql<boolean>`${events.issuedDesign} = ${JSON.stringify(design)}::jsonb` : sql<boolean>`true`,
+  }).from(events).where(and(eq(events.id, eventId), eq(events.userId, userId))).limit(1);
 }
 
-export async function registerCertificates(
-  user: PublicUser,
-  command: RegisterBatchCommand
-): Promise<RegisterBatchResult> {
-  const items = command.certificates;
-  if (!Array.isArray(items) || items.length === 0) {
+function sameFields(a: Record<string, string>, b: Record<string, string>): boolean {
+  return Object.keys(a).length === Object.keys(b).length
+    && Object.entries(a).every(([field, value]) => Object.hasOwn(b, field) && b[field] === value);
+}
+
+type CertRow = Pick<typeof certificates.$inferSelect, 'id' | 'recordFingerprint' | 'recipientName' | 'recipientEmail' | 'rowData' | 'renderFields'>;
+const existingFields = {
+  id: certificates.id,
+  recordFingerprint: certificates.recordFingerprint,
+  recipientName: certificates.recipientName,
+  recipientEmail: certificates.recipientEmail,
+  rowData: certificates.rowData,
+  renderFields: certificates.renderFields,
+};
+
+export async function registerCertificates(user: PublicUser, command: RegisterBatchCommand) {
+  if (!Array.isArray(command.certificates) || command.certificates.length === 0) {
     throw new RegistrationError('certificates must be a non-empty array');
   }
-  if (items.length > MAX_BATCH) {
-    throw new RegistrationError(`Batch too large: max ${MAX_BATCH} certificates per request`);
+  if (command.certificates.length > MAX_BATCH) throw new RegistrationError(`A request can register up to ${MAX_BATCH} recipients`);
+  if (typeof command.eventId !== 'string' || !isValidCertificateId(command.eventId)) {
+    throw new RegistrationError('A valid event ID is required');
   }
 
-  const batchEventName =
-    typeof command.eventName === 'string' && command.eventName.trim()
-      ? command.eventName.trim().slice(0, MAX_TEXT_LENGTH)
-      : 'General Event';
-
-  // ------------------------------------------------------------------
-  // Parse items and compute deterministic identity fingerprints.
-  // ------------------------------------------------------------------
-  const parsedItems: ParsedItem[] = [];
-  const allLookupFingerprints = new Set<string>();
-  const seenNoEmail = new Map<string, { index: number; rowDataJson: string }>();
-
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i] ?? {};
-    const name =
-      typeof item.recipientName === 'string' ? item.recipientName.trim().slice(0, MAX_TEXT_LENGTH) : '';
-    if (!name) {
-      throw new RegistrationError(`certificates[${i}].recipientName is required`);
-    }
-    let email =
-      typeof item.recipientEmail === 'string' && EMAIL_RE.test(item.recipientEmail.trim())
-        ? item.recipientEmail.trim().slice(0, 320)
-        : null;
-
-    const rowData = sanitizeRowData(item.rowData);
-
-    // Fallback: an explicitly email-named column in rowData (never positional
-    // order, so reordering CSV columns cannot change a person's identity).
-    if (!email) {
-      const scanned = pickEmailFromRowData(rowData);
-      if (scanned && EMAIL_RE.test(scanned)) {
-        email = scanned.slice(0, 320);
-      }
-    }
-
-    const itemEventName =
-      typeof item.eventName === 'string' && item.eventName.trim()
-        ? item.eventName.trim().slice(0, MAX_TEXT_LENGTH)
-        : batchEventName;
-
-    const templateName =
-      typeof item.templateName === 'string' ? item.templateName.slice(0, 200) : null;
-
-    const fingerprint = computeIdentityFingerprint(user.userId, itemEventName, name, email);
-    allLookupFingerprints.add(fingerprint);
-
-    const legacyFingerprint = email ? computeLegacyEmailFingerprint(user.userId, itemEventName, email) : null;
-    if (legacyFingerprint) allLookupFingerprints.add(legacyFingerprint);
-
-    // Email-less identity is name-based: a duplicate name that is not an
-    // identical duplicate row is two people we cannot distinguish — reject
-    // rather than silently merging them onto one certificate.
-    if (!email) {
-      const nameKey = `${itemEventName.toLowerCase()}|${name.toLowerCase()}`;
-      const rowDataJson = JSON.stringify(rowData ?? null);
-      const first = seenNoEmail.get(nameKey);
-      if (first && first.rowDataJson !== rowDataJson) {
-        throw new RegistrationError(
-          `Ambiguous recipients: "${name}" appears more than once in event "${itemEventName}" ` +
-            'without an email address, so their certificates cannot be told apart. ' +
-            'Add an email (or another distinguishing) column and try again.'
-        );
-      }
-      seenNoEmail.set(nameKey, { index: first ? first.index : i, rowDataJson });
-    }
-
-    parsedItems.push({
-      index: i,
-      name,
-      email,
-      eventName: itemEventName,
-      templateName,
-      fingerprint,
-      legacyFingerprint,
-      isStatic: Boolean(item.isStatic ?? command.isStatic),
-      rowData,
-    });
+  const eventId = command.eventId.toLowerCase();
+  const design = command.design === undefined ? null : readIssuedDesign(command.design);
+  if (command.design !== undefined && !design) throw new RegistrationError('A valid certificate design is required');
+  const requestedName = boundedText(command.eventName, 500) || 'General Event';
+  const requestedLabel = boundedText(command.label, 120) || null;
+  let [event] = await findOwnedEvent(user.userId, eventId, design);
+  if (!event && !design) throw new RegistrationError('Event not found', 404);
+  if (event && design && (!event.matchesDesign || event.name !== requestedName || event.label !== requestedLabel)) {
+    throw new RegistrationError('This event is already issued. Make a copy to change its design or name.', 409);
   }
+  const layout = event?.layout ?? design?.layoutConfig;
+  if (!layout) throw new RegistrationError('Confirm the original design before adding recipients.', 409);
 
-  // Anchor the batch's primary event (audit record + per-event grouping).
-  const event = await ensureEvent(user.userId, batchEventName);
+  const name = event?.name ?? requestedName;
+  const isStatic = !layout.qrZones?.length;
+  const unique = new Map<string, Record<string, string>>();
+  const items = command.certificates.map((item, index) => {
+    const recipientName = boundedText(item?.recipientName, 500);
+    if (!recipientName) throw new RegistrationError(`Recipient name is required on row ${index + 1}`);
+    const row = readRow(item?.rowData);
+    const rowData = storeRosterRow(row);
+    const rawEmail = boundedText(item?.recipientEmail, 320) || pickEmailFromRowData(row);
+    if (rawEmail && !EMAIL_RE.test(rawEmail)) throw new RegistrationError(`Invalid recipient email on row ${index + 1}`);
+    const recipientEmail = rawEmail || null;
+    const fingerprint = computeIdentityFingerprint(user.userId, eventId, recipientName, recipientEmail);
+    const fields = freezeRenderFields(layout, row);
+    const first = unique.get(fingerprint);
+    if (first && !sameFields(first, row ?? {})) {
+      throw new RegistrationError(`Ambiguous recipients: "${recipientName}" appears more than once with different certificate data.`);
+    }
+    unique.set(fingerprint, row ?? {});
+    return {
+      recipientName, recipientEmail, rowData, fingerprint, fields,
+      legacyNameFingerprint: computeIdentityFingerprint(user.userId, name, recipientName, recipientEmail),
+      legacyEmailFingerprint: recipientEmail ? computeLegacyEmailFingerprint(user.userId, name, recipientEmail) : null,
+    };
+  });
 
-  // ----------------------------------------------------------------
-  // 1. Load any existing rows for the batch's fingerprints (chunked).
-  // ----------------------------------------------------------------
-  interface ExistingCertMeta {
-    id: string;
-    recipientName: string;
-    recipientEmail: string | null;
-    rowData: Record<string, string> | null;
-    templateName: string | null;
-    status: string;
-  }
-  const existingMap = new Map<string, ExistingCertMeta>();
-  const fingerprintsArray = Array.from(allLookupFingerprints);
-
-  for (let i = 0; i < fingerprintsArray.length; i += FINGERPRINT_CHUNK_SIZE) {
-    const chunk = fingerprintsArray.slice(i, i + FINGERPRINT_CHUNK_SIZE);
-    if (chunk.length === 0) continue;
-    const chunkResults = await db
-      .select({
-        id: certificates.id,
-        recordFingerprint: certificates.recordFingerprint,
-        recipientName: certificates.recipientName,
-        recipientEmail: certificates.recipientEmail,
-        rowData: certificates.rowData,
-        templateName: certificates.templateName,
-        status: certificates.status,
-      })
-      .from(certificates)
-      .where(and(eq(certificates.userId, user.userId), inArray(certificates.recordFingerprint, chunk)));
-
-    for (const cert of chunkResults) {
-      if (cert.recordFingerprint) {
-        existingMap.set(cert.recordFingerprint, {
-          id: cert.id,
-          recipientName: cert.recipientName,
-          recipientEmail: cert.recipientEmail,
-          rowData: (cert.rowData as Record<string, string> | null) || null,
-          templateName: cert.templateName,
-          status: cert.status,
-        });
-      }
+  let firstFingerprint: string | null = null;
+  if (!event && design) {
+    const first = items[0];
+    const id = generateCertificateId();
+    // The event and its first certificate commit together. A concurrent
+    // retry may reuse the event ID after checking the same design below.
+    const created = await db.execute<{ fingerprint: string }>(sql`
+      WITH created_event AS (
+        INSERT INTO ${events} (id, user_id, name, label, issued_design)
+        VALUES (${eventId}, ${user.userId}, ${name}, ${requestedLabel}, ${JSON.stringify(design)}::jsonb)
+        ON CONFLICT (id) DO NOTHING
+        RETURNING id
+      )
+      INSERT INTO ${certificates} (id, user_id, event_id, token_hash, event_name, record_fingerprint,
+        recipient_name, recipient_email, row_data, render_fields, template_name, status)
+      SELECT ${id}::uuid, ${user.userId}::uuid, created_event.id, ${hashToken(id)}, ${name}, ${first.fingerprint},
+        ${first.recipientName}, ${first.recipientEmail}, ${JSON.stringify(first.rowData)}::jsonb,
+        ${JSON.stringify(first.fields)}::jsonb, ${name}, ${isStatic ? 'static' : 'issued'}
+      FROM created_event
+      RETURNING record_fingerprint AS fingerprint
+    `);
+    firstFingerprint = created.rows[0]?.fingerprint ?? null;
+    [event] = await findOwnedEvent(user.userId, eventId, design);
+    if (!event) throw new RegistrationError('Event not found', 404);
+    if (!event.matchesDesign || event.name !== requestedName || event.label !== requestedLabel) {
+      throw new RegistrationError('This event is already issued. Make a copy to issue a different design.', 409);
     }
   }
 
-  // ----------------------------------------------------------------
-  // 2. Resolve each item to an existing row (reuse) or a new insert.
-  // ----------------------------------------------------------------
-  const resultIds: string[] = new Array(parsedItems.length);
-  const newRowsToInsert: Array<typeof certificates.$inferInsert> = [];
-  const updatesToApply: Array<{
-    id: string;
-    recipientName?: string;
-    recipientEmail?: string;
-    rowData?: Record<string, string> | null;
-    templateName?: string | null;
-    status?: string;
-  }> = [];
-  const fingerprintMigrations: Array<{ id: string; fingerprint: string }> = [];
+  const eventScope = eventCertificatesWhere(user.userId, eventId);
+  const lookups = [...new Set(items.flatMap(({ fingerprint, legacyNameFingerprint, legacyEmailFingerprint }) =>
+    legacyEmailFingerprint ? [fingerprint, legacyNameFingerprint, legacyEmailFingerprint] : [fingerprint, legacyNameFingerprint]
+  ))];
+  const existing = new Map<string, CertRow>();
+  for (let i = 0; i < lookups.length; i += CHUNK_SIZE) {
+    const rows = await db.select(existingFields).from(certificates)
+      .where(and(eventScope, inArray(certificates.recordFingerprint, lookups.slice(i, i + CHUNK_SIZE))));
+    for (const row of rows) if (row.recordFingerprint) existing.set(row.recordFingerprint, row);
+  }
 
-  const markUpdates = (item: ParsedItem, existing: ExistingCertMeta) => {
-    const targetStatus = item.isStatic ? 'static' : 'issued';
+  const recordsWithoutFingerprints = await db.select(existingFields).from(certificates)
+    .where(and(eventScope, isNull(certificates.recordFingerprint)));
+  const legacyIdentities = new Map(recordsWithoutFingerprints.map((row) => [
+    computeIdentityFingerprint(user.userId, eventId, row.recipientName, row.recipientEmail), row,
+  ]));
 
-    // Idempotent hit: reuse the existing certificate id. A revoked
-    // certificate is never silently re-instated by re-running a batch; that
-    // requires the explicit revoke/reinstate endpoint.
-    const nameChanged = item.name !== existing.recipientName;
-    const emailChanged = Boolean(item.email) && item.email !== existing.recipientEmail;
-    const rowDataChanged =
-      item.rowData &&
-      (!existing.rowData || JSON.stringify(item.rowData) !== JSON.stringify(existing.rowData));
-    const templateChanged = item.templateName && item.templateName !== existing.templateName;
-    const statusChanged = targetStatus !== existing.status && existing.status !== 'revoked';
-
-    if (nameChanged || emailChanged || rowDataChanged || templateChanged || statusChanged) {
-      updatesToApply.push({
-        id: existing.id,
-        ...(nameChanged ? { recipientName: item.name } : {}),
-        ...(emailChanged && item.email ? { recipientEmail: item.email } : {}),
-        ...(rowDataChanged ? { rowData: item.rowData } : {}),
-        ...(templateChanged ? { templateName: item.templateName } : {}),
-        ...(statusChanged ? { status: targetStatus } : {}),
-      });
-      if (nameChanged) existing.recipientName = item.name;
-      if (emailChanged) existing.recipientEmail = item.email;
-      if (rowDataChanged && item.rowData) existing.rowData = item.rowData;
-      if (templateChanged) existing.templateName = item.templateName;
-      if (statusChanged) existing.status = targetStatus;
-    }
+  const findExisting = (item: (typeof items)[number]) => {
+    const legacy = item.legacyEmailFingerprint ? existing.get(item.legacyEmailFingerprint) : undefined;
+    return existing.get(item.fingerprint) ?? existing.get(item.legacyNameFingerprint) ?? legacyIdentities.get(item.fingerprint)
+      ?? (legacy && normalizeName(legacy.recipientName) === normalizeName(item.recipientName) ? legacy : undefined);
   };
 
-  for (const item of parsedItems) {
-    const v2Existing = existingMap.get(item.fingerprint);
-
-    if (v2Existing) {
-      resultIds[item.index] = v2Existing.id;
-      markUpdates(item, v2Existing);
-      continue;
-    }
-
-    // Legacy adoption: an email-only row counts as the same person only
-    // when the stored name matches — a different name under that email is a
-    // different person and gets their own certificate from now on.
-    if (item.legacyFingerprint) {
-      const legacyExisting = existingMap.get(item.legacyFingerprint);
-      if (
-        legacyExisting &&
-        legacyExisting.recipientName.trim().toLowerCase() === item.name.trim().toLowerCase()
-      ) {
-        resultIds[item.index] = legacyExisting.id;
-        markUpdates(item, legacyExisting);
-        fingerprintMigrations.push({ id: legacyExisting.id, fingerprint: item.fingerprint });
-        existingMap.set(item.fingerprint, legacyExisting);
-        continue;
-      }
-    }
-
-    // New certificate. ON CONFLICT DO NOTHING below makes this safe even
-    // when a concurrent request inserts the same fingerprint first; the
-    // follow-up SELECT re-resolves those rows to the winner's id.
-    const newId = generateCertificateId();
-    resultIds[item.index] = newId;
-    existingMap.set(item.fingerprint, {
-      id: newId,
-      recipientName: item.name,
-      recipientEmail: item.email,
-      rowData: item.rowData || null,
-      templateName: item.templateName || null,
-      status: item.isStatic ? 'static' : 'issued',
-    });
-
-    newRowsToInsert.push({
-      id: newId,
-      userId: user.userId,
-      eventId: event.id,
-      tokenHash: hashToken(newId),
-      eventName: item.eventName,
-      recordFingerprint: item.fingerprint,
-      recipientName: item.name,
-      recipientEmail: item.email,
-      templateName: item.templateName,
-      status: item.isStatic ? 'static' : 'issued',
-      rowData: item.rowData,
+  const toInsert = new Map<string, typeof certificates.$inferInsert>();
+  for (const item of items) {
+    if (findExisting(item) || toInsert.has(item.fingerprint)) continue;
+    const id = generateCertificateId();
+    toInsert.set(item.fingerprint, {
+      id, userId: user.userId, eventId, tokenHash: hashToken(id), eventName: name, recordFingerprint: item.fingerprint,
+      recipientName: item.recipientName, recipientEmail: item.recipientEmail, rowData: item.rowData,
+      templateName: name, status: isStatic ? 'static' : 'issued', renderFields: item.fields,
     });
   }
 
-  // ----------------------------------------------------------------
-  // 3. Insert new rows. Conflicts (concurrent duplicate batch) resolve to
-  //    the surviving row via the re-SELECT below, so no request ever
-  //    yields two live certificates for one person.
-  // ----------------------------------------------------------------
-  const insertedFingerprints = new Set<string>();
-  for (let i = 0; i < newRowsToInsert.length; i += INSERT_CHUNK_SIZE) {
-    const chunk = newRowsToInsert.slice(i, i + INSERT_CHUNK_SIZE);
-    const inserted = await db
-      .insert(certificates)
-      .values(chunk)
-      .onConflictDoNothing({ target: [certificates.userId, certificates.recordFingerprint] })
-      .returning({ id: certificates.id, recordFingerprint: certificates.recordFingerprint });
-    for (const row of inserted) {
-      if (row.recordFingerprint) insertedFingerprints.add(row.recordFingerprint);
+  const inserted = new Set(firstFingerprint ? [firstFingerprint] : []);
+  const requestedRows = [...toInsert.values()];
+  for (let i = 0; i < requestedRows.length; i += CHUNK_SIZE) {
+    const rows = await db.insert(certificates).values(requestedRows.slice(i, i + CHUNK_SIZE))
+      .onConflictDoNothing({ target: [certificates.userId, certificates.recordFingerprint] }).returning(existingFields);
+    for (const row of rows) {
+      if (!row.recordFingerprint) continue;
+      inserted.add(row.recordFingerprint);
+      existing.set(row.recordFingerprint, row);
     }
   }
-
-  // Rows we tried to insert but lost the race: adopt the winner's id.
-  const lostFingerprints = newRowsToInsert
-    .map((row) => row.recordFingerprint as string)
-    .filter((fp) => !insertedFingerprints.has(fp));
-  for (let i = 0; i < lostFingerprints.length; i += FINGERPRINT_CHUNK_SIZE) {
-    const chunk = lostFingerprints.slice(i, i + FINGERPRINT_CHUNK_SIZE);
-    if (chunk.length === 0) continue;
-    const winners = await db
-      .select({
-        id: certificates.id,
-        recordFingerprint: certificates.recordFingerprint,
-        recipientName: certificates.recipientName,
-        recipientEmail: certificates.recipientEmail,
-        rowData: certificates.rowData,
-        templateName: certificates.templateName,
-        status: certificates.status,
-      })
-      .from(certificates)
-      .where(and(eq(certificates.userId, user.userId), inArray(certificates.recordFingerprint, chunk)));
-    for (const winner of winners) {
-      if (!winner.recordFingerprint) continue;
-      existingMap.set(winner.recordFingerprint, {
-        id: winner.id,
-        recipientName: winner.recipientName,
-        recipientEmail: winner.recipientEmail,
-        rowData: (winner.rowData as Record<string, string> | null) || null,
-        templateName: winner.templateName,
-        status: winner.status,
-      });
-    }
+  const conflicts = [...toInsert.keys()].filter((fingerprint) => !inserted.has(fingerprint));
+  for (let i = 0; i < conflicts.length; i += CHUNK_SIZE) {
+    const rows = await db.select(existingFields).from(certificates)
+      .where(and(eventScope, inArray(certificates.recordFingerprint, conflicts.slice(i, i + CHUNK_SIZE))));
+    for (const row of rows) if (row.recordFingerprint) existing.set(row.recordFingerprint, row);
   }
 
-  // Re-map result ids for raced items now that the winner is known.
-  let reusedCount = 0;
-  for (const item of parsedItems) {
-    const resolved = existingMap.get(item.fingerprint);
-    if (!resolved) continue;
-    if (resultIds[item.index] !== resolved.id) {
-      resultIds[item.index] = resolved.id;
-      markUpdates(item, resolved);
-    }
-    if (!insertedFingerprints.has(item.fingerprint)) reusedCount++;
-  }
-  const newlyRegisteredCount = parsedItems.length - reusedCount;
+  const outcomes = items.map((item) => {
+    const current = findExisting(item);
+    if (!current) throw new RegistrationError('A recipient could not be resolved. Please retry.', 409);
+    const currentFields = current.renderFields ?? freezeRenderFields(layout, current.rowData as Record<string, string> | null);
+    const status = inserted.delete(item.fingerprint) ? 'issued'
+      : sameFields(currentFields, item.fields) ? 'existing' : 'conflict';
+    return { id: current.id, status };
+  });
 
-  // ----------------------------------------------------------------
-  // 4. Apply changed-field updates and legacy fingerprint migrations.
-  // ----------------------------------------------------------------
-  if (fingerprintMigrations.length > 0) {
-    await Promise.all(
-      fingerprintMigrations.map(({ id, fingerprint }) =>
-        db
-          .update(certificates)
-          .set({ recordFingerprint: fingerprint })
-          .where(
-            and(
-              eq(certificates.id, id),
-              eq(certificates.userId, user.userId),
-              sql`NOT EXISTS (SELECT 1 FROM ${certificates} c2 WHERE c2.user_id = ${user.userId} AND c2.record_fingerprint = ${fingerprint})`
-            )
-          )
-      )
-    );
-  }
-
-  if (updatesToApply.length > 0) {
-    const UPDATE_BATCH_SIZE = 25;
-    for (let i = 0; i < updatesToApply.length; i += UPDATE_BATCH_SIZE) {
-      const batch = updatesToApply.slice(i, i + UPDATE_BATCH_SIZE);
-      await Promise.all(
-        batch.map((u) => {
-          const setValues: Record<string, unknown> = {};
-          if (u.recipientName) setValues.recipientName = u.recipientName;
-          if (u.recipientEmail) setValues.recipientEmail = u.recipientEmail;
-          if (u.rowData) setValues.rowData = u.rowData;
-          if (u.templateName !== undefined) setValues.templateName = u.templateName;
-          if (u.status) setValues.status = u.status;
-          return db
-            .update(certificates)
-            .set(setValues)
-            .where(and(eq(certificates.id, u.id), eq(certificates.userId, user.userId)));
-        })
-      );
-    }
-  }
-
-  // 5. Audit trail: one row per executed batch (best effort).
+  const newlyRegisteredCount = outcomes.filter(({ status }) => status === 'issued').length;
+  const reusedCount = outcomes.length - newlyRegisteredCount;
   try {
     await db.insert(registrationBatches).values({
-      userId: user.userId,
-      eventId: event.id,
-      rowCount: parsedItems.length,
-      insertedCount: newlyRegisteredCount,
-      reusedCount,
+      userId: user.userId, eventId, rowCount: outcomes.length, insertedCount: newlyRegisteredCount, reusedCount,
     });
-  } catch (err) {
-    console.warn('[registration] batch audit record failed:', err);
+  } catch (error) {
+    log.warn('registration', 'Failed to write batch audit record', { userId: user.userId }, error);
   }
 
-  return {
-    ids: resultIds,
-    count: resultIds.length,
-    reusedCount,
-    newlyRegisteredCount,
-    eventId: event.id,
-  };
+  return { eventId, ids: outcomes.map(({ id }) => id), count: items.length, newlyRegisteredCount, reusedCount, outcomes };
 }

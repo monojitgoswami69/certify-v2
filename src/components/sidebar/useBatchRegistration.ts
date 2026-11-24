@@ -2,9 +2,8 @@
 
 import { useCallback, useRef } from 'react';
 import { useAppStore } from '../../store/useAppStore';
-import { useAuthStore } from '../../store/useAuthStore';
 import { ensureCertificateIds } from '../../lib/cert-registration';
-import { autoSaveCurrentTemplate } from '../../lib/template-autosave';
+import { prepareIssuedDesign } from '../../lib/template-autosave';
 import type { CsvRow } from '../../types';
 
 export function useBatchRegistration() {
@@ -35,7 +34,6 @@ export function useBatchRegistration() {
     setRegistrationDirty,
   } = useAppStore();
 
-  const { token } = useAuthStore();
 
   const validBoxes = boxes.filter((b) => b.field && b.field.trim() !== '');
   const needsRegistration = qrZones.length > 0;
@@ -87,8 +85,8 @@ export function useBatchRegistration() {
   );
 
   const registerBatch = useCallback(
-    async (isUpdate: boolean = false): Promise<boolean> => {
-      if (inFlightRef.current) return false;
+    async (): Promise<boolean> => {
+      if (inFlightRef.current || useAppStore.getState().isBatchRegistering || useAppStore.getState().isBatchRegistered) return false;
       if (!isReadyToRegister) {
         setBatchRegistrationError('Please upload a template and import CSV recipient data.');
         return false;
@@ -98,49 +96,52 @@ export function useBatchRegistration() {
       setIsBatchRegistering(true);
       setBatchRegistrationError(null);
 
+      const currentDraft = useAppStore.getState();
+      const id = currentDraft.registrationEventId ?? crypto.randomUUID();
+      useAppStore.setState({ registrationEventId: id });
       try {
         const records = csvData.map((row, i) => ({ rowIndex: i + 2, row }));
-        const useQr = qrZones.length > 0;
         const resolvedEventName = eventName?.trim() || 'General Event';
-
-        // 1. Auto-save template image and complete layout config to templates table
-        const savedTemplate = await autoSaveCurrentTemplate({
-          templateImage,
-          templateFile,
-          eventName: resolvedEventName,
-          boxes,
-          qrZones,
-          images,
-          defaultFont,
-          defaultFontSize,
-          defaultFontColor,
-          token,
+        const label = currentDraft.eventLabel.trim();
+        const design = currentDraft.issuanceStarted ? undefined : await prepareIssuedDesign({
+          templateImage, templateFile, boxes, qrZones, images, defaultFont, defaultFontSize, defaultFontColor,
         });
-
-        // 2. Register participant records in certificates table
-        const existingIds = isUpdate ? new Map<number, string>() : registeredCertIds;
 
         const ids = await ensureCertificateIds({
           records,
-          existingIds,
+          existingIds: currentDraft.registeredCertIds,
           getDisplayName: getRecipientName,
           getEmail: (row) => (emailColumn ? (row[emailColumn] || '').trim() : ''),
-          templateName: templateFile?.name || savedTemplate?.name || resolvedEventName,
+          eventId: id,
           eventName: resolvedEventName,
-          isStatic: !useQr,
+          label,
+          design,
+          onIssued: (partialIds) => {
+            if (useAppStore.getState().registrationEventId === id) {
+              useAppStore.setState({ issuanceStarted: partialIds.size > 0, registeredCertIds: partialIds });
+            }
+          },
         });
 
+        const current = useAppStore.getState();
+        if (current.registrationEventId !== id) return false;
+        if (current.templateImage !== templateImage || current.csvData !== csvData ||
+            current.boxes !== boxes || current.qrZones !== qrZones || current.images !== images ||
+            current.eventName !== eventName || current.emailColumn !== emailColumn ||
+            current.defaultFont !== defaultFont || current.defaultFontSize !== defaultFontSize ||
+            current.defaultFontColor !== defaultFontColor) {
+          throw new Error('This workspace changed during issuance. Open the event from the dashboard to review it.');
+        }
         setBatchRegistered(true, ids);
         setRegistrationDirty(false);
-        setIsBatchRegistering(false);
         return true;
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown registration error';
         console.error('[Batch Registration Error]:', err);
-        setBatchRegistrationError(message);
-        setIsBatchRegistering(false);
+        if (useAppStore.getState().registrationEventId === id) setBatchRegistrationError(message);
         return false;
       } finally {
+        if (useAppStore.getState().registrationEventId === id) setIsBatchRegistering(false);
         inFlightRef.current = false;
       }
     },
@@ -152,10 +153,10 @@ export function useBatchRegistration() {
       templateImage,
       templateFile,
       boxes,
+      images,
       defaultFont,
       defaultFontSize,
       defaultFontColor,
-      token,
       registeredCertIds,
       getRecipientName,
       emailColumn,

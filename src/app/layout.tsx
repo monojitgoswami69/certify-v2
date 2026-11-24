@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { Inter, Jura, Plus_Jakarta_Sans, Quicksand, Saira, Tomorrow } from 'next/font/google';
+import { Inter, Jura } from 'next/font/google';
 import './globals.css';
 
 // Self-hosted, subsetted UI fonts (no render-blocking Google CSS request, no
@@ -7,28 +7,6 @@ import './globals.css';
 // src/lib/font-loader.ts and are unaffected.
 const inter = Inter({ subsets: ['latin'], display: 'swap', variable: '--gf-inter' });
 const jura = Jura({ subsets: ['latin'], display: 'swap', variable: '--gf-jura' });
-const plusJakarta = Plus_Jakarta_Sans({
-  subsets: ['latin'],
-  display: 'swap',
-  variable: '--gf-plus-jakarta',
-});
-const quicksand = Quicksand({ subsets: ['latin'], display: 'swap', variable: '--gf-quicksand' });
-const saira = Saira({ subsets: ['latin'], display: 'swap', variable: '--gf-saira' });
-const tomorrow = Tomorrow({
-  subsets: ['latin'],
-  weight: ['400', '500', '600', '700'],
-  display: 'swap',
-  variable: '--gf-tomorrow',
-});
-
-const fontVariables = [
-  inter.variable,
-  jura.variable,
-  plusJakarta.variable,
-  quicksand.variable,
-  saira.variable,
-  tomorrow.variable,
-].join(' ');
 
 export const metadata: Metadata = {
   title: 'Certify | Professional Certificate Manager',
@@ -52,7 +30,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={fontVariables}>
+    <html lang="en" className={`${inter.variable} ${jura.variable}`}>
       <head>
         <link rel="icon" href="/favicon.ico" sizes="any" />
         <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />

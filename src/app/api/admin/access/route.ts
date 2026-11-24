@@ -1,16 +1,29 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { requireAdmin, forbiddenResponse, ok } from '../_guard';
+import { mutationAllowed, forbiddenCsrfResponse } from '../../../../lib/server-auth';
 import {
   listPlatformAccess,
   addToPlatformAccess,
   removeFromPlatformAccess,
-  isPlatformRole,
-  type PlatformRole,
+  updateIssuanceAccess,
+  updateMailLimits,
 } from '../../../../lib/platform-access';
+import { MAX_MAILS_PER_MINUTE, MAX_MAILS_PER_SECOND } from '../../../../lib/mail-limits';
 
-const EMAIL_RE = /^[^\s@,;<>"]+@[^\s@,;<>"]+\.[^\s@,;<>"]+$/;
+const emailSchema = z.string().trim().toLowerCase().max(254).pipe(z.email());
+const grantSchema = z.object({ email: emailSchema, role: z.enum(['user', 'admin']).default('user') });
+const issuanceSchema = z.object({ email: emailSchema, canIssueCertificates: z.boolean() }).strict();
+const limitsSchema = z.object({
+  email: emailSchema,
+  mailsPerMinute: z.number().int().min(1).max(MAX_MAILS_PER_MINUTE),
+  mailsPerSecond: z.number().int().min(1).max(MAX_MAILS_PER_SECOND),
+});
 
-/** Allowlist management. Admins manage users; only super admins manage admins. */
+function accessDenied() {
+  return NextResponse.json({ detail: 'You cannot change access for this account' }, { status: 403 });
+}
+
 export async function GET(request: Request) {
   const admin = await requireAdmin(request);
   if (!admin) return forbiddenResponse();
@@ -18,56 +31,62 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  if (!mutationAllowed(request)) return forbiddenCsrfResponse();
   const admin = await requireAdmin(request);
   if (!admin) return forbiddenResponse();
 
-  let body: { email?: unknown; role?: unknown };
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ detail: 'Invalid request body' }, { status: 400 });
+  const result = grantSchema.safeParse(await request.json().catch(() => null));
+  if (!result.success) {
+    return NextResponse.json({ detail: 'Enter a valid email and role' }, { status: 400 });
   }
 
-  const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
-  const role = body.role ?? 'user';
-  if (!EMAIL_RE.test(email)) {
-    return NextResponse.json({ detail: 'Enter a valid email address' }, { status: 400 });
-  }
-  if (!isPlatformRole(role)) {
-    return NextResponse.json({ detail: 'Invalid role' }, { status: 400 });
+  const { email, role } = result.data;
+  if (!await addToPlatformAccess(email, role, admin)) return accessDenied();
+  return ok({ access: await listPlatformAccess(), callerRole: admin.role });
+}
+
+export async function PUT(request: Request) {
+  if (!mutationAllowed(request)) return forbiddenCsrfResponse();
+  const admin = await requireAdmin(request);
+  if (!admin) return forbiddenResponse();
+
+  const result = issuanceSchema.safeParse(await request.json().catch(() => null));
+  if (!result.success) {
+    return NextResponse.json({ detail: 'Enter a valid email and issuance permission' }, { status: 400 });
   }
 
-  const requested = role as PlatformRole;
-  if (requested === 'super_admin' && admin.role !== 'super_admin') {
-    return NextResponse.json(
-      { detail: 'Only the super admin can grant super admin access' },
-      { status: 403 }
-    );
-  }
-  // Admins can only add regular users; super admins can add admins too.
-  const effectiveRole: PlatformRole =
-    requested === 'super_admin' ? 'super_admin' : requested === 'admin' && admin.role === 'super_admin' ? 'admin' : 'user';
+  const { email, canIssueCertificates } = result.data;
+  if (!await updateIssuanceAccess(email, canIssueCertificates, admin.role)) return accessDenied();
+  return ok({ access: await listPlatformAccess(), callerRole: admin.role });
+}
 
-  await addToPlatformAccess(email, effectiveRole, admin.userId);
+export async function PATCH(request: Request) {
+  if (!mutationAllowed(request)) return forbiddenCsrfResponse();
+  const admin = await requireAdmin(request);
+  if (admin?.role !== 'super_admin') return accessDenied();
+
+  const result = limitsSchema.safeParse(await request.json().catch(() => null));
+  if (!result.success) {
+    return NextResponse.json({
+      detail: `Enter whole numbers from 1 to ${MAX_MAILS_PER_MINUTE} per minute and 1 to ${MAX_MAILS_PER_SECOND} per second`,
+    }, { status: 400 });
+  }
+  const { email, ...limits } = result.data;
+  if (!await updateMailLimits(email, limits)) {
+    return NextResponse.json({ detail: 'Account is not on the access list' }, { status: 404 });
+  }
   return ok({ access: await listPlatformAccess(), callerRole: admin.role });
 }
 
 export async function DELETE(request: Request) {
+  if (!mutationAllowed(request)) return forbiddenCsrfResponse();
   const admin = await requireAdmin(request);
   if (!admin) return forbiddenResponse();
 
-  const { searchParams } = new URL(request.url);
-  const email = searchParams.get('email')?.trim().toLowerCase() ?? '';
-  if (!email) {
-    return NextResponse.json({ detail: 'email query parameter is required' }, { status: 400 });
+  const result = emailSchema.safeParse(new URL(request.url).searchParams.get('email'));
+  if (!result.success) {
+    return NextResponse.json({ detail: 'Enter a valid email address' }, { status: 400 });
   }
-
-  const removed = await removeFromPlatformAccess(email);
-  if (!removed) {
-    return NextResponse.json(
-      { detail: 'Cannot remove this account (root admin, or not on the list)' },
-      { status: admin.role === 'super_admin' ? 400 : 403 }
-    );
-  }
+  if (!await removeFromPlatformAccess(result.data, admin.role)) return accessDenied();
   return ok({ access: await listPlatformAccess(), callerRole: admin.role });
 }

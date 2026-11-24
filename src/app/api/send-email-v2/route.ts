@@ -2,14 +2,10 @@ import { NextResponse } from 'next/server';
 import { mutationAllowed, forbiddenCsrfResponse } from '../../../lib/server-auth';
 import nodemailer, { type SendMailOptions, type Transporter } from 'nodemailer';
 import { Readable } from 'stream';
-import { unauthorizedResponse } from '../../../lib/server-auth';
-import { getAuthenticatedUser } from '../../../lib/accounts';
-import { getFreshAccessToken } from '../../../lib/google-token-store';
-import { checkRateLimit } from '../../../lib/rate-limit';
+import { requireIssuer, issuanceRequiredResponse } from '../../../lib/issuer-auth';
+import { getFreshAccessToken, gmailConfigured } from '../../../lib/google-token-store';
+import { reserveMailSlot } from '../../../lib/mail-quota';
 import { log, requestIdOf } from '../../../lib/logger';
-
-/** Per-account cap slightly above the Gmail per-user send quota. */
-const SEND_RATE_LIMIT = 200; // sends per minute
 
 // =========================================================================
 // Shared MIME builder (streamTransport never opens a socket, so a single
@@ -48,6 +44,43 @@ async function buildRawMimeMessage(mailOptions: SendMailOptions): Promise<Uint8A
 
 const SINGLE_EMAIL_RE = /^[^\s@,;<>"]+@[^\s@,;<>"]+\.[^\s@,;<>"]+$/;
 const MAX_ATTACHMENT_BYTES = 24 * 1024 * 1024;
+const MAX_REQUEST_BYTES = 34 * 1024 * 1024;
+
+class RequestTooLarge extends Error {}
+
+function boundedBody(request: Request): Response {
+  if (Number(request.headers.get('content-length')) > MAX_REQUEST_BYTES) throw new RequestTooLarge();
+  let bytes = 0;
+  const stream = request.body?.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      bytes += chunk.byteLength;
+      if (bytes > MAX_REQUEST_BYTES) throw new RequestTooLarge();
+      controller.enqueue(chunk);
+    },
+  }));
+  return new Response(stream, { headers: request.headers });
+}
+
+function retryLater(detail: string, seconds: number, source: 'account' | 'gmail') {
+  return NextResponse.json({ status: 'rate_limited', detail, source }, {
+    status: 429,
+    headers: { 'Retry-After': String(seconds) },
+  });
+}
+
+function unconfirmedEmail() {
+  return NextResponse.json({
+    status: 'unconfirmed',
+    detail: 'Gmail acceptance could not be confirmed. Check Gmail Sent before sending again.',
+  }, { status: 502 });
+}
+
+function reconnectRequired(email: string) {
+  return NextResponse.json({
+    status: 'reconnect_required',
+    detail: `Authorize Gmail sending for ${email} in Studio and try again.`,
+  }, { status: 401 });
+}
 
 function sanitizeAttachmentBaseName(name: string): string {
   const cleaned = name.replace(/[\\/:*?"<>|\r\n\t\x00-\x1f]+/g, '_').trim().slice(0, 150);
@@ -59,25 +92,20 @@ interface MailAttachment {
   content: Buffer;
 }
 
-async function readAttachment(file: File | null, filename: string): Promise<MailAttachment | null> {
-  if (!file || file.size === 0) return null;
+async function readAttachment(file: FormDataEntryValue | null, filename: string): Promise<MailAttachment | null> {
+  if (!file || typeof file === 'string' || file.size === 0) return null;
+  if (file.size > MAX_ATTACHMENT_BYTES) throw new RequestTooLarge();
   const buffer = Buffer.from(await file.arrayBuffer());
   return { filename, content: buffer };
 }
 
 export async function POST(request: Request) {
   if (!mutationAllowed(request)) return forbiddenCsrfResponse();
-  const user = await getAuthenticatedUser(request);
-  if (!user) {
-    return unauthorizedResponse('Invalid or expired token');
-  }
+  const { user, denial } = await requireIssuer(request);
+  if (denial) return denial;
 
-  const rate = checkRateLimit(`send:user:${user.userId}`, SEND_RATE_LIMIT, 60_000);
-  if (!rate.allowed) {
-    return NextResponse.json(
-      { status: 'rate_limited', detail: 'Sending too fast — pausing briefly to respect the Gmail quota.' },
-      { status: 429, headers: { 'Retry-After': String(rate.retryAfterSec) } }
-    );
+  if (!gmailConfigured()) {
+    return NextResponse.json({ detail: 'Gmail sending is not configured. Contact your administrator.' }, { status: 503 });
   }
 
   try {
@@ -87,39 +115,38 @@ export async function POST(request: Request) {
     let emailBodyHtml: string;
     let filename: string;
     let attachments: MailAttachment[];
-    let senderEmail: string | undefined;
+    const payload = boundedBody(request);
 
     const contentType = request.headers.get('content-type') || '';
 
     if (contentType.includes('multipart/form-data')) {
       // Optimized path: raw binary attachments (no base64 inflation).
-      const form = await request.formData();
+      const form = await payload.formData();
       recipientEmail = String(form.get('recipient_email') || '');
       emailSubject = String(form.get('email_subject') || '');
       emailBodyPlain = String(form.get('email_body_plain') || '');
       emailBodyHtml = String(form.get('email_body_html') || '');
       filename = sanitizeAttachmentBaseName(String(form.get('filename') || 'certificate'));
-      senderEmail = form.get('sender_email') ? String(form.get('sender_email')) : undefined;
 
       attachments = [];
       const jpg = await readAttachment(
-        (form.get('jpg') as File | null) || (form.get('jpeg') as File | null) || null,
+        form.get('jpg') ?? form.get('jpeg'),
         `${filename}.jpg`
       );
       if (jpg) attachments.push(jpg);
-      const png = await readAttachment((form.get('png') as File | null) || null, `${filename}.png`);
+      const png = await readAttachment(form.get('png'), `${filename}.png`);
       if (png) attachments.push(png);
-      const pdf = await readAttachment((form.get('pdf') as File | null) || null, `${filename}.pdf`);
+      const pdf = await readAttachment(form.get('pdf'), `${filename}.pdf`);
       if (pdf) attachments.push(pdf);
     } else {
       // Legacy JSON + base64 fallback (kept for backward compatibility).
-      const body = await request.json();
+      const body = await payload.json();
+      if (!body || typeof body !== 'object') throw new SyntaxError('Invalid email payload');
       recipientEmail = String(body.recipient_email || '');
       emailSubject = String(body.email_subject || '');
       emailBodyPlain = String(body.email_body_plain || '');
       emailBodyHtml = String(body.email_body_html || '');
       filename = sanitizeAttachmentBaseName(String(body.filename || 'certificate'));
-      senderEmail = typeof body.sender_email === 'string' ? body.sender_email : undefined;
 
       attachments = [];
       if (body.jpg_base64 || body.jpeg_base64) {
@@ -164,110 +191,76 @@ export async function POST(request: Request) {
     }
 
     emailSubject = emailSubject.replace(/[\r\n]+/g, ' ').slice(0, 998);
-    if (senderEmail && !SINGLE_EMAIL_RE.test(senderEmail.trim())) {
-      senderEmail = undefined;
+    const accessToken = await getFreshAccessToken(user);
+    if (!accessToken) return reconnectRequired(user.email);
+
+    const rawMime = await buildRawMimeMessage({
+      from: { name: user.name, address: user.email },
+      to: recipientEmail,
+      subject: emailSubject,
+      text: emailBodyPlain,
+      html: emailBodyHtml.trim() || undefined,
+      attachments,
+    });
+
+    const slot = await reserveMailSlot(user.email);
+    if (!slot.allowed) {
+      if (slot.retryAfter === null) return issuanceRequiredResponse();
+      return retryLater('Your account has reached its sending limit.', slot.retryAfter, 'account');
     }
 
-    // =========================================================================
-    // Resolve a Gmail access token from the server-side credential store
-    // (Postgres-backed, auto-refreshed and persisted by the store; refreshes
-    // are single-flight per account so a parallel batch cannot stampede
-    // Google's token endpoint).
-    // =========================================================================
-    const accessToken = await getFreshAccessToken(user.userId);
-
-    if (accessToken) {
-      const validSender = senderEmail && senderEmail.includes('@') ? senderEmail : undefined;
-
-      const mailOptions: SendMailOptions = {
-        from: validSender,
-        to: recipientEmail,
-        subject: emailSubject,
-        text: emailBodyPlain,
-        html: emailBodyHtml && emailBodyHtml.trim() ? emailBodyHtml : undefined,
-        attachments,
-      };
-
-      const rawMime = await buildRawMimeMessage(mailOptions);
-
-      // Auto-retry up to 3 times for transient (429 / 503 / precondition) errors.
-      let attempts = 0;
-      let lastErrorMessage = '';
-      let lastStatus = 0;
-
-      while (attempts < 3) {
-        attempts++;
-        const gmailRes = await fetch(
-          'https://gmail.googleapis.com/upload/gmail/v1/users/me/messages/send?uploadType=media',
-          {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-              'Content-Type': 'message/rfc822',
-            },
-            body: Buffer.from(rawMime) as unknown as BodyInit,
-          }
-        );
-
-        if (gmailRes.ok) {
-          return NextResponse.json({
-            status: 'success',
-            message: `Email sent via Google OAuth to ${recipientEmail}`,
-            recipient: recipientEmail,
-          });
+    let gmailRes: Response;
+    try {
+      gmailRes = await fetch(
+        `https://gmail.googleapis.com/upload/gmail/v1/users/${encodeURIComponent(user.email)}/messages/send?uploadType=media`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'message/rfc822' },
+          body: Buffer.from(rawMime),
+          signal: AbortSignal.timeout(30_000),
         }
+      );
 
-        lastStatus = gmailRes.status;
-        const errData = await gmailRes.json().catch(() => ({}));
-        lastErrorMessage = errData.error?.message || `Gmail API returned HTTP ${gmailRes.status}`;
+    } catch {
+      log.warn('email', 'No response from Gmail after submission', { requestId: requestIdOf(request), userId: user.userId });
+      return unconfirmedEmail();
+    }
+    if (gmailRes.status >= 500) return unconfirmedEmail();
 
-        // 401 / 403 (auth) -> do NOT retry; surface reconnect signal.
-        if (gmailRes.status === 401 || gmailRes.status === 403) {
-          break;
-        }
-
-        if (
-          attempts < 3 &&
-          (lastErrorMessage.toLowerCase().includes('precondition') ||
-            gmailRes.status === 429 ||
-            gmailRes.status === 503)
-        ) {
-          await new Promise((resolve) => setTimeout(resolve, 400 * attempts));
-          continue;
-        }
-
-        break;
+    if (gmailRes.ok) {
+      return NextResponse.json({ status: 'success', message: 'Email accepted by Gmail', recipient: recipientEmail });
+    }
+    if (gmailRes.status === 429) {
+      const header = gmailRes.headers.get('retry-after');
+      const seconds = header && /^\d+$/.test(header) ? Number(header)
+        : header ? Math.ceil((Date.parse(header) - Date.now()) / 1000) : NaN;
+      return retryLater('Google has rate-limited this Gmail account.', seconds > 0 ? seconds : 60, 'gmail');
+    }
+    if (gmailRes.status === 401) return reconnectRequired(user.email);
+    if (gmailRes.status === 403) {
+      const data = await gmailRes.json().catch(() => null);
+      const reasons: string[] = Array.isArray(data?.error?.errors)
+        ? data.error.errors.map((item: { reason?: string }) => item?.reason)
+        : [];
+      if (reasons.includes('rateLimitExceeded') || reasons.includes('userRateLimitExceeded')) {
+        return retryLater('Google has rate-limited this Gmail account.', 60, 'gmail');
       }
-
-      // Auth-class failure means the session is dead -> ask client to reconnect.
-      if (lastStatus === 401 || lastStatus === 403) {
-        return NextResponse.json(
-          {
-            status: 'reconnect_required',
-            detail: 'Google session expired. Please reconnect your Google account.',
-          },
-          { status: 401 }
-        );
-      }
-
-      throw new Error(`Gmail API error: ${lastErrorMessage}`);
+      if (reasons.includes('insufficientPermissions')) return reconnectRequired(user.email);
+      return NextResponse.json({ detail: 'Gmail denied this send. Check your Google account and Workspace settings.' }, { status: 403 });
     }
 
-    // Google-only: if we reach here, no usable access token was available
-    // (account not connected or session lost). Surface a clear error rather
-    // than silently dropping the mail.
-    return NextResponse.json(
-      {
-        status: 'reconnect_required',
-        detail: 'No Google account connected. Please connect your Google account and retry.',
-      },
-      { status: 401 }
-    );
+    log.warn('email', 'Gmail rejected a send request', {
+      requestId: requestIdOf(request), userId: user.userId, status: gmailRes.status,
+    });
+    return NextResponse.json({ detail: 'Gmail could not accept the email.' }, { status: 502 });
   } catch (error) {
-    log.error('email', 'Failed to send email', { requestId: requestIdOf(request), userId: user.userId }, error);
-    return NextResponse.json(
-      { detail: error instanceof Error ? error.message : 'Failed to send email' },
-      { status: 500 }
-    );
+    if (error instanceof RequestTooLarge) {
+      return NextResponse.json({ detail: 'Email upload exceeds the size limit' }, { status: 413 });
+    }
+    if (error instanceof SyntaxError || error instanceof TypeError && error.message.includes('FormData')) {
+      return NextResponse.json({ detail: 'Invalid email payload' }, { status: 400 });
+    }
+    log.error('email', 'Email request failed', { requestId: requestIdOf(request), userId: user.userId });
+    return NextResponse.json({ detail: 'The email could not be prepared for Gmail.' }, { status: 500 });
   }
 }

@@ -3,8 +3,7 @@ import { sql } from 'drizzle-orm';
 import { db } from '../../../lib/db';
 import { unauthorizedResponse } from '../../../lib/server-auth';
 import { getAuthenticatedUser } from '../../../lib/accounts';
-import { getPlatformRole, type PlatformRole } from '../../../lib/platform-access';
-import { env } from '../../../lib/env';
+import { canManageAccess, type PlatformRole } from '../../../lib/access-role';
 
 /**
  * Admin-console guard. Returns the caller's platform role, or null when the
@@ -13,12 +12,10 @@ import { env } from '../../../lib/env';
  */
 export async function requireAdmin(
   request: Request
-): Promise<{ userId: string; email: string; role: PlatformRole } | null> {
+): Promise<{ userId: string; email: string; role: Exclude<PlatformRole, 'user'> } | null> {
   const user = await getAuthenticatedUser(request);
-  if (!user || !env.DATABASE_URL) return null;
-  const role = await getPlatformRole(user.email);
-  if (role !== 'admin' && role !== 'super_admin') return null;
-  return { userId: user.userId, email: user.email, role };
+  if (!user || !canManageAccess(user.platformRole)) return null;
+  return { userId: user.userId, email: user.email, role: user.platformRole };
 }
 
 export function forbiddenResponse(): NextResponse {

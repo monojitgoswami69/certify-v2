@@ -1,123 +1,98 @@
 import { NextResponse } from 'next/server';
-import { mutationAllowed, forbiddenCsrfResponse } from '../../../../../lib/server-auth';
-import { OAuth2Client } from 'google-auth-library';
-import { unauthorizedResponse } from '../../../../../lib/server-auth';
+import { mutationAllowed, forbiddenCsrfResponse, unauthorizedResponse } from '../../../../../lib/server-auth';
 import { getAuthenticatedUser } from '../../../../../lib/accounts';
-import { env, googleClientId } from '../../../../../lib/env';
+import { requireIssuer } from '../../../../../lib/issuer-auth';
 import {
   clearGoogleCredentials,
-  getStoredGoogleCredentials,
+  createGmailOAuthClient,
+  gmailConfigured,
+  GMAIL_SEND_SCOPE,
+  hasGoogleConnection,
   storeGoogleCredentials,
 } from '../../../../../lib/google-token-store';
+import { env } from '../../../../../lib/env';
+import { checkRateLimit } from '../../../../../lib/rate-limit';
+import { log, requestIdOf } from '../../../../../lib/logger';
 
-const GOOGLE_CLIENT_ID = googleClientId();
-const GOOGLE_CLIENT_SECRET = env.GOOGLE_CLIENT_SECRET || '';
-const REDIRECT_URI = 'postmessage';
+export async function GET(request: Request) {
+  const { user, denial } = await requireIssuer(request);
+  if (denial) return denial;
+  const connected = await hasGoogleConnection(user);
+  return NextResponse.json({ account: connected ? { email: user.email } : null }, {
+    headers: { 'Cache-Control': 'no-store' },
+  });
+}
 
 export async function POST(request: Request) {
   if (!mutationAllowed(request)) return forbiddenCsrfResponse();
-  const user = await getAuthenticatedUser(request);
-  if (!user) {
-    return unauthorizedResponse('Invalid or expired token');
+  const { user, denial } = await requireIssuer(request);
+  if (denial) return denial;
+
+  const rate = checkRateLimit(`gmail-connect:${user.userId}`, 10, 60_000);
+  if (!rate.allowed) {
+    return NextResponse.json({ detail: 'Too many Gmail authorization attempts. Try again shortly.' }, {
+      status: 429,
+      headers: { 'Retry-After': String(rate.retryAfterSec) },
+    });
   }
 
-  let code: string;
-  try {
-    const body = await request.json();
-    code = body?.code;
-  } catch {
-    return NextResponse.json({ detail: 'Invalid request body' }, { status: 400 });
-  }
-
-  if (!code || typeof code !== 'string') {
+  const body = await request.json().catch(() => null);
+  if (typeof body?.code !== 'string' || !body.code || body.code.length > 4096) {
     return NextResponse.json({ detail: 'Authorization code is required' }, { status: 400 });
   }
-
-  if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
-    return NextResponse.json(
-      { detail: 'Google OAuth client ID/secret not configured on the server' },
-      { status: 500 }
-    );
+  if (!gmailConfigured()) {
+    return NextResponse.json({ detail: 'Gmail sending is not configured. Contact your administrator.' }, { status: 503 });
   }
 
+  const configuredOrigin = new URL(env.NEXT_PUBLIC_APP_URL).origin;
+  const origin = request.headers.get('origin') ?? configuredOrigin;
+  if (origin !== configuredOrigin && (env.NODE_ENV === 'production' || origin !== new URL(request.url).origin)) {
+    return NextResponse.json({ detail: 'Gmail authorization must come from the Certify origin' }, { status: 403 });
+  }
   try {
-    const oauth = new OAuth2Client({
-      clientId: GOOGLE_CLIENT_ID,
-      clientSecret: GOOGLE_CLIENT_SECRET,
-      redirectUri: REDIRECT_URI,
-    });
-
-    const { tokens } = await oauth.getToken(code);
-    if (!tokens.access_token && !tokens.refresh_token) {
-      return NextResponse.json({ detail: 'Google did not return any usable tokens' }, { status: 400 });
+    const { tokens } = await createGmailOAuthClient().getToken({ code: body.code, redirect_uri: origin });
+    if (!tokens.access_token || !tokens.scope?.split(/\s+/).includes(GMAIL_SEND_SCOPE)) {
+      return NextResponse.json({ detail: 'Allow Gmail sending when Google asks for permission.' }, { status: 403 });
     }
 
-    oauth.setCredentials(tokens);
-
-    // Resolve connected account info from Google via the userinfo endpoint
-    // (avoids a googleapis typing conflict between the two OAuth2Client types).
-    let email = user.email;
-    let name = user.name;
-    let picture = '';
-    try {
-      const userRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-        headers: { Authorization: `Bearer ${tokens.access_token}` },
-      });
-      if (userRes.ok) {
-        const info = await userRes.json();
-        if (info.email) email = info.email;
-        if (info.name) name = info.name;
-        if (info.picture) picture = info.picture;
-      }
-    } catch (err) {
-      console.warn('[Google tokens] userinfo lookup failed:', err);
+    const response = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${tokens.access_token}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) {
+      return NextResponse.json({ detail: 'Google could not verify the Gmail account. Try authorizing again.' }, { status: 502 });
+    }
+    const identity = await response.json();
+    if (identity?.email_verified !== true || typeof identity.email !== 'string' ||
+        identity.email.trim().toLowerCase() !== user.email) {
+      return NextResponse.json({ detail: `Authorize Gmail with your Certify sign-in email, ${user.email}.` }, { status: 403 });
     }
 
-    // Store credentials server-side only. The access token never travels to
-    // the browser: every send resolves its token from this store.
-    await storeGoogleCredentials(user.userId, {
-      access_token: tokens.access_token ?? null,
-      refresh_token: tokens.refresh_token ?? null,
-      expiry_date: tokens.expiry_date ?? null,
-      scope: tokens.scope ?? null,
-      token_type: tokens.token_type ?? null,
-      email,
+    await storeGoogleCredentials(user, {
+      accessToken: tokens.access_token,
+      refreshToken: tokens.refresh_token,
+      expiryDate: tokens.expiry_date,
     });
-
-    return NextResponse.json({
-      email,
-      name,
-      picture,
-      hasRefreshToken: Boolean(tokens.refresh_token),
-      message: 'Google account connected',
-    });
-  } catch (error) {
-    console.error('[Google token exchange error]:', error);
-    return NextResponse.json(
-      { detail: 'Failed to exchange Google authorization code' },
-      { status: 400 }
-    );
+    return NextResponse.json({ email: user.email });
+  } catch {
+    // Provider errors can include request headers, OAuth codes, or tokens.
+    log.warn('gmail', 'Gmail authorization failed', { requestId: requestIdOf(request), userId: user.userId });
+    return NextResponse.json({ detail: 'Gmail authorization failed. Try again shortly.' }, { status: 502 });
   }
 }
 
-/** Disconnects Gmail: forgets the server-held tokens and revokes the grant at Google. */
 export async function DELETE(request: Request) {
   if (!mutationAllowed(request)) return forbiddenCsrfResponse();
   const user = await getAuthenticatedUser(request);
-  if (!user) {
-    return unauthorizedResponse('Invalid or expired token');
-  }
+  if (!user) return unauthorizedResponse();
 
-  const creds = await getStoredGoogleCredentials(user.userId);
-  await clearGoogleCredentials(user.userId);
-
-  const tokenToRevoke = creds?.refresh_token || creds?.access_token;
-  if (tokenToRevoke) {
-    await fetch(`https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(tokenToRevoke)}`, {
+  const token = await clearGoogleCredentials(user);
+  if (token) {
+    await fetch('https://oauth2.googleapis.com/revoke', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    }).catch((err) => console.warn('[Google tokens] revoke failed:', err));
+      body: new URLSearchParams({ token }),
+      signal: AbortSignal.timeout(5000),
+    }).catch(() => undefined);
   }
-
   return NextResponse.json({ success: true });
 }

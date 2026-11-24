@@ -1,3 +1,4 @@
+import { log } from '../../../lib/logger';
 import { NextResponse } from 'next/server';
 import { sql } from 'drizzle-orm';
 import { db } from '../../../lib/db';
@@ -23,7 +24,7 @@ export async function GET() {
       { headers: { 'Cache-Control': 'no-store' } }
     );
   } catch (error) {
-    console.error('[Health check error]:', error);
+    log.warn('health', 'Database health check failed', {}, error);
     return NextResponse.json(
       { ok: false, db: 'down' },
       { status: 503, headers: { 'Cache-Control': 'no-store' } }

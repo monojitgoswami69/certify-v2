@@ -2,10 +2,11 @@ import { NextResponse } from 'next/server';
 import { and, asc, eq } from 'drizzle-orm';
 import { db } from '../../../../../lib/db';
 import { templates, templateVersions } from '../../../../../db/schema';
-import { unauthorizedResponse } from '../../../../../lib/server-auth';
-import { getAuthenticatedUser } from '../../../../../lib/accounts';
+import { mutationAllowed, forbiddenCsrfResponse } from '../../../../../lib/server-auth';
+import { requireIssuer } from '../../../../../lib/issuer-auth';
 import { env } from '../../../../../lib/env';
 import { isValidCertificateId } from '../../../../../lib/verification';
+import { snapshotTemplateVersion } from '../../../../../lib/template-versions';
 import { log, requestIdOf } from '../../../../../lib/logger';
 
 /**
@@ -17,10 +18,8 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const user = await getAuthenticatedUser(request);
-  if (!user) {
-    return unauthorizedResponse('Invalid or expired session');
-  }
+  const { user, denial } = await requireIssuer(request);
+  if (denial) return denial;
 
   const { id } = await params;
   if (!isValidCertificateId(id) || !env.DATABASE_URL) {
@@ -71,10 +70,9 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const user = await getAuthenticatedUser(request);
-  if (!user) {
-    return unauthorizedResponse('Invalid or expired session');
-  }
+  if (!mutationAllowed(request)) return forbiddenCsrfResponse();
+  const { user, denial } = await requireIssuer(request);
+  if (denial) return denial;
 
   const { id } = await params;
   if (!isValidCertificateId(id) || !env.DATABASE_URL) {
@@ -111,22 +109,14 @@ export async function POST(
       return NextResponse.json({ detail: 'Version not found' }, { status: 404 });
     }
 
-    const [updated] = await db
+    const restore = db
       .update(templates)
       .set({ layoutConfig: version.layoutConfig, updatedAt: new Date() })
       .where(and(eq(templates.id, id), eq(templates.userId, user.userId)))
       .returning({ id: templates.id, name: templates.name, layoutConfig: templates.layoutConfig });
 
-    // The restore itself becomes a new snapshot, so undoing a restore is possible.
-    try {
-      await db.insert(templateVersions).values({
-        templateId: id,
-        layoutConfig: version.layoutConfig,
-        imageHash: null,
-      });
-    } catch (verErr) {
-      console.warn('[Template versions] restore snapshot failed:', verErr);
-    }
+    const [[updated]] = await db.batch([restore, ...snapshotTemplateVersion(user.userId, { id })]);
+    if (!updated) return NextResponse.json({ detail: 'Template not found' }, { status: 404 });
 
     return NextResponse.json({ success: true, template: updated });
   } catch (error) {

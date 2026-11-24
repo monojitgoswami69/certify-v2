@@ -45,3 +45,14 @@ Demo data left in the dev DB for user review: account `verify-demo@certify.test`
 1. Read AGENTS.md + this file; `git log --oneline -10` to orient.
 2. Ask the user the email-queue render-side decision (§2.1), then build the queue (migration → job tables → service → tick endpoint → UI polling).
 3. Remember: no pushes without approval; the gauntlet before any push proposal.
+
+## Gmail sender and access policy
+
+- Set `ADMIN_EMAIL` to the sole super admin address and grant other accounts from **Admin → Access**. Existing access entries are retained, including entries grandfathered by the original 0005 migration. Review those entries before onboarding real users. The current 0005 migration no longer restores revoked accounts when rerun.
+- Set `GMAIL_TOKEN_ENCRYPTION_KEY` to a unique 32-byte key encoded as 64 hex characters and share it across application instances through the secret manager. Keep `NEXT_PUBLIC_APP_URL` set to the exact public HTTPS origin, and register that origin in the Google OAuth client. The production Google project needs Gmail API access and a consent screen that permits the intended users to grant `gmail.send`.
+- Before deploying, apply `npm run db:mail-policy` after the earlier migrations. This widens the Gmail token expiry column, removes credentials saved under the old sender policy, and adds quota fields. Each sender needs to authorize Gmail again in Studio with their sign-in email.
+- Apply `npm run db:issued-designs` after the mail-policy migration. Issued events use an immutable design and a public field snapshot per recipient. Older verification links retain their status and metadata. The issuer can restore downloads by reviewing and confirming the original design from the event dashboard.
+- Apply `npm run db:issuance-access` before deploying the issuance permission changes. Existing and new accounts, including the configured superadmin, start with issuance disabled. Grant issuance explicitly in Access management for each approved issuer.
+
+- The super admin can adjust the rolling per-account limits under **Admin → Access**. Defaults are 55 sends per minute and 8 per second. Match per-account settings to your Gmail project and mailbox quotas. Gmail can also impose daily, concurrency, and project-wide limits. Certify pauses for its own rate limit and stops starting sends when Gmail reports a quota limit.
+- Delivery still runs from the open Studio tab. If a Gmail request timed out, check Gmail Sent before retrying. Confirm the live OAuth consent, reconnect, and test delivery in staging before deploying to production.

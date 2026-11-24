@@ -29,10 +29,6 @@ export class PooledCertificateRenderer {
   }
 
   async render(task: WorkerTask): Promise<BatchResultItem> {
-    if (this.cache.has(task.rowIndex)) {
-      return this.cache.get(task.rowIndex)!;
-    }
-
     // Drive chunk-ahead rendering until this task's result exists. Concurrent
     // callers await the same in-flight chunk promise.
     while (!this.cache.has(task.rowIndex)) {
@@ -59,7 +55,9 @@ export class PooledCertificateRenderer {
       await this.inflight;
     }
 
-    return this.cache.get(task.rowIndex)!;
+    const result = this.cache.get(task.rowIndex)!;
+    this.cache.delete(task.rowIndex);
+    return result;
   }
 }
 
@@ -83,8 +81,8 @@ export async function createPooledRenderer(
   params: PooledRendererParams
 ): Promise<{ renderer: PooledCertificateRenderer; terminate: () => void } | null> {
   if (!CertificateWorkerPool.isSupported()) return null;
+  const pool = new CertificateWorkerPool();
   try {
-    const pool = new CertificateWorkerPool();
     const workerCount = await pool.initialize(
       params.templateBlob,
       params.templateWidth,
@@ -92,13 +90,16 @@ export async function createPooledRenderer(
       params.boxes,
       params.qrZones,
       params.formats,
-      params.fonts
+      params.fonts,
+      undefined,
+      params.images
     );
     return {
       renderer: new PooledCertificateRenderer(pool, params.tasks, Math.max(workerCount * 2, 8)),
       terminate: () => pool.terminate(),
     };
   } catch (err) {
+    pool.terminate();
     console.warn('[RenderService] worker pool unavailable, using main thread:', err);
     return null;
   }
@@ -116,7 +117,5 @@ export async function templateImageToBlob(
   const ctx = canvas.getContext('2d');
   if (!ctx) return null;
   ctx.drawImage(templateImage, 0, 0);
-  return await new Promise<Blob>((resolve) =>
-    canvas.toBlob((b) => resolve(b!), 'image/png')
-  );
+  return new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
 }

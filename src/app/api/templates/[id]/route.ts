@@ -3,8 +3,7 @@ import { mutationAllowed, forbiddenCsrfResponse } from '../../../../lib/server-a
 import { and, eq } from 'drizzle-orm';
 import { db } from '../../../../lib/db';
 import { templates } from '../../../../db/schema';
-import { unauthorizedResponse } from '../../../../lib/server-auth';
-import { getAuthenticatedUser } from '../../../../lib/accounts';
+import { requireIssuer } from '../../../../lib/issuer-auth';
 import { log, requestIdOf } from '../../../../lib/logger';
 import { isValidCertificateId as isValidUuid } from '../../../../lib/verification';
 
@@ -12,10 +11,8 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const user = await getAuthenticatedUser(request);
-  if (!user) {
-    return unauthorizedResponse('Invalid or expired session');
-  }
+  const { user, denial } = await requireIssuer(request);
+  if (denial) return denial;
 
   const { id } = await params;
   if (!isValidUuid(id)) {
@@ -71,10 +68,8 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   if (!mutationAllowed(request)) return forbiddenCsrfResponse();
-  const user = await getAuthenticatedUser(request);
-  if (!user) {
-    return unauthorizedResponse('Invalid or expired session');
-  }
+  const { user, denial } = await requireIssuer(request);
+  if (denial) return denial;
 
   const { id } = await params;
   if (!isValidUuid(id)) {

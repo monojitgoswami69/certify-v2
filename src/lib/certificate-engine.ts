@@ -74,6 +74,8 @@ export interface GenerateParams {
    * The function resets its size and clears it before drawing.
    */
   canvas?: HTMLCanvasElement;
+  /** Use values already resolved at issuance. */
+  frozenFields?: boolean;
 }
 
 const engineFontSizeCache = new Map<string, number>();
@@ -101,7 +103,7 @@ function findOptimalFontSize(
   const maxH = boxH - padding;
 
   // Fast path: test if max font size fits immediately
-  ctx.font = `${maxFontSize}px "${fontFamily}"`;
+  ctx.font = `${maxFontSize}px ${fontFamily}`;
   if (ctx.measureText(text).width <= maxW && maxFontSize * 1.2 <= maxH) {
     if (engineFontSizeCache.size > 2000) engineFontSizeCache.clear();
     engineFontSizeCache.set(cacheKey, maxFontSize);
@@ -110,7 +112,7 @@ function findOptimalFontSize(
 
   while (min <= max) {
     const mid = (min + max) >> 1;
-    ctx.font = `${mid}px "${fontFamily}"`;
+    ctx.font = `${mid}px ${fontFamily}`;
     const metrics = ctx.measureText(text);
     const textWidth = metrics.width;
     const textHeight = mid * 1.2;
@@ -226,6 +228,7 @@ export async function generateCertificate(
     templateImage,
     boxes,
     row,
+    frozenFields,
     filename,
     includeJpg,
     includePng,
@@ -280,7 +283,7 @@ export async function generateCertificate(
       continue;
     }
     if (!box.field) continue;
-    const text = resolveFieldValue(box.field, row);
+    const text = frozenFields ? (Object.hasOwn(row, box.field) ? row[box.field] : '') : resolveFieldValue(box.field, row);
     drawTextBox(ctx, text, box);
   }
 

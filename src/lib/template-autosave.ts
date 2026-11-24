@@ -1,5 +1,5 @@
 import type { TextBox, QrZone, ImageElement } from '../types';
-import { getAuthToken } from './api-client';
+import { apiFetch } from './api-client';
 
 export interface AutoSaveTemplateParams {
   templateImage: HTMLImageElement | null;
@@ -11,7 +11,6 @@ export interface AutoSaveTemplateParams {
   defaultFont?: string;
   defaultFontSize?: number;
   defaultFontColor?: string;
-  token?: string | null;
 }
 
 const ALLOWED_SAVE_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
@@ -85,76 +84,44 @@ function getCachedEncodedImage(
   return encoded;
 }
 
-/**
- * Automatically persists the current template image and box layout configuration
- * to the database when certificate generation is executed.
- */
+export async function prepareIssuedDesign(params: AutoSaveTemplateParams) {
+  const { templateImage, templateFile, boxes, qrZones, images } = params;
+  if (!templateImage) throw new Error('Upload a template before issuing certificates.');
+
+  const { dataUrl, hash, width, height } = await getCachedEncodedImage(templateImage, templateFile);
+  return {
+    imageData: dataUrl,
+    imageHash: hash,
+    width,
+    height,
+    layoutConfig: {
+      boxes,
+      qrZones,
+      images,
+      defaultFont: params.defaultFont || 'Inter',
+      defaultFontSize: params.defaultFontSize || 28,
+      defaultFontColor: params.defaultFontColor || '#000000',
+    },
+  };
+}
+
+/** Saves an editable template for future drafts. Issued designs live on events. */
 export async function autoSaveCurrentTemplate(
   params: AutoSaveTemplateParams
 ): Promise<{ id?: string; name?: string } | null> {
-  const {
-    templateImage,
-    templateFile,
-    eventName,
-    boxes,
-    qrZones,
-    images,
-    defaultFont,
-    defaultFontSize,
-    defaultFontColor,
-    token,
-  } = params;
+  if (!params.templateImage) return null;
 
-  if (!templateImage) return null;
-
-  try {
-    const name =
-      eventName?.trim() ||
-      (templateFile?.name ? templateFile.name.replace(/\.[^/.]+$/, '').trim() : 'Certificate Template');
-
-    const { dataUrl, hash, width, height } = await getCachedEncodedImage(templateImage, templateFile);
-
-    const payload = {
-      name,
-      imageData: dataUrl,
-      imageHash: hash,
-      width,
-      height,
-      layoutConfig: {
-        boxes,
-        qrZones,
-        images,
-        defaultFont: defaultFont || 'Inter',
-        defaultFontSize: defaultFontSize || 28,
-        defaultFontColor: defaultFontColor || '#000000',
-      },
-    };
-
-    const activeToken = token || (typeof window !== 'undefined' ? getAuthToken() : null);
-
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-    if (activeToken) {
-      headers['Authorization'] = `Bearer ${activeToken}`;
-    }
-
-    const res = await fetch('/api/templates', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(payload),
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      console.warn('[AutoSave Template] Server responded with error:', err);
-      return null;
-    }
-
-    const data = await res.json();
-    return data.template || null;
-  } catch (error) {
-    console.warn('[AutoSave Template] Failed to auto-save template:', error);
-    return null;
+  const name = params.eventName?.trim()
+    || (params.templateFile?.name ? params.templateFile.name.replace(/\.[^/.]+$/, '').trim() : 'Certificate Template');
+  const design = await prepareIssuedDesign(params);
+  const res = await apiFetch('/api/templates', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, ...design }),
+  });
+  const result = await res.json().catch(() => null);
+  if (!res.ok || !result?.template?.id) {
+    throw new Error(result?.detail || 'Failed to save certificate template');
   }
+  return result.template;
 }

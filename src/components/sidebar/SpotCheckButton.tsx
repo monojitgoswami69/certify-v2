@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { X, ChevronLeft, ChevronRight, Loader2, Eye } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import { buildVerifyUrlFor } from '../../lib/cert-registration';
@@ -15,28 +15,35 @@ const PREVIEW_CACHE_LIMIT = 40;
  * real data instead of discovering them in an inbox.
  */
 export function SpotCheckButton({ disabled }: { disabled?: boolean }) {
-  const { templateImage, csvData, boxes, qrZones, eventName, registeredCertIds, isBatchRegistered, registrationDirty } =
+  const { templateImage, csvData, boxes, qrZones, images, eventName, registeredCertIds, isBatchRegistered, registrationDirty } =
     useAppStore();
   const [open, setOpen] = useState(false);
   const [index, setIndex] = useState(0);
   const [dataUrl, setDataUrl] = useState<string | null>(null);
   const [rendering, setRendering] = useState(false);
   const cacheRef = useRef<Map<number, string>>(new Map());
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const renderSeqRef = useRef(0);
 
   const useQr = qrZones.length > 0;
-  const validBoxes = boxes.filter((b) => b.field || b.kind === 'static');
+  const validBoxes = useMemo(() => boxes.filter((b) => b.field || b.kind === 'static'), [boxes]);
   const canOpen = Boolean(templateImage && csvData.length > 0 && validBoxes.length > 0);
   const qrBlocked = useQr && (!isBatchRegistered || registrationDirty);
 
   useEffect(() => {
     if (!open) {
+      renderSeqRef.current++;
       cacheRef.current.clear();
       setIndex(0);
       setDataUrl(null);
     }
   }, [open]);
+
+  useEffect(() => {
+    renderSeqRef.current++;
+    cacheRef.current.clear();
+    setDataUrl(null);
+    setIndex((current) => Math.min(current, Math.max(0, csvData.length - 1)));
+  }, [templateImage, csvData, validBoxes, qrZones, images, registeredCertIds]);
 
   // Escape closes (matching the app's other modals).
   useEffect(() => {
@@ -51,7 +58,7 @@ export function SpotCheckButton({ disabled }: { disabled?: boolean }) {
   }, [open, csvData.length]);
 
   useEffect(() => {
-    if (!open || !templateImage) return;
+    if (!open || !templateImage || !csvData[index]) return;
     const rowIndex = index + 2;
     const row = csvData[index];
     const seq = ++renderSeqRef.current;
@@ -82,9 +89,8 @@ export function SpotCheckButton({ disabled }: { disabled?: boolean }) {
           includePng: true,
           includeBase64: true,
           qrZones: useQr ? (qrZones as QrZone[]) : undefined,
-          images: undefined,
+          images,
           verificationUrl: useQr && certId ? buildVerifyUrlFor(certId) : undefined,
-          canvas: canvasRef.current ?? undefined,
         });
         if (seq !== renderSeqRef.current || !cert.pngBase64) return;
 
@@ -96,21 +102,17 @@ export function SpotCheckButton({ disabled }: { disabled?: boolean }) {
         setDataUrl(cert.pngBase64);
       } catch (err) {
         console.warn('[SpotCheck] render failed:', err);
-        setDataUrl(null);
+        if (seq === renderSeqRef.current) setDataUrl(null);
       } finally {
         if (seq === renderSeqRef.current) setRendering(false);
       }
     })();
-  }, [open, index, templateImage, csvData, validBoxes, qrZones, useQr, registeredCertIds]);
+  }, [open, index, templateImage, csvData, validBoxes, qrZones, useQr, registeredCertIds, images]);
 
   if (!canOpen) return null;
 
-  const recipient = csvData[index];
-  const displayName =
-    validBoxes.find((b) => b.kind !== 'static' && b.field.toLowerCase().includes('name'))?.field &&
-    recipient[validBoxes.find((b) => b.field.toLowerCase().includes('name'))!.field]
-      ? recipient[validBoxes.find((b) => b.field.toLowerCase().includes('name'))!.field]
-      : `Recipient ${index + 1}`;
+  const nameField = validBoxes.find((box) => box.kind !== 'static' && box.field.toLowerCase().includes('name'))?.field;
+  const displayName = (nameField && csvData[index]?.[nameField]) || `Recipient ${index + 1}`;
 
   return (
     <>
@@ -139,10 +141,10 @@ export function SpotCheckButton({ disabled }: { disabled?: boolean }) {
           >
             <div className="flex items-center justify-between px-5 py-3 border-b border-stone-200/80">
               <div>
-                <h2 className="font-jura font-bold text-base text-stone-900">
+                <h2 className="font-semibold text-base text-stone-900">
                   Spot check — {eventName || 'Untitled event'}
                 </h2>
-                <p className="text-xs text-stone-500 font-quicksand">
+                <p className="text-xs text-stone-500">
                   {displayName} · {index + 1} of {csvData.length}
                 </p>
               </div>
@@ -171,7 +173,6 @@ export function SpotCheckButton({ disabled }: { disabled?: boolean }) {
               ) : (
                 <div className="text-sm text-stone-400 py-16">Preview unavailable</div>
               )}
-              <canvas ref={canvasRef} className="hidden" />
             </div>
 
             <div className="flex items-center justify-center gap-3 px-5 py-3 border-t border-stone-200/80">

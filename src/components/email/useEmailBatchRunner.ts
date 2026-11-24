@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { useAuthStore } from '../../store/useAuthStore';
-import { sendEmailV2 } from '../../lib/api-client';
+import { EmailRateLimitError, EmailUnconfirmedError, IssuanceAccessRequiredError, sendEmailV2 } from '../../lib/api-client';
 import {
   replaceTemplateVariables,
   delay,
@@ -21,7 +21,6 @@ import {
 } from '../../lib/render-service';
 import { CertificateWorkerPool } from '../../lib/worker-pool';
 import { buildVerifyUrlFor } from '../../lib/cert-registration';
-import { autoSaveCurrentTemplate } from '../../lib/template-autosave';
 import type { CsvRow, EmailProgress, EmailDeliveryRecord } from '../../types';
 
 export interface FailedRecord {
@@ -62,7 +61,7 @@ export function useEmailBatchRunner() {
     registrationDirty,
   } = useAppStore();
 
-  const { token } = useAuthStore();
+  const user = useAuthStore((state) => state.user);
 
   const [logs, setLogs] = useState<EmailLogs>({ firstSent: null, lastSent: null, totalElapsed: 0 });
   const [retryQueue, setRetryQueue] = useState<FailedRecord[]>([]);
@@ -84,6 +83,7 @@ export function useEmailBatchRunner() {
   const consecutiveNetworkErrorsRef = useRef(0);
 
   // Comprehensive tracking map: rowIndex -> EmailDeliveryRecord
+  const deliveryRosterRef = useRef(csvData);
   const deliveryRecordsRef = useRef<Map<number, EmailDeliveryRecord>>(new Map());
 
   useEffect(() => {
@@ -92,8 +92,8 @@ export function useEmailBatchRunner() {
     return () => clearInterval(id);
   }, [emailProgress.status]);
 
-  const hasMailingAccount = Boolean(connectedGoogleAccount);
-  const validBoxes = boxes.filter((b) => b.field);
+  const hasMailingAccount = Boolean(user && connectedGoogleAccount?.email === user.email);
+  const validBoxes = boxes.filter((b) => b.field || b.kind === 'static');
   const attachImage = Boolean(emailSettings.attachJpg || emailSettings.attachPng);
   const useQr = qrZones.length > 0;
   const isReady = Boolean(
@@ -132,6 +132,10 @@ export function useEmailBatchRunner() {
         return;
       }
 
+      if (deliveryRosterRef.current !== csvData) {
+        deliveryRosterRef.current = csvData;
+        deliveryRecordsRef.current.clear();
+      }
       sendInFlightRef.current = true;
       abortRef.current = false;
       pauseRef.current = false;
@@ -156,7 +160,7 @@ export function useEmailBatchRunner() {
       // Populate or preserve delivery tracking records
       records.forEach(({ rowIndex, row }) => {
         const existing = deliveryRecordsRef.current.get(rowIndex);
-        if (!existing || (!isRetry && existing.status !== 'sent')) {
+        if (!existing || (!isRetry && existing.status !== 'sent' && existing.status !== 'unconfirmed')) {
           deliveryRecordsRef.current.set(rowIndex, {
             rowIndex,
             name: getDisplayName(row),
@@ -191,22 +195,30 @@ export function useEmailBatchRunner() {
       // thread (chunk-ahead, overlapping with network-bound sends), so a
       // 2000-email batch no longer freezes the UI between sends. Falls back
       // to main-thread rendering when workers are unavailable.
-      if (templateImage && CertificateWorkerPool.isSupported()) {
+      const isAlreadyProcessed = (rowIndex: number) => {
+        const status = deliveryRecordsRef.current.get(rowIndex)?.status;
+        return status === 'sent' || status === 'unconfirmed';
+      };
+
+      if (CertificateWorkerPool.isSupported()) {
         try {
           const templateBlob = await templateImageToBlob(templateImage, templateFile);
           if (templateBlob) {
-            const [workerFonts] = await Promise.all([loadFontsForWorker(uniqueFonts)]);
-            const renderTasks = records.map(({ rowIndex, row }) => {
-              const displayName = getDisplayName(row);
-              const certId = registeredCertIds.get(rowIndex);
-              return {
-                id: records.findIndex((r) => r.rowIndex === rowIndex),
-                rowIndex,
-                row,
-                filename: sanitizeFilename(displayName),
-                verificationUrl: useQr && certId ? buildVerifyUrlFor(certId) : undefined,
-              };
-            });
+            const workerFonts = await loadFontsForWorker(uniqueFonts);
+            const renderTasks = records
+              .filter(({ rowIndex, row }) => !isAlreadyProcessed(rowIndex)
+                && validateEmailAddress((row[emailColumn] || '').trim()).valid
+                && (!useQr || registeredCertIds.has(rowIndex)))
+              .map(({ rowIndex, row }) => {
+                const certId = registeredCertIds.get(rowIndex);
+                return {
+                  id: rowIndex,
+                  rowIndex,
+                  row,
+                  filename: sanitizeFilename(getDisplayName(row)),
+                  verificationUrl: useQr && certId ? buildVerifyUrlFor(certId) : undefined,
+                };
+              });
             const pooled = await createPooledRenderer({
               templateBlob,
               templateWidth: templateImage.naturalWidth || templateImage.width,
@@ -260,36 +272,34 @@ export function useEmailBatchRunner() {
         });
       };
 
-      const GMAIL_BURST_PER_SECOND = Number(process.env.NEXT_PUBLIC_GMAIL_BURST_PER_SECOND ?? 8);
-      const GMAIL_QUOTA_PER_MINUTE = Number(process.env.NEXT_PUBLIC_GMAIL_QUOTA_PER_MINUTE ?? 145);
-      const secondWindow: number[] = [];
-      const minuteWindow: number[] = [];
-      const acquireSendSlot = async () => {
-        // eslint-disable-next-line no-constant-condition
-        while (true) {
-          if (abortRef.current || reconnectRef.current) return;
-          const now = Date.now();
-          while (secondWindow.length && now - secondWindow[0] >= 1000) secondWindow.shift();
-          while (minuteWindow.length && now - minuteWindow[0] >= 60000) minuteWindow.shift();
-
-          if (minuteWindow.length >= GMAIL_QUOTA_PER_MINUTE) {
-            await delay(Math.max(50, 60000 - (now - minuteWindow[0]) + 10));
+      let nextSendAt = 0;
+      const providerLimit = { error: null as EmailRateLimitError | null };
+      const sendWithRateLimit = async (params: Parameters<typeof sendEmailV2>[0]) => {
+        while (!abortRef.current && !reconnectRef.current) {
+          if (providerLimit.error) throw providerLimit.error;
+          const remaining = nextSendAt - Date.now();
+          if (pauseRef.current || remaining > 0) {
+            await delay(pauseRef.current ? 100 : Math.min(remaining, 250));
             continue;
           }
-          if (secondWindow.length >= GMAIL_BURST_PER_SECOND) {
-            await delay(Math.max(50, 1000 - (now - secondWindow[0]) + 10));
-            continue;
+          try {
+            return await sendEmailV2(params);
+          } catch (error) {
+            if (!(error instanceof EmailRateLimitError)) throw error;
+            if (error.source === 'gmail') {
+              providerLimit.error = error;
+              throw error;
+            }
+            nextSendAt = Math.max(nextSendAt, Date.now() + error.retryAfter * 1000);
           }
-          secondWindow.push(now);
-          minuteWindow.push(now);
-          return;
         }
+        return null;
       };
 
       const worker = async () => {
         let workerCanvas: HTMLCanvasElement | undefined;
 
-        while (recordIndex < records.length && !abortRef.current && !reconnectRef.current) {
+        while (recordIndex < records.length && !abortRef.current && !reconnectRef.current && !providerLimit.error) {
           while (pauseRef.current && !abortRef.current && !reconnectRef.current) {
             await delay(100);
           }
@@ -304,9 +314,7 @@ export function useEmailBatchRunner() {
           const displayName = getDisplayName(row);
           const rawEmail = (row[emailColumn] || '').trim();
 
-          // Failsafe: Avoid sending duplicate email if already marked sent in this session
-          const existing = deliveryRecordsRef.current.get(rowIndex);
-          if (existing && existing.status === 'sent' && !isRetry) {
+          if (isAlreadyProcessed(rowIndex)) {
             completedCount++;
             continue;
           }
@@ -390,10 +398,7 @@ export function useEmailBatchRunner() {
               ? replaceTemplateVariables(emailSettings.bodyHtml, row, { html: true })
               : '';
 
-            await acquireSendSlot();
-            if (abortRef.current || reconnectRef.current) return;
-
-            const result = await sendEmailV2({
+            const result = await sendWithRateLimit({
               recipientEmail: email,
               emailSubject: subject,
               emailBodyPlain: bodyPlain,
@@ -402,13 +407,14 @@ export function useEmailBatchRunner() {
               jpgBlob: cert.jpgBlob,
               pngBlob: cert.pngBlob,
               pdfBlob: cert.pdfBlob,
-              senderEmail: connectedGoogleAccount?.email,
             });
+
+            if (!result) return;
 
             if (result.status === 'reconnect_required') {
               reconnectRef.current = true;
               setNeedsReconnect(true);
-              const failReason = 'Google session expired — reconnect required';
+              const failReason = result.message;
               errors.push({
                 rowIndex,
                 name: displayName,
@@ -447,12 +453,13 @@ export function useEmailBatchRunner() {
             flushProgress(displayName);
           } catch (err) {
             const errorMsg = err instanceof Error ? err.message : 'Failed to send';
+            if (err instanceof IssuanceAccessRequiredError) {
+              abortRef.current = true;
+              setError(errorMsg);
+            }
 
-            const isNetDrop =
-              errorMsg.toLowerCase().includes('fetch') ||
-              errorMsg.toLowerCase().includes('network') ||
-              errorMsg.toLowerCase().includes('offline') ||
-              errorMsg.toLowerCase().includes('failed to load');
+            const unconfirmed = err instanceof EmailUnconfirmedError;
+            const isNetDrop = unconfirmed && err.networkFailure;
 
             if (isNetDrop) {
               consecutiveNetworkErrorsRef.current++;
@@ -472,7 +479,7 @@ export function useEmailBatchRunner() {
               rowIndex,
               name: displayName,
               email,
-              status: 'failed',
+              status: unconfirmed ? 'unconfirmed' : 'failed',
               timestamp: new Date().toISOString(),
               error: errorMsg,
             });
@@ -512,29 +519,18 @@ export function useEmailBatchRunner() {
         totalElapsed: Date.now() - startTime,
       });
 
-      setRetryQueue(errors);
+      if (providerLimit.error) setError(providerLimit.error.message);
+      setRetryQueue(errors.filter(({ rowIndex }) => deliveryRecordsRef.current.get(rowIndex)?.status === 'failed'));
 
-      // Auto-save template & layout configuration to database when emails are sent
-      if (sent.length > 0) {
-        autoSaveCurrentTemplate({
-          templateImage,
-          templateFile,
-          eventName,
-          boxes,
-          qrZones,
-          images,
-          defaultFont,
-          defaultFontSize,
-          defaultFontColor,
-          token,
-        }).catch((err) => console.warn('[AutoSave Template Error]:', err));
-      }
       } finally {
         terminateRenderer?.();
         sendInFlightRef.current = false;
       }
     },
     [
+      csvData,
+      images,
+      useQr,
       templateImage,
       templateFile,
       boxes,
@@ -546,12 +542,10 @@ export function useEmailBatchRunner() {
       resetEmailProgress,
       setError,
       getDisplayName,
-      connectedGoogleAccount,
       eventName,
       defaultFont,
       defaultFontSize,
       defaultFontColor,
-      token,
     ]
   );
 
@@ -561,17 +555,25 @@ export function useEmailBatchRunner() {
   }, [csvData, sendBatch]);
 
   const handleRetry = useCallback(async () => {
+    if (deliveryRosterRef.current !== csvData) return;
     const records = retryQueue.map((err) => ({ rowIndex: err.rowIndex, row: err.row }));
     await sendBatch(records, true);
-  }, [retryQueue, sendBatch]);
+  }, [csvData, retryQueue, sendBatch]);
 
   // Delivery records span every run in this session, so rows sent by an earlier run or a retry are never re-sent
-  const isRowSent = (rowIndex: number) => deliveryRecordsRef.current.get(rowIndex)?.status === 'sent';
+  const isRowSent = (rowIndex: number) => {
+    const status = deliveryRosterRef.current === csvData ? deliveryRecordsRef.current.get(rowIndex)?.status : undefined;
+    return status === 'sent' || status === 'unconfirmed';
+  };
 
   const handleResumeUnsent = useCallback(async () => {
     const unsentRecords = csvData
       .map((row, i) => ({ rowIndex: i + 2, row }))
-      .filter((r) => deliveryRecordsRef.current.get(r.rowIndex)?.status !== 'sent');
+      .filter(({ rowIndex }) => {
+        if (deliveryRosterRef.current !== csvData) return true;
+        const status = deliveryRecordsRef.current.get(rowIndex)?.status;
+        return status !== 'sent' && status !== 'unconfirmed';
+      });
     if (unsentRecords.length > 0) {
       await sendBatch(unsentRecords, false);
     }

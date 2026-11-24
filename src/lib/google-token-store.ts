@@ -1,182 +1,176 @@
+import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { OAuth2Client } from 'google-auth-library';
-import { eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { db } from './db';
-import { googleCredentials } from '../db/schema';
+import { googleCredentials, type GoogleCredentialRow } from '../db/schema';
 import { env, googleClientId } from './env';
 
-const GOOGLE_CLIENT_ID = googleClientId();
-const GOOGLE_CLIENT_SECRET = env.GOOGLE_CLIENT_SECRET || '';
-const REDIRECT_URI = 'postmessage';
+export const GMAIL_SEND_SCOPE = 'https://www.googleapis.com/auth/gmail.send';
 
-export interface StoredGoogleCredentials {
-  access_token?: string | null;
-  refresh_token?: string | null;
-  expiry_date?: number | null;
-  scope?: string | null;
-  token_type?: string | null;
-  email?: string;
+function encryptionKey(): Buffer {
+  const hex = env.GMAIL_TOKEN_ENCRYPTION_KEY ?? '';
+  if (!/^[0-9a-f]{64}$/i.test(hex)) throw new Error('Gmail credential encryption key is missing or invalid');
+  return Buffer.from(hex, 'hex');
 }
 
-/**
- * Gmail OAuth credentials, persisted in Postgres (survive restarts, shared
- * across instances) with an in-memory read-through cache so the hot email
- * path does not query the database per message.
- */
-const cache = new Map<string, StoredGoogleCredentials>();
-// One refresh at a time per account: a 10-worker email batch must not trigger
-// ten parallel Google token refreshes with the same refresh token.
+export function gmailConfigured(): boolean {
+  return Boolean(googleClientId() && env.GOOGLE_CLIENT_SECRET && /^[0-9a-f]{64}$/i.test(env.GMAIL_TOKEN_ENCRYPTION_KEY ?? ''));
+}
+
+export function createGmailOAuthClient(): OAuth2Client {
+  return new OAuth2Client({
+    clientId: googleClientId(),
+    clientSecret: env.GOOGLE_CLIENT_SECRET,
+  });
+}
+
+interface GmailOwner {
+  userId: string;
+  email: string;
+}
+
+type TokenKind = 'access' | 'refresh';
+
+function associatedData(owner: GmailOwner, kind: TokenKind): Buffer {
+  return Buffer.from(`${owner.userId}:${owner.email}:${kind}`);
+}
+
+function encryptToken(token: string, owner: GmailOwner, kind: TokenKind): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', encryptionKey(), iv);
+  cipher.setAAD(associatedData(owner, kind));
+  const ciphertext = Buffer.concat([cipher.update(token, 'utf8'), cipher.final()]);
+  return ['v1', iv.toString('base64url'), cipher.getAuthTag().toString('base64url'), ciphertext.toString('base64url')].join('.');
+}
+
+function decryptToken(value: string | null, owner: GmailOwner, kind: TokenKind): string | undefined {
+  if (!value?.startsWith('v1.')) return undefined;
+  const [, iv, tag, ciphertext] = value.split('.');
+  const decipher = createDecipheriv('aes-256-gcm', encryptionKey(), Buffer.from(iv, 'base64url'));
+  decipher.setAAD(associatedData(owner, kind));
+  decipher.setAuthTag(Buffer.from(tag, 'base64url'));
+  return Buffer.concat([decipher.update(Buffer.from(ciphertext, 'base64url')), decipher.final()]).toString('utf8');
+}
+
+/** Called only after Google has verified this exact mailbox and granted gmail.send. */
+export async function storeGoogleCredentials(
+  owner: GmailOwner,
+  credentials: { accessToken: string; refreshToken?: string | null; expiryDate?: number | null }
+): Promise<void> {
+  const values = {
+    email: owner.email,
+    accessToken: encryptToken(credentials.accessToken, owner, 'access'),
+    expiryDate: credentials.expiryDate ?? null,
+    scope: GMAIL_SEND_SCOPE,
+    tokenType: 'Bearer',
+    updatedAt: new Date(),
+  };
+  const refreshToken = credentials.refreshToken ? encryptToken(credentials.refreshToken, owner, 'refresh') : null;
+
+  await db.insert(googleCredentials).values({ userId: owner.userId, ...values, refreshToken })
+    .onConflictDoUpdate({
+      target: googleCredentials.userId,
+      set: {
+        ...values,
+        refreshToken: refreshToken ?? sqlMatchingRefreshToken(owner.email),
+      },
+    });
+}
+
+function sqlMatchingRefreshToken(email: string) {
+  return sql`CASE
+    WHEN ${googleCredentials.email} = ${email}
+      AND ${googleCredentials.accessToken} LIKE 'v1.%'
+      AND ${googleCredentials.refreshToken} LIKE 'v1.%'
+    THEN ${googleCredentials.refreshToken}
+  END`;
+}
+
+async function getConnection(owner: GmailOwner): Promise<(GoogleCredentialRow & { accessToken: string }) | null> {
+  const [row] = await db.select().from(googleCredentials).where(and(
+    eq(googleCredentials.userId, owner.userId),
+    eq(googleCredentials.email, owner.email),
+    eq(googleCredentials.scope, GMAIL_SEND_SCOPE)
+  )).limit(1);
+  return row?.accessToken?.startsWith('v1.') ? { ...row, accessToken: row.accessToken } : null;
+}
+
+export async function hasGoogleConnection(owner: GmailOwner): Promise<boolean> {
+  if (!gmailConfigured()) return false;
+  const row = await getConnection(owner);
+  if (!row) return false;
+  try {
+    return Boolean(decryptToken(row.refreshToken, owner, 'refresh') ||
+      (row.expiryDate && row.expiryDate > Date.now() && decryptToken(row.accessToken, owner, 'access')));
+  } catch {
+    return false;
+  }
+}
+
+export async function clearGoogleCredentials(owner: GmailOwner): Promise<string | undefined> {
+  const [row] = await db.delete(googleCredentials)
+    .where(eq(googleCredentials.userId, owner.userId))
+    .returning({ email: googleCredentials.email, refreshToken: googleCredentials.refreshToken, accessToken: googleCredentials.accessToken });
+  if (row?.email !== owner.email) return undefined;
+  try {
+    return decryptToken(row.refreshToken, owner, 'refresh') ?? decryptToken(row.accessToken, owner, 'access');
+  } catch {
+    return undefined;
+  }
+}
+
+function usableAccessToken(row: GoogleCredentialRow, owner: GmailOwner): string | undefined {
+  if (row.expiryDate && row.expiryDate > Date.now() + 60_000) {
+    return decryptToken(row.accessToken, owner, 'access');
+  }
+}
+
 const refreshInFlight = new Map<string, Promise<string | null>>();
 
-function mergeCreds(prev: StoredGoogleCredentials | undefined, creds: StoredGoogleCredentials): StoredGoogleCredentials {
-  // Google only returns a refresh_token on first consent. Preserve any
-  // previously stored refresh_token if the new exchange omitted one.
-  return {
-    ...prev,
-    ...creds,
-    refresh_token: creds.refresh_token ?? prev?.refresh_token ?? null,
-  };
-}
+async function refreshAccessToken(owner: GmailOwner, row: GoogleCredentialRow & { accessToken: string }): Promise<string | null> {
+  const refreshToken = decryptToken(row.refreshToken, owner, 'refresh');
+  if (!refreshToken) return null;
+  const client = createGmailOAuthClient();
+  client.setCredentials({ refresh_token: refreshToken });
 
-export async function storeGoogleCredentials(
-  userId: string,
-  creds: StoredGoogleCredentials
-): Promise<void> {
-  const merged = mergeCreds(cache.get(userId), creds);
-  cache.set(userId, merged);
+  let token: string | null | undefined;
   try {
-    await db
-      .insert(googleCredentials)
-      .values({
-        userId,
-        accessToken: merged.access_token ?? null,
-        refreshToken: merged.refresh_token ?? null,
-        expiryDate: merged.expiry_date ?? null,
-        scope: merged.scope ?? null,
-        tokenType: merged.token_type ?? null,
-        email: merged.email ?? null,
-        updatedAt: new Date(),
-      })
-      .onConflictDoUpdate({
-        target: googleCredentials.userId,
-        set: {
-          accessToken: merged.access_token ?? null,
-          refreshToken: merged.refresh_token ?? null,
-          expiryDate: merged.expiry_date ?? null,
-          scope: merged.scope ?? null,
-          tokenType: merged.token_type ?? null,
-          email: merged.email ?? null,
-          updatedAt: new Date(),
-        },
-      });
-  } catch (err) {
-    // Cache still holds the credentials, so sending keeps working this boot.
-    console.warn('[Google token store] persist failed:', err);
-  }
-}
-
-export async function getStoredGoogleCredentials(
-  userId: string
-): Promise<StoredGoogleCredentials | null> {
-  const cached = cache.get(userId);
-  if (cached) return cached;
-  try {
-    const [row] = await db
-      .select()
-      .from(googleCredentials)
-      .where(eq(googleCredentials.userId, userId))
-      .limit(1);
-    if (!row || (!row.accessToken && !row.refreshToken)) return null;
-    const creds: StoredGoogleCredentials = {
-      access_token: row.accessToken,
-      refresh_token: row.refreshToken,
-      expiry_date: row.expiryDate,
-      scope: row.scope,
-      token_type: row.tokenType,
-      email: row.email ?? undefined,
-    };
-    cache.set(userId, creds);
-    return creds;
-  } catch (err) {
-    console.warn('[Google token store] load failed:', err);
+    ({ token } = await client.getAccessToken());
+  } catch {
     return null;
   }
+  if (!token) return null;
+
+  // A refresh must not restore a grant that was disconnected or replaced while Google responded.
+  const updated = await db.update(googleCredentials).set({
+    accessToken: encryptToken(token, owner, 'access'),
+    expiryDate: client.credentials.expiry_date ?? null,
+    updatedAt: new Date(),
+  }).where(and(
+    eq(googleCredentials.userId, owner.userId),
+    eq(googleCredentials.accessToken, row.accessToken)
+  )).returning({ userId: googleCredentials.userId });
+  if (updated.length) return token;
+  const current = await getConnection(owner);
+  return current ? usableAccessToken(current, owner) ?? null : null;
 }
 
-export async function clearGoogleCredentials(userId: string): Promise<void> {
-  cache.delete(userId);
-  refreshInFlight.delete(userId);
+export async function getFreshAccessToken(owner: GmailOwner): Promise<string | null> {
+  if (!gmailConfigured()) return null;
+  const row = await getConnection(owner);
+  if (!row) return null;
   try {
-    await db.delete(googleCredentials).where(eq(googleCredentials.userId, userId));
-  } catch (err) {
-    console.warn('[Google token store] delete failed:', err);
-  }
-}
-
-export async function getStoredGoogleEmail(userId: string): Promise<string | null> {
-  const creds = await getStoredGoogleCredentials(userId);
-  return creds?.email ?? null;
-}
-
-function buildClient(creds: StoredGoogleCredentials): OAuth2Client {
-  const client = new OAuth2Client({
-    clientId: GOOGLE_CLIENT_ID,
-    clientSecret: GOOGLE_CLIENT_SECRET,
-    redirectUri: REDIRECT_URI,
-  });
-  client.setCredentials({
-    access_token: creds.access_token ?? undefined,
-    refresh_token: creds.refresh_token ?? undefined,
-    expiry_date: creds.expiry_date ?? undefined,
-    token_type: creds.token_type ?? undefined,
-  });
-  return client;
-}
-
-/**
- * Returns a valid Gmail access token for the account, refreshing (and
- * persisting) it when expired. Refreshes are single-flight per account.
- * Returns null when no credentials are connected.
- */
-export async function getFreshAccessToken(userId: string): Promise<string | null> {
-  const creds = await getStoredGoogleCredentials(userId);
-  if (!creds || (!creds.access_token && !creds.refresh_token)) return null;
-
-  if (creds.access_token && creds.expiry_date && creds.expiry_date - 60_000 > Date.now()) {
-    return creds.access_token;
-  }
-
-  let refresh = refreshInFlight.get(userId);
-  if (!refresh) {
-    refresh = (async () => {
-      const client = buildClient(creds);
-      const { token } = await client.getAccessToken();
-      if (!token) return null;
-      const expiry = client.credentials.expiry_date ?? null;
-      cache.set(userId, { ...creds, access_token: token, expiry_date: expiry });
-      try {
-        await db
-          .update(googleCredentials)
-          .set({ accessToken: token, expiryDate: expiry, updatedAt: new Date() })
-          .where(eq(googleCredentials.userId, userId));
-      } catch (err) {
-        console.warn('[Google token store] refreshed-token persist failed:', err);
-      }
-      return token;
-    })().finally(() => refreshInFlight.delete(userId));
-    refreshInFlight.set(userId, refresh);
-  }
-
-  try {
+    const token = usableAccessToken(row, owner);
+    if (token) return token;
+    // A grant replacement gets a distinct key even if it belongs to the same account.
+    const key = row.accessToken;
+    let refresh = refreshInFlight.get(key);
+    if (!refresh) {
+      refresh = refreshAccessToken(owner, row).finally(() => refreshInFlight.delete(key));
+      refreshInFlight.set(key, refresh);
+    }
     return await refresh;
-  } catch (err) {
-    console.warn('[Google token store] refresh failed:', err);
+  } catch {
     return null;
   }
-}
-
-/** Kept for callers that need the raw OAuth2 client (userinfo lookups etc.). */
-export async function buildGoogleOAuthClient(userId: string): Promise<OAuth2Client | null> {
-  const creds = await getStoredGoogleCredentials(userId);
-  if (!creds || (!creds.access_token && !creds.refresh_token)) return null;
-  return buildClient(creds);
 }

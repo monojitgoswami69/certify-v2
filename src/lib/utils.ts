@@ -198,7 +198,7 @@ export function generateFullDeliveryReportCsv(
     csvCell(rec.email),
     csvCell(rec.status.toUpperCase()),
     csvCell(rec.timestamp || ''),
-    csvCell(rec.error || (rec.status === 'sent' ? 'Successfully Delivered' : '')),
+    csvCell(rec.error || (rec.status === 'sent' ? 'Accepted by Gmail' : '')),
     csvCell(eventName || ''),
   ]);
 
@@ -274,13 +274,13 @@ export function resolveFieldValue(
   if (!field || !row) return '';
 
   // 1. Direct exact match
-  if (row[field] !== undefined && row[field] !== null && String(row[field]).trim() !== '') {
+  if (Object.hasOwn(row, field) && row[field] !== undefined && row[field] !== null && String(row[field]).trim() !== '') {
     return String(row[field]);
   }
 
   // 2. Trimmed exact match
   const trimmedField = field.trim();
-  if (row[trimmedField] !== undefined && row[trimmedField] !== null && String(row[trimmedField]).trim() !== '') {
+  if (Object.hasOwn(row, trimmedField) && row[trimmedField] !== undefined && row[trimmedField] !== null && String(row[trimmedField]).trim() !== '') {
     return String(row[trimmedField]);
   }
 

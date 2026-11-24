@@ -16,9 +16,9 @@ import {
   Copy,
 } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
-import { useAuthStore } from '../../store/useAuthStore';
+import { apiFetch } from '../../lib/api-client';
 import { imageSourceToBlob } from '../../lib/utils';
-import type { TextBox, QrZone } from '../../types';
+import type { TextBox, QrZone, ImageElement } from '../../types';
 
 interface TemplateSummary {
   id: string;
@@ -28,6 +28,7 @@ interface TemplateSummary {
   layoutConfig: {
     boxes?: TextBox[];
     qrZones?: QrZone[];
+    images?: ImageElement[];
     defaultFont?: string;
     defaultFontSize?: number;
     defaultFontColor?: string;
@@ -43,8 +44,7 @@ interface TemplateLibraryModalProps {
 }
 
 export function TemplateLibraryModal({ isOpen, onClose, onLoaded }: TemplateLibraryModalProps) {
-  const { setTemplate, setBoxes, setQrZones, setDefaultFont, setDefaultFontSize, setDefaultFontColor } = useAppStore();
-  const { token } = useAuthStore();
+  const { setTemplate, setBoxes, setQrZones, setImages, setDefaultFont, setDefaultFontSize, setDefaultFontColor } = useAppStore();
 
   const [mounted, setMounted] = useState(false);
 
@@ -64,16 +64,11 @@ export function TemplateLibraryModal({ isOpen, onClose, onLoaded }: TemplateLibr
   const [searchQuery, setSearchQuery] = useState('');
 
   const fetchTemplates = useCallback(async () => {
-    if (!token) return;
     setLoading(true);
     setError(null);
 
     try {
-      const res = await fetch('/api/templates', {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      const res = await apiFetch('/api/templates');
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -87,7 +82,7 @@ export function TemplateLibraryModal({ isOpen, onClose, onLoaded }: TemplateLibr
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, []);
 
   useEffect(() => {
     if (isOpen) {
@@ -99,16 +94,11 @@ export function TemplateLibraryModal({ isOpen, onClose, onLoaded }: TemplateLibr
 
   // Load a selected template into the workspace
   const handleLoadTemplate = async (templateId: string) => {
-    if (!token) return;
     setLoadingId(templateId);
     setError(null);
 
     try {
-      const res = await fetch(`/api/templates/${templateId}`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      const res = await apiFetch(`/api/templates/${templateId}`);
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -139,6 +129,7 @@ export function TemplateLibraryModal({ isOpen, onClose, onLoaded }: TemplateLibr
           if (Array.isArray(config.qrZones)) {
             setQrZones(config.qrZones);
           }
+          if (Array.isArray(config.images)) setImages(config.images);
           if (config.defaultFont) setDefaultFont(config.defaultFont);
           if (config.defaultFontSize) setDefaultFontSize(config.defaultFontSize);
           if (config.defaultFontColor) setDefaultFontColor(config.defaultFontColor);
@@ -162,18 +153,15 @@ export function TemplateLibraryModal({ isOpen, onClose, onLoaded }: TemplateLibr
 
   // Duplicate a saved template (full copy incl. the artwork).
   const handleDuplicateTemplate = async (templateId: string, templateName: string) => {
-    if (!token) return;
     setDuplicatingId(templateId);
     setError(null);
     try {
-      const res = await fetch(`/api/templates/${templateId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await apiFetch(`/api/templates/${templateId}`);
       if (!res.ok) throw new Error('Failed to load template for copying');
       const { template } = await res.json();
-      const saveRes = await fetch('/api/templates', {
+      const saveRes = await apiFetch('/api/templates', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: `${template.name} (copy)`.slice(0, 200),
           imageData: template.imageData,
@@ -197,14 +185,11 @@ export function TemplateLibraryModal({ isOpen, onClose, onLoaded }: TemplateLibr
 
   // Version history: list snapshots and restore one.
   const openHistory = async (templateId: string) => {
-    if (!token) return;
     setHistoryFor(templateId);
     setVersions(null);
     setError(null);
     try {
-      const res = await fetch(`/api/templates/${templateId}/versions`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await apiFetch(`/api/templates/${templateId}/versions`);
       if (!res.ok) throw new Error('Failed to load versions');
       const data = await res.json();
       setVersions(data.versions || []);
@@ -214,13 +199,12 @@ export function TemplateLibraryModal({ isOpen, onClose, onLoaded }: TemplateLibr
   };
 
   const restoreVersion = async (templateId: string, versionId: string) => {
-    if (!token) return;
     setRestoringId(versionId);
     setError(null);
     try {
-      const res = await fetch(`/api/templates/${templateId}/versions`, {
+      const res = await apiFetch(`/api/templates/${templateId}/versions`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ versionId }),
       });
       if (!res.ok) {
@@ -238,18 +222,14 @@ export function TemplateLibraryModal({ isOpen, onClose, onLoaded }: TemplateLibr
 
   // Delete a saved template
   const handleDeleteTemplate = async (templateId: string, templateName: string) => {
-    if (!token) return;
     const confirmed = window.confirm(`Are you sure you want to delete template "${templateName}"?`);
     if (!confirmed) return;
 
     setDeletingId(templateId);
 
     try {
-      const res = await fetch(`/api/templates/${templateId}`, {
+      const res = await apiFetch(`/api/templates/${templateId}`, {
         method: 'DELETE',
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
       });
 
       if (!res.ok) {
@@ -437,7 +417,7 @@ export function TemplateLibraryModal({ isOpen, onClose, onLoaded }: TemplateLibr
                         <ul className="divide-y divide-slate-100">
                           {[...versions].reverse().map((v) => (
                             <li key={v.id} className="flex items-center justify-between py-1.5 gap-2">
-                              <span className="text-xs text-slate-600 font-quicksand">
+                              <span className="text-xs text-slate-600">
                                 {new Date(v.createdAt).toLocaleString([], {
                                   month: 'short',
                                   day: 'numeric',

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import Image from 'next/image';
+import Link from 'next/link';
 import {
   Award,
   Calendar,
@@ -16,33 +16,36 @@ import {
   ChevronRight,
   ChevronLeft,
   Palette,
+  KeyRound,
   AlertCircle,
-  Trash2,
+  Copy,
+  Download,
+  Mail,
   ChevronDown,
   ChevronUp,
   CalendarDays,
-  UserPlus,
 } from 'lucide-react';
 import { useAuthStore } from '../../store/useAuthStore';
+import { canManageAccess } from '../../lib/access-role';
 import { useAppStore } from '../../store/useAppStore';
 import { useHistoryStore } from '../../store/useHistoryStore';
 import { downloadBlob, sanitizeFilename, csvCell } from '../../lib/utils';
-import { AccountMenu } from '../../components/account/AccountMenu';
-import { loadWorkspace, isWorkspaceLoadedFor } from '../../lib/workspace-loader';
-import { getAuthToken, sendEmailV2 } from '../../lib/api-client';
-import { ensureFontsLoaded } from '../../lib/font-loader';
+import { CertifyHeader } from '../../components/account/CertifyHeader';
+import { IssuerWorkspace } from '../../components/account/IssuerWorkspace';
+import { apiFetch, fetchEventDesign } from '../../lib/api-client';
+import { emailIssuedCertificate, renderIssuedPdf } from '../../lib/issued-certificate';
+import { EventRecipients } from './EventRecipients';
 import { buildVerifyUrlFor } from '../../lib/cert-registration';
 import type { DashboardEventSummary, DashboardParticipant } from '../api/dashboard/route';
-
-function getStoredToken(): string | null {
-  return getAuthToken();
-}
 
 function DashboardContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const eventParam = searchParams.get('event');
-  const { isAuthenticated, isLoading: authLoading, token, logout, initialize } = useAuthStore();
+  const eventIdParam = searchParams.get('eventId');
+  const legacyEventName = searchParams.get('event');
+  const selectedEventKey = eventIdParam || legacyEventName;
+  const logout = useAuthStore((state) => state.logout);
+  const canModerate = useAuthStore((state) => canManageAccess(state.user?.platformRole));
   const mainRef = useRef<HTMLElement>(null);
 
   // Events summary list state
@@ -54,10 +57,10 @@ function DashboardContent() {
   const [eventSearchQuery, setEventSearchQuery] = useState('');
 
   // -------------------------------------------------------------
-  // Detailed View State (URL eventParam is single source of truth)
+  // Detail selection comes from the event ID in the URL.
   // -------------------------------------------------------------
-  const selectedEventName = eventParam;
   const [detailedEventSummary, setDetailedEventSummary] = useState<DashboardEventSummary | null>(null);
+  const selectedEventName = detailedEventSummary?.eventName ?? legacyEventName ?? '';
   const [participants, setParticipants] = useState<DashboardParticipant[]>([]);
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [detailsError, setDetailsError] = useState<string | null>(null);
@@ -69,16 +72,11 @@ function DashboardContent() {
   // Revoking state for row-level spinners
   const [updatingCertId, setUpdatingCertId] = useState<string | null>(null);
 
-  // Deleting event state
-  const [deletingEventName, setDeletingEventName] = useState<string | null>(null);
   const [eventSettingsSaving, setEventSettingsSaving] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [newEmail, setNewEmail] = useState('');
-  const [newSendEmail, setNewSendEmail] = useState(true);
-  const [addingRecipient, setAddingRecipient] = useState(false);
-  const [recipientStatus, setRecipientStatus] = useState<{ ok: boolean; message: string } | null>(null);
+  const [workingCertificate, setWorkingCertificate] = useState<string | null>(null);
+  const [certificateNotice, setCertificateNotice] = useState<{ text: string; error?: boolean } | null>(null);
   const validThroughDateInput = detailedEventSummary?.validThrough
-    ? detailedEventSummary.validThrough.slice(0, 10)
+    ? new Date(detailedEventSummary.validThrough).toLocaleDateString('sv-SE')
     : '';
 
   const handleUpdateEventSettings = useCallback(async (patch: { trackScans?: boolean; validThrough?: string | null }) => {
@@ -90,9 +88,7 @@ function DashboardContent() {
         'Content-Type': 'application/json',
         'X-Certify-Request': '1',
       };
-      const storedToken = useAuthStore.getState().token || getStoredToken();
-      if (storedToken) headers.Authorization = `Bearer ${storedToken}`;
-      const res = await fetch(`/api/events/${eventId}`, {
+      const res = await apiFetch(`/api/events/${eventId}`, {
         method: 'PATCH',
         credentials: 'same-origin',
         headers,
@@ -113,25 +109,17 @@ function DashboardContent() {
     } finally {
       setEventSettingsSaving(false);
     }
-  }, [detailedEventSummary, eventSettingsSaving, token]);
+  }, [detailedEventSummary, eventSettingsSaving]);
 
 
   // In-flight request deduplication and stable events ref
   const inFlightOverviewRef = useRef<boolean>(false);
-  const inFlightDetailsRef = useRef<string | null>(null);
+  const inFlightDetailsRef = useRef<{ name: string; controller: AbortController } | null>(null);
   const eventsRef = useRef(events);
   eventsRef.current = events;
 
-  // 1. Mount Effect: Initialize Auth
-  useEffect(() => {
-    initialize();
-  }, [initialize]);
-
   // 2. Fetch Events List (Fresh call on mount / reload)
-  const fetchEventsList = useCallback(async (explicitToken?: string) => {
-    const activeToken = explicitToken || token || getStoredToken();
-    if (!activeToken) return;
-
+  const fetchEventsList = useCallback(async () => {
     if (inFlightOverviewRef.current) return;
     inFlightOverviewRef.current = true;
 
@@ -139,11 +127,8 @@ function DashboardContent() {
     setError(null);
 
     try {
-      const res = await fetch('/api/dashboard', {
+      const res = await apiFetch('/api/dashboard', {
         cache: 'no-store',
-        headers: {
-          Authorization: `Bearer ${activeToken}`,
-        },
       });
 
       if (res.status === 401) {
@@ -165,199 +150,93 @@ function DashboardContent() {
       setLoading(false);
       inFlightOverviewRef.current = false;
     }
-  }, [token, logout, router]);
+  }, [logout, router]);
 
-  // Trigger fetch as soon as active token exists, UNLESS we are viewing a specific event directly from URL query
   useEffect(() => {
-    const activeToken = token || getStoredToken();
-    if (activeToken) {
-      if (!eventParam && events.length === 0) {
-        fetchEventsList(activeToken);
-      }
-    } else if (!authLoading && !isAuthenticated) {
-      router.push('/login');
-    }
-  }, [token, authLoading, isAuthenticated, eventParam, events.length, fetchEventsList, router]);
+    if (!selectedEventKey) void fetchEventsList();
+  }, [selectedEventKey, fetchEventsList]);
 
   // 3. Fetch Detailed Event Participants (On-Demand)
-  const fetchEventDetails = useCallback(
-    async (eventName: string) => {
-      const activeToken = token || getStoredToken();
-      if (!activeToken) return;
+  const fetchEventDetails = useCallback(async (key: string, byId = true) => {
+    if (inFlightDetailsRef.current?.name === key) return;
+    inFlightDetailsRef.current?.controller.abort();
+    const controller = new AbortController();
+    inFlightDetailsRef.current = { name: key, controller };
 
-      // Deduplicate if already fetching this exact event
-      if (inFlightDetailsRef.current === eventName) return;
-      inFlightDetailsRef.current = eventName;
+    setLoadingDetails(true);
+    setDetailsError(null);
+    // Keep the detail view mounted while refreshing after recipient issuance.
+    const localSummary = eventsRef.current.find((event) => byId ? event.eventId === key : event.eventName === key);
+    setDetailedEventSummary((previous) => previous && (byId ? previous.eventId === key : previous.eventName === key)
+      ? previous : localSummary ?? null);
 
-      setLoadingDetails(true);
-      setDetailsError(null);
-      setParticipantSearchQuery('');
-      setParticipantStatusFilter('all');
-      mainRef.current?.scrollTo({ top: 0 });
-
-      // Pre-populate summary from local list if available (via ref to keep callback identity stable)
-      const localSummary = eventsRef.current.find((e) => e.eventName === eventName);
-      if (localSummary) {
-        setDetailedEventSummary(localSummary);
+    try {
+      const query = new URLSearchParams({ [byId ? 'eventId' : 'event']: key, includeRowData: 'true' });
+      const response = await apiFetch(`/api/dashboard?${query}`, { signal: controller.signal, cache: 'no-store' });
+      if (controller.signal.aborted) return;
+      if (response.status === 401) {
+        logout();
+        router.push('/login');
+        return;
       }
-
-      try {
-        const res = await fetch(`/api/dashboard?event=${encodeURIComponent(eventName)}&includeRowData=true`, {
-          cache: 'no-store',
-          headers: {
-            Authorization: `Bearer ${activeToken}`,
-          },
-        });
-
-        if (res.status === 401) {
-          logout();
-          router.push('/login');
-          return;
-        }
-
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          throw new Error(data.detail || 'Failed to load event details');
-        }
-
-        const data = await res.json();
-        setDetailedEventSummary(data.event);
-        setParticipants(data.participants || []);
-      } catch (err) {
-        setDetailsError(err instanceof Error ? err.message : 'Failed to load event details');
-      } finally {
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || 'Failed to load event details');
+      if (controller.signal.aborted) return;
+      setDetailedEventSummary(data.event);
+      setParticipants(data.participants || []);
+      if (!byId && data.event.eventId) router.replace(`/dashboard?eventId=${data.event.eventId}`, { scroll: false });
+    } catch (error) {
+      if (!controller.signal.aborted) setDetailsError(error instanceof Error ? error.message : 'Failed to load event details');
+    } finally {
+      if (inFlightDetailsRef.current?.controller === controller) {
         setLoadingDetails(false);
         inFlightDetailsRef.current = null;
       }
-    },
-    [token, logout, router]
-  );
+    }
+  }, [logout, router]);
 
-  // Auto-fetch event details whenever eventParam URL changes; reset when navigating back
   useEffect(() => {
-    if (!eventParam) {
+    setParticipantSearchQuery('');
+    setParticipantStatusFilter('all');
+    setCertificateNotice(null);
+    if (!selectedEventKey) {
+      inFlightDetailsRef.current?.controller.abort();
+      inFlightDetailsRef.current = null;
+      setLoadingDetails(false);
       setDetailedEventSummary(null);
       setParticipants([]);
       setDetailsError(null);
       return;
     }
-    const activeToken = token || getStoredToken();
-    if (!activeToken) return;
+    void fetchEventDetails(selectedEventKey, Boolean(eventIdParam));
+    return () => {
+      inFlightDetailsRef.current?.controller.abort();
+      inFlightDetailsRef.current = null;
+    };
+  }, [selectedEventKey, eventIdParam, fetchEventDetails]);
 
-    fetchEventDetails(eventParam);
-  }, [eventParam, token, fetchEventDetails]);
-
-  const handleAddRecipient = useCallback(async () => {
-    const evName = detailedEventSummary?.eventName ?? selectedEventName;
-    if (!evName || !newName.trim() || addingRecipient) return;
-    if (newEmail.trim() && !newEmail.includes('@')) {
-      setRecipientStatus({ ok: false, message: 'Enter a valid email address.' });
-      return;
-    }
-    setAddingRecipient(true);
-    setRecipientStatus(null);
+  async function handleCertificateAction(cert: DashboardParticipant, action: 'download' | 'email') {
+    if (!detailedEventSummary?.eventId || !cert.renderFields || workingCertificate) return;
+    if (action === 'email' && (!cert.recipientEmail || !window.confirm(`Send the certificate to ${cert.recipientEmail} from your connected Gmail account?`))) return;
+    setCertificateNotice(null);
+    setWorkingCertificate(cert.id);
     try {
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        'X-Certify-Request': '1',
-      };
-      const storedToken = useAuthStore.getState().token || getStoredToken();
-      if (storedToken) headers.Authorization = `Bearer ${storedToken}`;
-
-      const rowData: Record<string, string> = { Name: newName.trim() };
-      if (newEmail.trim()) rowData.Email = newEmail.trim();
-
-      const res = await fetch('/api/certificates/register', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers,
-        body: JSON.stringify({
-          eventName: evName,
-          certificates: [
-            {
-              recipientName: newName.trim(),
-              recipientEmail: newEmail.trim() || undefined,
-              rowData,
-            },
-          ],
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !Array.isArray(data.ids)) {
-        throw new Error(data.detail || 'Failed to register the recipient');
+      const { design, event } = await fetchEventDesign(detailedEventSummary.eventId);
+      if (!design || !event.designLocked) throw new Error('The original design is unavailable.');
+      const recipient = { id: cert.id, name: cert.recipientName };
+      if (action === 'email') {
+        const result = await emailIssuedCertificate(design, cert.renderFields, { ...recipient, email: cert.recipientEmail! }, event.name);
+        setCertificateNotice({ text: result.message, error: result.status !== 'success' });
+      } else {
+        const pdf = await renderIssuedPdf(design, cert.renderFields, recipient);
+        downloadBlob(pdf.pdfBlob, `${pdf.filename}.pdf`);
       }
-      const certId: string = data.ids[0];
-      let message = 'Recipient added.';
-
-      if (newSendEmail && newEmail.trim()) {
-        // Render the certificate client-side from the event's saved template
-        // and deliver through the account's connected Gmail (server-held).
-        const tRes = await fetch(
-          `/api/dashboard?event=${encodeURIComponent(evName)}&includeTemplate=true`,
-          { credentials: 'same-origin', headers: storedToken ? { Authorization: `Bearer ${storedToken}` } : {} }
-        );
-        const tData = await tRes.json().catch(() => ({}));
-        const tpl = tData?.template;
-        if (!tpl?.imageData) throw new Error('No saved template found for this event — open it in Studio once and save.');
-
-        const img = document.createElement('img');
-        await new Promise<void>((resolve, reject) => {
-          img.onload = () => resolve();
-          img.onerror = () => reject(new Error('Template failed to load'));
-          img.src = tpl.imageData;
-        });
-        const layout = tpl.layoutConfig ?? {};
-        const boxes = Array.isArray(layout.boxes) ? layout.boxes : [];
-        const fonts = new Set(
-          [...boxes.map((b: { fontFamily?: string }) => b.fontFamily), layout.defaultFont].filter(
-            (x: unknown): x is string => Boolean(x)
-          )
-        );
-        if (fonts.size > 0) await ensureFontsLoaded(fonts);
-
-        const { generateCertificate } = await import('../../lib/certificate-engine');
-        const cert = await generateCertificate({
-          templateImage: img,
-          boxes,
-          row: rowData,
-          filename: sanitizeFilename(newName.trim()),
-          includePdf: true,
-          qrZones: Array.isArray(layout.qrZones) ? layout.qrZones : undefined,
-          images: Array.isArray(layout.images) ? layout.images : undefined,
-          verificationUrl: buildVerifyUrlFor(certId),
-        });
-        if (!cert.pdfBlob) throw new Error('Certificate rendering failed');
-
-        const result = await sendEmailV2({
-          recipientEmail: newEmail.trim(),
-          emailSubject: `Your certificate from ${evName}`,
-          emailBodyPlain:
-            `Hi ${newName.trim()},\n\nCongratulations! Your certificate is attached.\n\n` +
-            `You can verify it any time here: ${buildVerifyUrlFor(certId)}\n\nBest regards`,
-          emailBodyHtml: '',
-          filename: sanitizeFilename(newName.trim()),
-          pdfBlob: cert.pdfBlob,
-        });
-        message =
-          result.status === 'success'
-            ? 'Recipient added and certificate emailed.'
-            : 'Recipient added, but the email needs a reconnect — connect Google in Studio and retry.';
-      }
-
-      setRecipientStatus({ ok: true, message });
-      setNewName('');
-      setNewEmail('');
-      // Refresh the participant list so the new row appears immediately.
-      await fetchEventDetails(evName);
-    } catch (err) {
-      setRecipientStatus({
-        ok: false,
-        message: err instanceof Error ? err.message : 'Failed to add recipient',
-      });
+    } catch (error) {
+      setCertificateNotice({ text: error instanceof Error ? error.message : 'The certificate action could not be completed.', error: true });
     } finally {
-      setAddingRecipient(false);
+      setWorkingCertificate(null);
     }
-  }, [detailedEventSummary, selectedEventName, newName, newEmail, newSendEmail, addingRecipient, fetchEventDetails]);
+  }
 
   // Return from detailed view to events list
   const handleBackToEventsList = () => {
@@ -373,8 +252,6 @@ function DashboardContent() {
 
   // Revoke or Reinstate Certificate
   const handleToggleRevoke = async (cert: DashboardParticipant) => {
-    const activeToken = token || getStoredToken();
-    if (!activeToken) return;
 
     const isCurrentlyRevoked = cert.status === 'revoked';
     const actionName = isCurrentlyRevoked ? 'reinstate' : 'revoke';
@@ -389,11 +266,10 @@ function DashboardContent() {
     setUpdatingCertId(cert.id);
 
     try {
-      const res = await fetch(`/api/certificates/${cert.id}/revoke`, {
+      const res = await apiFetch(`/api/certificates/${cert.id}/revoke`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${activeToken}`,
         },
         body: JSON.stringify({ reinstate: isCurrentlyRevoked }),
       });
@@ -424,7 +300,7 @@ function DashboardContent() {
       // Optimistic update in overall events summary
       setEvents((prev) =>
         prev.map((e) =>
-          e.eventName === selectedEventName
+          e.eventId === detailedEventSummary?.eventId
             ? {
                 ...e,
                 activeCount: isCurrentlyRevoked ? e.activeCount + 1 : e.activeCount - 1,
@@ -437,50 +313,6 @@ function DashboardContent() {
       alert(err instanceof Error ? err.message : `Failed to ${actionName} certificate`);
     } finally {
       setUpdatingCertId(null);
-    }
-  };
-
-  // Delete Event and All Associated Certificates & Templates
-  const handleDeleteEvent = async (eventName: string) => {
-    const activeToken = token || getStoredToken();
-    if (!activeToken) return;
-
-    const eventSummary = events.find((e) => e.eventName === eventName) || detailedEventSummary;
-    const certCount = eventSummary ? eventSummary.certificateCount : participants.length;
-
-    const confirmed = window.confirm(
-      `Are you sure you want to permanently delete event "${eventName}" and all ${certCount} connected certificate record(s)?\n\nThis action cannot be undone.`
-    );
-    if (!confirmed) return;
-
-    setDeletingEventName(eventName);
-
-    try {
-      const res = await fetch(`/api/dashboard?event=${encodeURIComponent(eventName)}`, {
-        method: 'DELETE',
-        headers: {
-          Authorization: `Bearer ${activeToken}`,
-        },
-      });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.detail || 'Failed to delete event');
-      }
-
-      // If viewing this event in detailed view, return to events list
-      if (selectedEventName === eventName) {
-        setDetailedEventSummary(null);
-        setParticipants([]);
-        router.push('/dashboard', { scroll: false });
-      }
-
-      // Remove from local events list
-      setEvents((prev) => prev.filter((e) => e.eventName !== eventName));
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Failed to delete event');
-    } finally {
-      setDeletingEventName(null);
     }
   };
 
@@ -526,25 +358,10 @@ function DashboardContent() {
     router.push('/editor');
   };
 
-  // Open Event Template in Studio to Add New Records
-  const [loadingStudio, setLoadingStudio] = useState(false);
-  const handleOpenEventInStudio = async (targetEventName?: string | React.MouseEvent) => {
-    const rawName = typeof targetEventName === 'string' ? targetEventName : null;
-    const evName = (rawName || detailedEventSummary?.eventName || selectedEventName || '').trim();
-    const activeToken = token || getStoredToken();
-    if (!evName || !activeToken || loadingStudio) return;
-    setLoadingStudio(true);
-    try {
-      if (!isWorkspaceLoadedFor(evName)) {
-        await loadWorkspace({ eventName: evName, token: activeToken });
-      }
-      router.push(`/editor?event=${encodeURIComponent(evName)}&from=event`);
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Failed to open event in Studio');
-    } finally {
-      setLoadingStudio(false);
-    }
-  };
+  function handleCopyEvent() {
+    const id = detailedEventSummary?.eventId;
+    if (id) router.push(`/editor?copyEvent=${id}`);
+  }
 
   // Filtered list of registered events
   const filteredEvents = useMemo(() => {
@@ -553,7 +370,7 @@ function DashboardContent() {
     return events.filter(
       (e) =>
         e.eventName.toLowerCase().includes(q) ||
-        (e.templateName && e.templateName.toLowerCase().includes(q))
+        (e.label && e.label.toLowerCase().includes(q)) || (e.templateName && e.templateName.toLowerCase().includes(q))
     );
   }, [events, eventSearchQuery]);
 
@@ -601,53 +418,33 @@ function DashboardContent() {
     });
   }, [participants, participantSearchQuery, participantStatusFilter]);
 
-  // Redirect if completely unauthenticated with no stored token
-  if (!authLoading && !isAuthenticated && !getStoredToken()) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-[#FBFAF5]" style={{ backgroundColor: '#FBFAF5' }}>
-        <div className="flex flex-col items-center gap-3 text-center">
-          <div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-slate-600 font-quicksand text-xs font-medium">Redirecting to login...</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="animate-fade-in h-screen h-dvh bg-[#FBFAF5] text-slate-900 flex flex-col font-sans overflow-hidden" style={{ backgroundColor: '#FBFAF5' }}>
-      {/* ------------------------------------------------------------- */}
-      {/* Clean Light Navbar Header (Matching Canvas Workspace)         */}
-      {/* ------------------------------------------------------------- */}
-      <header className="shrink-0 z-30 bg-[#FBF4E2] border-b border-[#E5DAC3] px-4 sm:px-6 py-2 sm:py-2.5 flex items-center justify-between shadow-2xs" style={{ backgroundColor: '#FBF4E2' }}>
-        <div className="flex items-center gap-2.5 sm:gap-3">
-          <Image
-            src="/certify-logo.png"
-            alt="Certify Logo"
-            width={48}
-            height={48}
-            className="w-10 sm:w-11 h-10 sm:h-11 object-contain shrink-0"
-            priority
-          />
-          <div className="flex flex-col justify-center">
-            <span className="font-jura font-bold text-base sm:text-lg text-slate-900 tracking-tight leading-tight font-[700]">Certify</span>
-            <p className="font-quicksand font-semibold text-[11px] sm:text-xs text-stone-600 hidden sm:block leading-tight mt-0.5 font-[600]">Certificate Verification &amp; Registry</p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
+    <div className="animate-fade-in h-screen h-dvh bg-app-background text-slate-900 flex flex-col font-sans overflow-hidden">
+      <CertifyHeader>
+          {canModerate && (
+            <Link
+              href="/admin"
+              aria-label="Manage access"
+              title="Manage access"
+              className="inline-flex min-h-10 items-center gap-2 px-2 text-sm font-semibold text-slate-800 hover:text-primary-700"
+            >
+              <KeyRound className="h-4 w-4" aria-hidden="true" />
+              <span className="hidden sm:inline">Manage access</span>
+            </Link>
+          )}
           {/* Quick link to Canvas Studio */}
           <button
+            type="button"
             onClick={handleOpenNewStudio}
-            className="flex items-center gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 bg-white hover:bg-slate-100 text-slate-700 hover:text-slate-900 rounded-lg text-xs sm:text-sm font-saira font-semibold uppercase tracking-wider border border-[#E5DAC3] transition-all cursor-pointer shadow-2xs hover:shadow-xs active:scale-[0.98]"
+            className="inline-flex min-h-10 items-center gap-2 rounded-md border border-app-border bg-white px-2.5 text-sm font-semibold text-slate-800 hover:bg-app-background hover:text-primary-700 sm:px-3.5"
+            aria-label="Canvas Studio"
             title="Open Certificate Canvas Studio"
           >
-            <Palette className="w-3.5 h-3.5 text-slate-600" />
+            <Palette className="size-4" aria-hidden="true" />
             <span className="hidden sm:inline">Canvas Studio</span>
           </button>
 
-          <AccountMenu />
-        </div>
-      </header>
+      </CertifyHeader>
 
       {/* ------------------------------------------------------------- */}
       {/* Main Scrollable Container (Scrollbar strictly below header)    */}
@@ -657,8 +454,8 @@ function DashboardContent() {
         {/* ========================================================= */}
         {/* VIEW A: Single Event Detailed View (On-Demand)            */}
         {/* ========================================================= */}
-        {selectedEventName ? (
-          <div key={`event-${selectedEventName}`} className="animate-fade-in space-y-4">
+        {selectedEventKey ? (
+          <div key={`event-${selectedEventKey}`} className="animate-fade-in space-y-4">
             {/* Detailed View Header & Back Button Directly On Page */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 sm:pb-3.5 border-b border-[#E5DAC3] min-h-[58px]">
               <div className="flex items-center gap-2 min-w-0">
@@ -672,16 +469,16 @@ function DashboardContent() {
                   <ChevronLeft className="w-5 h-5 sm:w-6 sm:h-6 stroke-[2.5]" />
                 </button>
                 <div className="min-w-0">
-                  <h1 className="text-xl sm:text-2xl font-jura font-bold text-slate-900 tracking-tight leading-tight truncate font-[700]">
-                    {selectedEventName}
+                  <h1 className="page-title text-slate-900 truncate">
+                    {selectedEventName || 'Event'}{detailedEventSummary?.label ? ` · ${detailedEventSummary.label}` : ''}
                   </h1>
                   {detailedEventSummary && (
-                    <div className="flex items-center gap-2 mt-0.5 text-xs font-quicksand font-medium text-slate-600 flex-wrap">
-                      <span className="font-saira font-bold text-slate-900 tabular-nums">
+                    <div className="flex items-center gap-2 mt-0.5 text-xs font-medium text-slate-600 flex-wrap">
+                      <span className="font-bold text-slate-900 tabular-nums">
                         {detailedEventSummary.certificateCount} {detailedEventSummary.certificateCount === 1 ? 'record' : 'records'}
                       </span>
                       <span className="text-stone-300">·</span>
-                      <span className="text-stone-600 font-quicksand font-medium">
+                      <span className="text-stone-600 font-medium">
                         Issued {new Date(detailedEventSummary.lastIssuedAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
                       </span>
                     </div>
@@ -694,7 +491,7 @@ function DashboardContent() {
                   type="button"
                   onClick={handleExportEventCsv}
                   disabled={participants.length === 0}
-                  className="h-9 inline-flex items-center gap-1.5 px-3 bg-white hover:bg-slate-100 text-slate-800 hover:text-slate-900 border border-[#E5DAC3] rounded-lg text-xs sm:text-sm font-saira font-semibold uppercase tracking-wider transition-all cursor-pointer shadow-2xs hover:shadow-xs active:scale-[0.98] disabled:opacity-50"
+                  className="h-9 inline-flex items-center gap-1.5 px-3 bg-white hover:bg-slate-100 text-slate-800 hover:text-slate-900 border border-[#E5DAC3] rounded-lg text-sm font-semibold transition-all cursor-pointer shadow-2xs hover:shadow-xs active:scale-[0.98] disabled:opacity-50"
                 >
                   <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                   <span>Export CSV</span>
@@ -702,28 +499,12 @@ function DashboardContent() {
 
                 <button
                   type="button"
-                  onClick={handleOpenEventInStudio}
-                  disabled={loadingStudio}
-                  className="h-9 inline-flex items-center gap-1.5 px-3.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-xs sm:text-sm font-saira font-semibold uppercase tracking-wider transition-all cursor-pointer shadow-2xs hover:shadow-xs active:scale-[0.98] disabled:opacity-50"
-                  title="Open this event's template & layout in Canvas Studio to issue new certificates"
+                  onClick={handleCopyEvent}
+                  disabled={!detailedEventSummary?.eventId}
+                  className="h-9 inline-flex items-center gap-1.5 px-3.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-xs sm:text-sm font-semibold transition-all cursor-pointer disabled:opacity-50"
                 >
-                  {loadingStudio ? (
-                    <span className="w-3.5 h-3.5 shrink-0 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  ) : (
-                    <ExternalLink className="w-3.5 h-3.5 shrink-0" />
-                  )}
-                  <span>{loadingStudio ? 'Opening...' : 'Open in Studio'}</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => selectedEventName && handleDeleteEvent(selectedEventName)}
-                  disabled={deletingEventName === selectedEventName}
-                  className="h-9 inline-flex items-center gap-1.5 px-3 bg-white hover:bg-red-50 text-red-600 hover:text-red-700 border border-red-200 hover:border-red-300 rounded-lg text-xs sm:text-sm font-saira font-semibold uppercase tracking-wider transition-all cursor-pointer shadow-2xs hover:shadow-xs active:scale-[0.98] disabled:opacity-50"
-                  title={`Permanently delete event "${selectedEventName}" and all its certificates`}
-                >
-                  <Trash2 className="w-3.5 h-3.5 shrink-0" />
-                  <span>{deletingEventName === selectedEventName ? 'Deleting...' : 'Delete Event'}</span>
+                  <Copy className="h-4 w-4" />
+                  Make a copy
                 </button>
               </div>
             </div>
@@ -750,10 +531,10 @@ function DashboardContent() {
                     />
                   </button>
                   <div className="min-w-0">
-                    <p className="font-quicksand font-semibold text-slate-700">
+                    <p className="font-semibold text-slate-700">
                       Track verification views
                     </p>
-                    <p className="text-[11px] text-stone-500 font-quicksand">
+                    <p className="text-[11px] text-stone-500">
                       {detailedEventSummary.trackScans
                         ? detailedEventSummary.scanSummary && detailedEventSummary.scanSummary.totalScans > 0
                           ? `${detailedEventSummary.scanSummary.totalScans.toLocaleString()} view${detailedEventSummary.scanSummary.totalScans === 1 ? '' : 's'} · last ${detailedEventSummary.scanSummary.lastScannedAt ? new Date(detailedEventSummary.scanSummary.lastScannedAt).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '—'}`
@@ -767,7 +548,7 @@ function DashboardContent() {
                 <div className="flex items-center gap-2.5 sm:ml-auto">
                   <CalendarDays className="w-4 h-4 text-stone-400 shrink-0" />
                   <div>
-                    <label className="block font-quicksand font-semibold text-slate-700">
+                    <label className="block font-semibold text-slate-700">
                       Valid through <span className="text-stone-400 font-medium">(optional)</span>
                     </label>
                     <div className="flex items-center gap-2">
@@ -778,7 +559,7 @@ function DashboardContent() {
                           validThrough: e.target.value ? new Date(e.target.value + 'T23:59:59').toISOString() : null,
                         })}
                         disabled={eventSettingsSaving}
-                        className="mt-0.5 px-2 py-1 rounded-lg border border-[#E5DAC3] bg-white text-xs font-quicksand text-slate-800 focus:outline-none focus:ring-0 focus:border-slate-400 cursor-pointer disabled:opacity-50"
+                        className="mt-0.5 px-2 py-1 rounded-lg border border-[#E5DAC3] bg-white text-xs text-slate-800 focus:outline-none focus:ring-0 focus:border-slate-400 cursor-pointer disabled:opacity-50"
                       />
                       {detailedEventSummary.validThrough && (
                         <button
@@ -795,57 +576,12 @@ function DashboardContent() {
               </div>
             )}
 
-            {/* Quick add recipient (+ optional instant email) */}
-            <div className="flex flex-col sm:flex-row sm:items-center gap-2 py-1">
-              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider shrink-0">
-                Add recipient
-              </span>
-              <input
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                placeholder="Full name"
-                className="flex-1 min-w-0 px-3 py-1.5 text-xs font-quicksand bg-white border border-[#E5DAC3] rounded-lg focus:outline-none focus:border-slate-400"
-                aria-label="New recipient name"
-              />
-              <input
-                value={newEmail}
-                onChange={(e) => setNewEmail(e.target.value)}
-                placeholder="Email (for certificate delivery)"
-                className="flex-1 min-w-0 px-3 py-1.5 text-xs font-quicksand bg-white border border-[#E5DAC3] rounded-lg focus:outline-none focus:border-slate-400"
-                aria-label="New recipient email"
-                type="email"
-              />
-              <label className="flex items-center gap-1.5 text-xs font-quicksand font-medium text-slate-600 cursor-pointer select-none shrink-0">
-                <input
-                  type="checkbox"
-                  checked={newSendEmail}
-                  onChange={(e) => setNewSendEmail(e.target.checked)}
-                  className="rounded border-slate-300 text-primary-600 focus:ring-0 cursor-pointer"
-                />
-                Email now
-              </label>
-              <button
-                type="button"
-                onClick={() => void handleAddRecipient()}
-                disabled={addingRecipient || !newName.trim()}
-                className="h-8 px-3.5 inline-flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-saira font-semibold uppercase tracking-wider transition-all cursor-pointer disabled:opacity-50 shrink-0"
-              >
-                {addingRecipient ? (
-                  <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  <UserPlus className="w-3.5 h-3.5" />
-                )}
-                Add
-              </button>
-            </div>
-            {recipientStatus && (
-              <p
-                className={`text-xs font-quicksand font-medium ${recipientStatus.ok ? 'text-emerald-700' : 'text-red-600'}`}
-                role="status"
-              >
-                {recipientStatus.message}
-              </p>
+            {detailedEventSummary?.eventId && (
+              <EventRecipients key={detailedEventSummary.eventId} eventId={detailedEventSummary.eventId}
+                eventName={detailedEventSummary.eventName} designLocked={Boolean(detailedEventSummary.designLocked)}
+                participants={participants} onChange={() => fetchEventDetails(detailedEventSummary.eventId!)} />
             )}
+            {certificateNotice && <p role="status" className={`text-sm ${certificateNotice.error ? 'text-red-700' : 'text-slate-700'}`}>{certificateNotice.text}</p>}
 
             {detailsError && (
               <div className="p-3 rounded-lg bg-red-50 text-red-800 border border-red-200 text-xs flex items-center gap-2">
@@ -863,14 +599,15 @@ function DashboardContent() {
                   value={participantSearchQuery}
                   onChange={(e) => setParticipantSearchQuery(e.target.value)}
                   placeholder="Filter by name, email, or cert ID..."
-                  className="w-full pl-8.5 pr-3 py-1.5 text-xs sm:text-sm font-quicksand font-medium bg-white border border-[#E5DAC3] rounded-lg text-slate-900 placeholder:text-stone-400 focus:outline-none focus:ring-0 focus:border-slate-400 transition-all shadow-2xs"
+                  aria-label="Filter participants"
+                  className="form-control-text min-h-11 w-full rounded-md border border-stone-400 bg-white pr-3 pl-8.5 text-slate-900 placeholder:text-stone-600 focus-visible:outline-2 focus-visible:outline-primary-600 sm:min-h-9"
                 />
               </div>
 
               <div className="flex items-center gap-1 text-xs w-full sm:w-auto">
                 <button
                   onClick={() => setParticipantStatusFilter('all')}
-                  className={`px-2.5 py-1 rounded-md font-saira font-bold uppercase tracking-wider text-[11px] sm:text-xs transition-colors cursor-pointer ${
+                  className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
                     participantStatusFilter === 'all'
                       ? 'bg-slate-900 text-white'
                       : 'text-stone-600 hover:text-stone-900 hover:bg-slate-100'
@@ -880,7 +617,7 @@ function DashboardContent() {
                 </button>
                 <button
                   onClick={() => setParticipantStatusFilter('issued')}
-                  className={`px-2.5 py-1 rounded-md font-saira font-bold uppercase tracking-wider text-[11px] sm:text-xs transition-colors cursor-pointer ${
+                  className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
                     participantStatusFilter === 'issued'
                       ? 'bg-emerald-700 text-white'
                       : 'text-stone-600 hover:text-emerald-800 hover:bg-slate-100'
@@ -890,7 +627,7 @@ function DashboardContent() {
                 </button>
                 <button
                   onClick={() => setParticipantStatusFilter('revoked')}
-                  className={`px-2.5 py-1 rounded-md font-saira font-bold uppercase tracking-wider text-[11px] sm:text-xs transition-colors cursor-pointer ${
+                  className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
                     participantStatusFilter === 'revoked'
                       ? 'bg-red-700 text-white'
                       : 'text-stone-600 hover:text-red-800 hover:bg-slate-100'
@@ -922,7 +659,7 @@ function DashboardContent() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs border-collapse">
                     <thead>
-                      <tr className="bg-[#FBF4E2] border-b-2 border-[#E5DAC3] text-[11px] sm:text-xs font-saira font-bold text-[#554633] uppercase tracking-wider">
+                      <tr className="bg-[#FBF4E2] border-b-2 border-[#E5DAC3] text-xs font-semibold text-[#554633]">
                         <th className="py-2.5 sm:py-3 px-3 w-10 text-right">#</th>
                         <th className="py-2.5 sm:py-3 px-3 text-left">Participant Name</th>
                         <th className="py-2.5 sm:py-3 px-3 text-right w-44">Email</th>
@@ -943,19 +680,19 @@ function DashboardContent() {
                             key={cert.id}
                             className="hover:bg-slate-100/80 transition-colors"
                           >
-                            <td className="py-2 px-3 text-right text-stone-400 font-saira text-xs tabular-nums font-medium">
+                            <td className="py-2 px-3 text-right text-stone-400 text-xs tabular-nums font-medium">
                               {index + 1}
                             </td>
-                            <td className="py-2 px-3 text-left text-sm font-jura font-bold text-slate-900 font-[700]">
+                            <td className="py-2 px-3 text-left text-sm font-semibold text-slate-900">
                               {cert.recipientName}
                             </td>
-                            <td className="py-2 px-3 text-right text-stone-600 font-quicksand font-medium text-xs">
+                            <td className="py-2 px-3 text-right text-stone-600 font-medium text-xs">
                               {cert.recipientEmail || '—'}
                             </td>
-                            <td className="py-2 px-3 text-right font-tomorrow text-xs">
+                            <td className="py-2 px-3 text-right text-xs">
                               {isStatic ? (
                                 <span
-                                  className="text-stone-500 font-tomorrow text-xs"
+                                  className="text-stone-500 text-xs"
                                   title={`Static Certificate ID: ${cert.id}`}
                                 >
                                   {cert.id.slice(0, 8)}...
@@ -965,7 +702,7 @@ function DashboardContent() {
                                   href={`/verify/${cert.id}`}
                                   target="_blank"
                                   rel="noreferrer"
-                                  className="inline-flex items-center gap-1 text-primary-600 hover:text-primary-800 hover:underline font-tomorrow font-medium"
+                                  className="inline-flex items-center gap-1 text-primary-600 hover:text-primary-800 hover:underline font-medium"
                                   title={`Open verification page (${cert.id})`}
                                 >
                                   <span>{cert.id.slice(0, 8)}...</span>
@@ -973,7 +710,7 @@ function DashboardContent() {
                                 </a>
                               )}
                             </td>
-                            <td className="py-2 px-3 text-right text-stone-700 font-saira font-medium tabular-nums whitespace-nowrap text-xs">
+                            <td className="py-2 px-3 text-right text-stone-700 font-medium tabular-nums whitespace-nowrap text-xs">
                               {new Date(cert.issuedAt).toLocaleDateString([], {
                                 month: 'short',
                                 day: 'numeric',
@@ -982,20 +719,34 @@ function DashboardContent() {
                             </td>
                             <td className="py-2 px-3 text-right whitespace-nowrap">
                               {isRevoked ? (
-                                <span className="text-[11px] font-saira font-bold uppercase tracking-wider text-red-700">
+                                <span className="text-xs font-medium text-red-700">
                                   Revoked
                                 </span>
                               ) : isStatic ? (
-                                <span className="text-[11px] font-saira font-bold uppercase tracking-wider text-stone-600">
+                                <span className="text-xs font-medium text-stone-600">
                                   Static
                                 </span>
                               ) : (
-                                <span className="text-[11px] font-saira font-bold uppercase tracking-wider text-emerald-700">
+                                <span className="text-xs font-medium text-emerald-700">
                                   Active
                                 </span>
                               )}
                             </td>
                             <td className="py-2 px-3 text-right whitespace-nowrap">
+                              {cert.renderFields && !isRevoked && (
+                                <button type="button" onClick={() => void handleCertificateAction(cert, 'download')}
+                                  disabled={Boolean(workingCertificate)} aria-label={`Download certificate for ${cert.recipientName}`}
+                                  className="mr-2 text-slate-600 hover:text-slate-900 disabled:opacity-50">
+                                  <Download className="inline h-4 w-4" />
+                                </button>
+                              )}
+                              {cert.renderFields && !isRevoked && cert.recipientEmail && (
+                                <button type="button" onClick={() => void handleCertificateAction(cert, 'email')}
+                                  disabled={Boolean(workingCertificate)} aria-label={`Email certificate to ${cert.recipientName}`}
+                                  className="mr-2 text-slate-600 hover:text-slate-900 disabled:opacity-50">
+                                  <Mail className="inline h-4 w-4" />
+                                </button>
+                              )}
                               {isStatic ? (
                                 <span
                                   className="text-stone-400 text-xs font-medium"
@@ -1007,7 +758,7 @@ function DashboardContent() {
                                 <button
                                   onClick={() => handleToggleRevoke(cert)}
                                   disabled={isUpdating}
-                                  className={`inline-flex items-center gap-1 text-xs font-saira font-bold uppercase tracking-wider transition-colors cursor-pointer disabled:opacity-50 ${
+                                  className={`inline-flex items-center gap-1 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50 ${
                                     isRevoked
                                       ? 'text-emerald-700 hover:text-emerald-800 hover:underline'
                                       : 'text-red-600 hover:text-red-700 hover:underline'
@@ -1036,11 +787,11 @@ function DashboardContent() {
             {/* Top Section Directly On Page */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 sm:pb-3.5 border-b border-[#E5DAC3] min-h-[58px]">
               <div>
-                <h1 className="text-xl sm:text-2xl font-jura font-bold text-slate-900 tracking-tight leading-tight font-[700]">
+                <h1 className="page-title text-slate-900">
                   Registered Events &amp; Certificates
                 </h1>
-                <p className="text-xs sm:text-sm font-quicksand font-medium text-stone-500 mt-0.5">
-                  Browse all issued credential batches. Click on any event to inspect participant records and manage revocations.
+                <p className="mt-1 text-sm leading-relaxed text-stone-700">
+                  Open an event to view recipients, download certificates, or manage revocations.
                 </p>
               </div>
 
@@ -1048,7 +799,7 @@ function DashboardContent() {
                 <button
                   type="button"
                   onClick={handleOpenNewStudio}
-                  className="h-9 inline-flex items-center gap-2 px-3.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-xs sm:text-sm font-saira font-bold uppercase tracking-wider transition-all shadow-2xs hover:shadow-xs cursor-pointer active:scale-[0.98]"
+                  className="h-9 inline-flex items-center gap-2 px-3.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm font-semibold transition-all shadow-2xs hover:shadow-xs cursor-pointer active:scale-[0.98]"
                 >
                   <Plus className="w-4 h-4 stroke-[2.25] shrink-0" />
                   <span>Add New Certificates</span>
@@ -1072,12 +823,13 @@ function DashboardContent() {
                   value={eventSearchQuery}
                   onChange={(e) => setEventSearchQuery(e.target.value)}
                   placeholder="Filter registered events..."
-                  className="w-full pl-8.5 pr-3 py-1.5 text-xs sm:text-sm font-quicksand font-medium bg-white border border-[#E5DAC3] rounded-lg text-slate-900 placeholder:text-stone-400 focus:outline-none focus:ring-0 focus:border-slate-400 transition-all shadow-2xs"
+                  aria-label="Filter registered events"
+                  className="form-control-text min-h-11 w-full rounded-md border border-stone-400 bg-white pr-3 pl-8.5 text-slate-900 placeholder:text-stone-600 focus-visible:outline-2 focus-visible:outline-primary-600 sm:min-h-9"
                 />
               </div>
 
               <div className="flex items-center">
-                <span className="text-xs font-quicksand font-semibold text-stone-500">
+                <span className="text-xs font-semibold text-stone-500">
                   {filteredEvents.length} {filteredEvents.length === 1 ? 'batch' : 'batches'}
                 </span>
               </div>
@@ -1086,7 +838,7 @@ function DashboardContent() {
             {/* List of Present Records Directly On Page */}
             {loading && events.length === 0 ? (
               <div className="border-2 border-[#E5DAC3] rounded-xl overflow-hidden bg-white shadow-2xs divide-y divide-[#EFE5D0]">
-                <div className="hidden md:grid dashboard-events-grid px-3.5 py-2.5 sm:py-3 text-[11px] sm:text-xs font-saira font-bold text-[#554633] uppercase tracking-wider bg-[#FBF4E2] border-b-2 border-[#E5DAC3]">
+                <div className="hidden md:grid dashboard-events-grid px-3.5 py-2.5 sm:py-3 text-xs font-semibold text-[#554633] bg-[#FBF4E2] border-b-2 border-[#E5DAC3]">
                   <div className="text-left">Event Name</div>
                   <div className="text-right">Date Issued</div>
                   <div className="text-right">Records</div>
@@ -1109,30 +861,20 @@ function DashboardContent() {
                 ))}
               </div>
             ) : filteredEvents.length === 0 ? (
-              <div className="border-2 border-[#E5DAC3] rounded-xl overflow-hidden bg-white shadow-2xs py-12 text-center space-y-3">
-                <Search className="w-7 h-7 text-stone-400 mx-auto stroke-[1.75]" />
-                <h3 className="text-base sm:text-lg font-jura font-bold text-slate-900 font-[700]">No Events Found</h3>
-                <p className="text-xs sm:text-sm font-quicksand font-medium text-stone-500 max-w-sm mx-auto leading-relaxed">
+              <section className="space-y-1.5 border-t border-app-border py-7" aria-labelledby="events-empty-title">
+                <h2 id="events-empty-title" className="section-title text-slate-900">
+                  {events.length === 0 ? 'No registered events yet' : 'No matching events'}
+                </h2>
+                <p className="text-sm leading-relaxed text-stone-700">
                   {events.length === 0
-                    ? 'No certificate batches have been generated yet. Open Canvas Studio to create your first batch.'
-                    : 'No registered events match your search query.'}
+                    ? 'Create your first certificate batch in Canvas Studio.'
+                    : 'Try a different event name.'}
                 </p>
-                {events.length === 0 && (
-                  <div className="pt-1">
-                    <button
-                      onClick={handleOpenNewStudio}
-                      className="inline-flex items-center gap-2 px-5 py-2.5 sm:py-3 h-10 sm:h-11 bg-primary-600 hover:bg-primary-700 text-white rounded-xl text-xs sm:text-sm font-saira font-bold uppercase tracking-wider transition-all shadow-xs hover:shadow cursor-pointer active:scale-[0.98]"
-                    >
-                      <Plus className="w-4 h-4 stroke-[2.5]" />
-                      <span>Launch Canvas Studio</span>
-                    </button>
-                  </div>
-                )}
-              </div>
+              </section>
             ) : (
               <div className="border-2 border-[#E5DAC3] rounded-xl overflow-hidden bg-white shadow-2xs">
                 {/* Desktop Column Header */}
-                <div className="hidden md:grid dashboard-events-grid px-3.5 py-2.5 sm:py-3 text-[11px] sm:text-xs font-saira font-bold text-[#554633] uppercase tracking-wider bg-[#FBF4E2] border-b-2 border-[#E5DAC3]">
+                <div className="hidden md:grid dashboard-events-grid px-3.5 py-2.5 sm:py-3 text-xs font-semibold text-[#554633] bg-[#FBF4E2] border-b-2 border-[#E5DAC3]">
                   <div className="text-left">Event Name</div>
                   <div className="text-right">Date Issued</div>
                   <div className="text-right">Records</div>
@@ -1145,27 +887,27 @@ function DashboardContent() {
                 <div className="divide-y divide-[#EFE5D0]">
                   {filteredEvents.map((event) => (
                     <div
-                      key={event.eventName}
+                      key={event.eventId ?? event.eventName}
                       onClick={() => {
-                        router.push(`/dashboard?event=${encodeURIComponent(event.eventName)}`, { scroll: false });
+                        router.push(`/dashboard?eventId=${event.eventId}`, { scroll: false });
                       }}
                       className="group px-3.5 py-2 sm:py-2.5 hover:bg-slate-100/80 transition-colors cursor-pointer dashboard-events-grid gap-1.5 md:gap-0"
                     >
                       {/* Column 1: Event Name & Template */}
                       <div className="pr-3 min-w-0 text-left">
-                        <h2 className="text-[13px] sm:text-sm font-jura font-bold text-slate-900 group-hover:text-primary-700 transition-colors truncate font-[700]">
-                          {event.eventName}
+                        <h2 className="text-sm font-semibold text-slate-900 group-hover:text-primary-700 transition-colors truncate">
+                          {event.eventName}{event.label ? ` · ${event.label}` : ''}
                         </h2>
                         {event.templateName && (
-                          <p className="text-[11px] font-quicksand font-medium text-stone-500 truncate mt-0.5">
+                          <p className="text-xs text-stone-700 truncate mt-0.5">
                             Template: {event.templateName}
                           </p>
                         )}
                       </div>
 
                       {/* Column 2: Date of Issuance */}
-                      <div className="text-xs sm:text-[13px] font-saira font-medium text-stone-600 whitespace-nowrap text-left md:text-right tabular-nums">
-                        <span className="md:hidden text-xs font-quicksand font-medium text-stone-500 mr-1.5">Issued:</span>
+                      <div className="text-xs font-medium text-stone-700 whitespace-nowrap text-left md:text-right tabular-nums">
+                        <span className="md:hidden text-xs font-medium text-stone-500 mr-1.5">Issued:</span>
                         <span>
                           {new Date(event.lastIssuedAt).toLocaleDateString([], {
                             month: 'short',
@@ -1178,49 +920,34 @@ function DashboardContent() {
                       {/* Columns 3, 4, 5: Metrics (Records, Active, Revoked) */}
                       <div className="flex md:contents items-center justify-between pt-1 border-t border-[#EFE5D0] md:border-t-0 md:pt-0">
                         {/* Records */}
-                        <div className="text-xs sm:text-[13px] whitespace-nowrap md:text-right">
-                          <span className="font-saira font-bold text-slate-900 tabular-nums">{event.certificateCount}</span>
-                          <span className="text-xs font-quicksand font-semibold text-stone-500 ml-1">
+                        <div className="text-xs whitespace-nowrap md:text-right">
+                          <span className="font-bold text-slate-900 tabular-nums">{event.certificateCount}</span>
+                          <span className="text-xs font-semibold text-stone-500 ml-1">
                             {event.certificateCount === 1 ? 'record' : 'records'}
                           </span>
                         </div>
 
                         {/* Active */}
-                        <div className="text-xs sm:text-[13px] whitespace-nowrap md:text-right">
-                          <span className="font-saira font-bold text-emerald-700 tabular-nums">{event.activeCount}</span>
-                          <span className="text-xs font-quicksand font-semibold text-stone-500 ml-1">active</span>
+                        <div className="text-xs whitespace-nowrap md:text-right">
+                          <span className="font-semibold text-emerald-700 tabular-nums">{event.activeCount}</span>
+                          <span className="text-xs font-semibold text-stone-500 ml-1">active</span>
                         </div>
 
                         {/* Revoked */}
-                        <div className="text-xs sm:text-[13px] whitespace-nowrap md:text-right">
+                        <div className="text-xs whitespace-nowrap md:text-right">
                           <span
-                            className={`font-saira font-bold tabular-nums ${
+                            className={`font-bold tabular-nums ${
                               event.revokedCount > 0 ? 'text-red-700' : 'text-stone-400'
                             }`}
                           >
                             {event.revokedCount}
                           </span>
-                          <span className="text-xs font-quicksand font-semibold text-stone-500 ml-1">revoked</span>
+                          <span className="text-xs font-semibold text-stone-500 ml-1">revoked</span>
                         </div>
                       </div>
 
-                      {/* Column 6: Delete Button & Arrow */}
-                      <div className="flex md:contents items-center justify-end">
-                        <div className="flex justify-end items-center gap-1 pr-1">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDeleteEvent(event.eventName);
-                            }}
-                            disabled={deletingEventName === event.eventName}
-                            className="p-1.5 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
-                            title={`Delete event "${event.eventName}" and all its certificates`}
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                          <ChevronRight className="hidden md:block w-3.5 h-3.5 text-stone-400 group-hover:text-stone-700 group-hover:translate-x-0.5 transition-all" />
-                        </div>
+                      <div className="flex justify-end pr-1">
+                        <ChevronRight className="h-4 w-4 text-stone-400" />
                       </div>
                     </div>
                   ))}
@@ -1242,12 +969,14 @@ export default function DashboardPage() {
         <div className="min-h-screen flex items-center justify-center bg-[#FBFAF5]" style={{ backgroundColor: '#FBFAF5' }}>
           <div className="flex flex-col items-center gap-3 text-center">
             <div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin"></div>
-            <p className="text-slate-600 font-quicksand text-xs font-medium">Loading dashboard...</p>
+            <p className="text-slate-600 text-xs font-medium">Loading dashboard...</p>
           </div>
         </div>
       }
     >
-      <DashboardContent />
+      <IssuerWorkspace>
+        <DashboardContent />
+      </IssuerWorkspace>
     </Suspense>
   );
 }

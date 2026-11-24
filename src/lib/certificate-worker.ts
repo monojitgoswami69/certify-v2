@@ -330,6 +330,7 @@ async function generateBatch(items: BatchItem[]): Promise<void> {
       activeBufferIdx = 1 - activeBufferIdx;
 
       // 1. DRAW: Background Template
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(cachedTemplateBitmap, 0, 0);
 
       // 1b. DRAW: Decorative image elements (logos, signatures)

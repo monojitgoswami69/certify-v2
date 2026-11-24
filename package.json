@@ -30,7 +30,10 @@
     "db:stamp": "node scripts/db-stamp-baseline.mjs",
     "db:event-features": "node scripts/db-migrate-sql.mjs drizzle/0003_event_features.sql",
     "db:template-versions": "node scripts/db-migrate-sql.mjs drizzle/0004_template_versions.sql",
-    "db:drafts-access": "node scripts/db-migrate-sql.mjs drizzle/0005_drafts_and_access.sql"
+    "db:drafts-access": "node scripts/db-migrate-sql.mjs drizzle/0005_drafts_and_access.sql",
+    "db:mail-policy": "node scripts/db-migrate-sql.mjs drizzle/0006_mail_policy.sql",
+    "db:issued-designs": "node scripts/db-migrate-sql.mjs drizzle/0007_issued_event_designs.sql",
+    "db:issuance-access": "node scripts/db-migrate-sql.mjs drizzle/0008_issuance_access.sql"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",

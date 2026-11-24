@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { db } from '../../../../lib/db';
 import { certificates, events, users } from '../../../../db/schema';
 import { hashToken, isValidCertificateId } from '../../../../lib/verification';
@@ -7,6 +7,7 @@ import { checkRateLimit, getClientIp } from '../../../../lib/rate-limit';
 import { getAuthenticatedUser } from '../../../../lib/accounts';
 import { env, isDevelopment } from '../../../../lib/env';
 import { log, requestIdOf } from '../../../../lib/logger';
+import { verificationMaintenanceResponse } from '../../../../lib/verification-maintenance';
 
 function maskEmail(email: string | null): string | null {
   if (!email) return null;
@@ -21,7 +22,7 @@ function maskEmail(email: string | null): string | null {
  * Public certificate verification endpoint backing the /verify/[id] page.
  * Malformed and unknown ids share the same neutral not_found response so the
  * endpoint cannot be used to enumerate issued certificates.
- * Operates purely read-only (zero scan tracking writes).
+ * Records aggregate views when enabled by the issuing account.
  *
  * Security & Privacy Policy:
  * Revoked certificates must NEVER leak PII to the public. Only the issuing account
@@ -31,6 +32,7 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  if (env.VERIFY_MAINTENANCE) return verificationMaintenanceResponse();
   const { id } = await params;
 
   const isDev = isDevelopment();
@@ -94,9 +96,9 @@ export async function GET(
       env.NEXT_PUBLIC_ISSUED_BY ||
       'Certify';
     const viewer = await getAuthenticatedUser(request);
-    const isOwner = viewer?.userId === cert.userId;
+    const isOwner = viewer?.canIssueCertificates === true && viewer.userId === cert.userId;
 
-    // Revoked certificates never leak details except to the account that issued them.
+    // Only the issuing account with current issuance access can inspect a revoked record.
     if (cert.status === 'revoked') {
       if (!isOwner) {
         // Public / unauthenticated caller: strictly return revoked status with zero details.
@@ -142,12 +144,12 @@ export async function GET(
       try {
         const [bumped] = await db
           .update(certificates)
-          .set({ scanCount: cert.scanCount + 1, lastScannedAt: new Date() })
-          .where(eq(certificates.id, cert.id))
+          .set({ scanCount: sql`${certificates.scanCount} + 1`, lastScannedAt: new Date() })
+          .where(and(eq(certificates.id, cert.id), eq(certificates.status, 'issued')))
           .returning({ scanCount: certificates.scanCount });
-        verificationCount = bumped?.scanCount ?? cert.scanCount + 1;
+        verificationCount = bumped?.scanCount ?? cert.scanCount;
       } catch (scanErr) {
-        console.warn('[Verification] scan counter failed:', scanErr);
+        log.warn('verify', 'Failed to update scan counter', { requestId: requestIdOf(request) }, scanErr);
       }
     } else if (cert.eventTrackScans) {
       verificationCount = cert.scanCount;
@@ -173,10 +175,8 @@ export async function GET(
       },
       {
         headers: {
-          'Cache-Control': isOwner
-            ? 'private, no-store'
-            : 'public, max-age=15, stale-while-revalidate=30',
-          'Vary': 'Authorization',
+          'Cache-Control': 'private, no-store',
+          'Vary': 'Authorization, Cookie',
         },
       }
     );

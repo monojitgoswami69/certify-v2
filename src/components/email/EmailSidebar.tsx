@@ -1,11 +1,11 @@
 'use client';
 
-import { useRef, useState } from 'react';
-import { ArrowLeft, Mail, FileText, Paperclip, CheckCircle2, X } from 'lucide-react';
-import { GoogleOAuthProvider, useGoogleLogin } from '@react-oauth/google';
+import { useEffect, useRef, useState } from 'react';
+import { ArrowLeft, Mail, FileText, Paperclip, CheckCircle2 } from 'lucide-react';
+import { GoogleOAuthProvider, useGoogleLogin, useGoogleOAuth } from '@react-oauth/google';
 import { useAppStore } from '../../store/useAppStore';
 import { useAuthStore } from '../../store/useAuthStore';
-import { disconnectGoogleAccount, exchangeGoogleCode } from '../../lib/api-client';
+import { disconnectGoogleAccount, exchangeGoogleCode, getGoogleConnection } from '../../lib/api-client';
 import { EmailSendButton } from './EmailSendButton';
 import { CustomSelect } from '../ui/CustomSelect';
 import { ResizeHandle } from '../ui/ResizeHandle';
@@ -15,13 +15,14 @@ const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || '';
 function GoogleConnectButton({
   onSuccess,
   onError,
-  buttonText = 'Connect Google Account',
+  email,
 }: {
   onSuccess: (account: { email: string; name?: string; picture?: string }) => void;
   onError: (msg: string) => void;
-  buttonText?: string;
+  email: string;
 }) {
   const [connecting, setConnecting] = useState(false);
+  const { scriptLoadedSuccessfully } = useGoogleOAuth();
 
   // Use the auth-code flow so the server can exchange the code for a
   // long-lived refresh token (auto-refresh on expiry -> no silent 401s).
@@ -47,8 +48,14 @@ function GoogleConnectButton({
       onError('Google connection was cancelled or failed');
       setConnecting(false);
     },
-    scope: 'email profile https://www.googleapis.com/auth/gmail.send',
-    ...({ access_type: 'offline', prompt: 'consent' } as object),
+    onNonOAuthError: () => {
+      onError('Google authorization window closed or could not open');
+      setConnecting(false);
+    },
+    scope: 'openid email https://www.googleapis.com/auth/gmail.send',
+    overrideScope: true,
+    ...{ login_hint: email },
+    include_granted_scopes: false,
   });
 
   return (
@@ -58,7 +65,7 @@ function GoogleConnectButton({
         setConnecting(true);
         login();
       }}
-      disabled={connecting}
+      disabled={connecting || !scriptLoadedSuccessfully}
       className="w-full flex items-center justify-center gap-2.5 bg-white hover:bg-slate-50 text-slate-700 font-semibold px-3.5 py-2.5 rounded-lg border border-slate-300 shadow-sm transition-all text-sm transform hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-50 disabled:cursor-not-allowed"
     >
       <svg className="w-4.5 h-4.5" viewBox="0 0 24 24">
@@ -79,7 +86,7 @@ function GoogleConnectButton({
           d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
         />
       </svg>
-      <span>{connecting ? 'Connecting to Google...' : buttonText}</span>
+      <span>{connecting ? 'Authorizing Gmail…' : 'Authorize Gmail sending'}</span>
     </button>
   );
 }
@@ -87,6 +94,7 @@ function GoogleConnectButton({
 function EmailSidebarContent() {
   const {
     csvHeaders,
+    issuanceStarted,
     csvData,
     emailColumn,
     emailSettings,
@@ -99,6 +107,39 @@ function EmailSidebarContent() {
     resetToDownload,
     setError,
   } = useAppStore();
+
+  const loginEmail = useAuthStore((state) => state.user?.email);
+  const [checkingConnection, setCheckingConnection] = useState(true);
+  const [disconnecting, setDisconnecting] = useState(false);
+
+  useEffect(() => {
+    if (!loginEmail) return;
+    const controller = new AbortController();
+    setCheckingConnection(true);
+    getGoogleConnection(controller.signal)
+      .then((account) => {
+        if (!controller.signal.aborted) setConnectedGoogleAccount(account);
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) setError(error.message);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setCheckingConnection(false);
+      });
+    return () => controller.abort();
+  }, [loginEmail, setConnectedGoogleAccount, setError]);
+
+  const disconnect = async () => {
+    setDisconnecting(true);
+    try {
+      await disconnectGoogleAccount();
+      setConnectedGoogleAccount(null);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Could not disconnect Gmail');
+    } finally {
+      setDisconnecting(false);
+    }
+  };
 
   const subjectRef = useRef<HTMLInputElement>(null);
   const bodyPlainRef = useRef<HTMLTextAreaElement>(null);
@@ -200,64 +241,48 @@ function EmailSidebarContent() {
       </div>
 
       <div className="flex-1 p-4 space-y-5 overflow-y-auto">
-        {/* Mailing Account Selection Card */}
-        <div className={`space-y-3 transition-opacity ${isSending ? 'opacity-50 pointer-events-none' : ''}`}>
-          <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-3 shadow-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                Mailing Provider
-              </span>
-              {isSending && (
-                <span className="text-xs font-semibold text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
-                  Locked while sending
-                </span>
-              )}
+        <section className="space-y-2 border-b border-stone-200/60 pb-4" aria-label="Gmail sender">
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-stone-500">Sending from</p>
+              <p className="truncate text-sm font-semibold text-slate-800">{loginEmail}</p>
             </div>
-
-            {/* Connected Google Account */}
-            {connectedGoogleAccount ? (
-              <div className="p-3 rounded-lg border bg-emerald-50 border-emerald-300 ring-2 ring-emerald-500/20">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-xs font-bold text-emerald-700 uppercase">
-                          Google Account
-                        </span>
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                      </div>
-                      <p className="text-sm font-semibold text-slate-800 truncate">
-                        {connectedGoogleAccount.email}
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => {
-                      setConnectedGoogleAccount(null);
-                      void disconnectGoogleAccount();
-                    }}
-                    className="p-1 hover:bg-emerald-100 text-slate-400 hover:text-red-500 rounded transition-colors"
-                    title="Disconnect Google Account"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <GoogleConnectButton
-                onSuccess={(account) => setConnectedGoogleAccount(account)}
-                onError={(err) => setError(err)}
-                buttonText="Connect Google Account"
-              />
+            {connectedGoogleAccount?.email === loginEmail && !checkingConnection && (
+              <button type="button" onClick={() => void disconnect()} disabled={isSending || disconnecting}
+                className="text-xs font-semibold text-stone-600 hover:text-red-700 disabled:opacity-50">
+                {disconnecting ? 'Disconnecting…' : 'Disconnect Gmail'}
+              </button>
             )}
           </div>
-        </div>
+          {checkingConnection ? (
+            <p className="text-xs text-stone-500">Checking Gmail authorization…</p>
+          ) : connectedGoogleAccount?.email === loginEmail ? (
+            <p className="flex items-center gap-1.5 text-xs text-emerald-700">
+              <CheckCircle2 className="h-3.5 w-3.5" /> Gmail authorized
+            </p>
+          ) : loginEmail && (
+            <GoogleConnectButton
+              key={loginEmail}
+              email={loginEmail}
+              onSuccess={setConnectedGoogleAccount}
+              onError={setError}
+            />
+          )}
+          <p className="text-xs leading-relaxed text-stone-700">
+            Gmail access lets Certify send the certificate emails you initiate.{' '}
+            <a href="/privacy" target="_blank" rel="noopener noreferrer" className="font-medium text-primary-800 underline underline-offset-2">
+              Privacy Policy
+            </a>
+          </p>
+        </section>
         <div>
           <label className="block text-xs font-medium text-slate-500 mb-1.5">
             <Mail className="inline w-3.5 h-3.5 mr-1" />
             Email Column in CSV
           </label>
-          <CustomSelect
+          {issuanceStarted ? (
+            <p className="text-sm text-slate-700">{emailColumn || 'No email column in the issued roster'}</p>
+          ) : <CustomSelect
             value={emailColumn}
             onChange={setEmailColumn}
             options={[
@@ -269,7 +294,7 @@ function EmailSidebarContent() {
             ]}
             placeholder="Select email column..."
             searchable
-          />
+          />}
         </div>
 
         <div className="p-3 bg-primary-50 border border-primary-200 rounded-lg">

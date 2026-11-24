@@ -11,5 +11,5 @@ export async function GET(request: Request) {
   return NextResponse.json({
     authenticated: true,
     user,
-  });
+  }, { headers: { 'Cache-Control': 'no-store' } });
 }

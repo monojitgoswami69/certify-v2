@@ -3,8 +3,10 @@ import { db } from './db';
 import { users, type UserRow } from '../db/schema';
 import { getSessionFromRequest, isAdminEmail } from './server-auth';
 import { env } from './env';
+import { getPlatformPermissions } from './platform-access';
+import type { PlatformPermissions } from './access-role';
 
-export interface PublicUser {
+export interface PublicUser extends PlatformPermissions {
   userId: string;
   email: string;
   name: string;
@@ -13,7 +15,7 @@ export interface PublicUser {
   role: 'user' | 'admin';
 }
 
-export function toPublicUser(row: UserRow): PublicUser {
+export function toPublicUser(row: UserRow, { platformRole, canIssueCertificates }: PlatformPermissions): PublicUser {
   return {
     userId: row.id,
     email: row.email,
@@ -21,6 +23,8 @@ export function toPublicUser(row: UserRow): PublicUser {
     issuedByName: row.issuedByName?.trim() || row.name,
     picture: row.picture,
     role: isAdminEmail(row.email) ? 'admin' : 'user',
+    platformRole,
+    canIssueCertificates,
   };
 }
 
@@ -68,12 +72,9 @@ export async function getAuthenticatedUser(request: Request): Promise<PublicUser
   if (!session || !env.DATABASE_URL) return null;
   const row = await getUserById(session.userId);
   if (!row) return null;
-  if (row.sessionsValidAfter && session.issuedAt !== null) {
-    const cutoffMs = row.sessionsValidAfter.getTime();
-    // iat has second granularity: allow 1s of clock skew on the boundary.
-    if (session.issuedAt * 1000 < cutoffMs - 1000) return null;
-  }
-  return toPublicUser(row);
+  if (row.sessionsValidAfter && (session.issuedAtMs ?? 0) <= row.sessionsValidAfter.getTime()) return null;
+  const permissions = await getPlatformPermissions(row.email);
+  return permissions ? toPublicUser(row, permissions) : null;
 }
 
 /**

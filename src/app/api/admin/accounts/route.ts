@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { sql } from 'drizzle-orm';
+import { env } from '../../../../lib/env';
 import { db } from '../../../../lib/db';
 import { requireAdmin, forbiddenResponse, ok } from '../_guard';
 
@@ -28,7 +29,12 @@ export async function GET(request: Request) {
   const result = await db.execute(sql`
     select
       u.email::text as email,
-      coalesce(p.role, 'user')::text as role,
+      case
+        when u.email = ${env.ADMIN_EMAIL ?? null} then 'super_admin'
+        when p.role = 'admin' then 'admin'
+        when p.email is null then 'revoked'
+        else 'user'
+      end as role,
       to_char(u.created_at, 'YYYY-MM-DD') as created_at,
       (select count(*)::int from events e where e.user_id = u.id) as event_count,
       (select count(*)::int from certificates c where c.user_id = u.id) as certificate_count,

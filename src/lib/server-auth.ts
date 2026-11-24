@@ -73,7 +73,7 @@ export function createSessionToken(claims: SessionClaims, rememberMe = true): st
   // revokes server-side regardless (see users.sessions_valid_after).
   const expiresIn = rememberMe ? '7d' : '24h';
   return jwt.sign(
-    { userId: claims.userId, email: claims.email, role: claims.role, name: claims.name },
+    { userId: claims.userId, email: claims.email, role: claims.role, name: claims.name, issuedAtMs: Date.now() },
     getJwtSecret(),
     { expiresIn, algorithm: 'HS256' }
   );
@@ -83,6 +83,7 @@ export interface VerifiedSession {
   userId: string;
   /** Seconds since epoch when the token was issued (jwt `iat`). */
   issuedAt: number | null;
+  issuedAtMs: number | null;
 }
 
 /** Verifies the signature and returns the account id + issue time. Profile data is loaded from the database, not trusted from the token. */
@@ -95,7 +96,8 @@ export function readSession(token: string): VerifiedSession | null {
       return null;
     }
     const issuedAt = typeof payload.iat === 'number' ? payload.iat : null;
-    return { userId: payload.userId, issuedAt };
+    const issuedAtMs = typeof payload.issuedAtMs === 'number' ? payload.issuedAtMs : issuedAt === null ? null : issuedAt * 1000;
+    return { userId: payload.userId, issuedAt, issuedAtMs };
   } catch {
     return null;
   }
@@ -147,25 +149,14 @@ function readSessionCookie(request: Request): string | null {
   return null;
 }
 
-/**
- * Resolves the session from the Authorization header (legacy/cli) or the
- * HttpOnly session cookie (browser). A bearer token is preferred, but an
- * INVALID one (expired, revoked, stale localStorage relic) falls through to
- * the cookie instead of masking a perfectly good session — otherwise one
- * bad stored token could log a valid browser session out.
- */
+/** Uses the current browser session before consulting legacy bearer storage. */
 export function getSessionFromRequest(request: Request): VerifiedSession | null {
-  const authHeader = request.headers.get('authorization');
-  if (authHeader) {
-    const match = authHeader.match(/^bearer\s+(\S+)$/i);
-    if (match) {
-      const fromHeader = readSession(match[1]);
-      if (fromHeader) return fromHeader;
-    }
-  }
   const cookieToken = readSessionCookie(request);
-  if (cookieToken) return readSession(cookieToken);
-  return null;
+  const browserSession = cookieToken ? readSession(cookieToken) : null;
+  if (browserSession) return browserSession;
+
+  const match = request.headers.get('authorization')?.match(/^bearer\s+(\S+)$/i);
+  return match ? readSession(match[1]) : null;
 }
 
 /**
@@ -176,7 +167,7 @@ export function getSessionFromRequest(request: Request): VerifiedSession | null 
  */
 export function mutationAllowed(request: Request): boolean {
   if (request.headers.get('x-certify-request') === '1') return true;
-  return Boolean(request.headers.get('authorization')?.match(/^bearer\s+\S+$/i));
+  return !readSessionCookie(request) && Boolean(request.headers.get('authorization')?.match(/^bearer\s+\S+$/i));
 }
 
 export function forbiddenCsrfResponse(): NextResponse {

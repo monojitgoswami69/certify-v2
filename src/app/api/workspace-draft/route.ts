@@ -1,18 +1,20 @@
 import { NextResponse } from 'next/server';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { db } from '../../../lib/db';
 import { workspaceDrafts } from '../../../db/schema';
-import { unauthorizedResponse } from '../../../lib/server-auth';
-import { getAuthenticatedUser } from '../../../lib/accounts';
+import { mutationAllowed, forbiddenCsrfResponse } from '../../../lib/server-auth';
+import { requireIssuer } from '../../../lib/issuer-auth';
 import { env } from '../../../lib/env';
 import { log, requestIdOf } from '../../../lib/logger';
+
+import { isDraftState } from '../../../lib/draft-autosave';
 
 const MAX_DRAFT_BYTES = 2.5 * 1024 * 1024;
 
 /** Per-account autosaved session — recover a closed editor tab. */
 export async function GET(request: Request) {
-  const user = await getAuthenticatedUser(request);
-  if (!user) return unauthorizedResponse('Invalid or expired token');
+  const { user, denial } = await requireIssuer(request);
+  if (denial) return denial;
 
   if (!env.DATABASE_URL) {
     return NextResponse.json({ detail: 'Database is not configured' }, { status: 503 });
@@ -35,39 +37,48 @@ export async function GET(request: Request) {
 }
 
 export async function PUT(request: Request) {
-  const user = await getAuthenticatedUser(request);
-  if (!user) return unauthorizedResponse('Invalid or expired token');
+  if (!mutationAllowed(request)) return forbiddenCsrfResponse();
+  const { user, denial } = await requireIssuer(request);
+  if (denial) return denial;
 
   if (!env.DATABASE_URL) {
     return NextResponse.json({ detail: 'Database is not configured' }, { status: 503 });
   }
 
   try {
-    const body = await request.json();
-    const serialized = JSON.stringify(body?.state ?? null);
-    if (serialized.length > MAX_DRAFT_BYTES) {
-      // Drafts are a convenience; oversize sessions (giant CSVs) are skipped
-      // rather than rejected — the UI keeps working either way.
-      return NextResponse.json({ success: true, skipped: true, detail: 'Draft too large to autosave' });
+    const raw = await request.text();
+    if (Buffer.byteLength(raw) > MAX_DRAFT_BYTES) {
+      return NextResponse.json({ detail: 'Draft too large to autosave' }, { status: 413 });
     }
+    const body = JSON.parse(raw);
+    if (!isDraftState(body?.state)) {
+      return NextResponse.json({ detail: 'Invalid workspace draft' }, { status: 400 });
+    }
+    const state = { ...body.state, savedAt: new Date(body.state.savedAt).toISOString() };
+    const updatedAt = new Date();
 
     await db
       .insert(workspaceDrafts)
-      .values({ userId: user.userId, state: body?.state ?? {}, updatedAt: new Date() })
+      .values({ userId: user.userId, state, updatedAt })
       .onConflictDoUpdate({
         target: workspaceDrafts.userId,
-        set: { state: body?.state ?? {}, updatedAt: new Date() },
+        set: { state, updatedAt },
+        setWhere: sql`COALESCE(${workspaceDrafts.state}->>'savedAt', '') <= ${state.savedAt}`,
       });
     return NextResponse.json({ success: true });
   } catch (error) {
+    if (error instanceof SyntaxError) {
+      return NextResponse.json({ detail: 'Invalid workspace draft' }, { status: 400 });
+    }
     log.error('drafts', 'Failed to save workspace draft', { requestId: requestIdOf(request), userId: user.userId }, error);
     return NextResponse.json({ detail: 'Failed to save draft' }, { status: 500 });
   }
 }
 
 export async function DELETE(request: Request) {
-  const user = await getAuthenticatedUser(request);
-  if (!user) return unauthorizedResponse('Invalid or expired token');
+  if (!mutationAllowed(request)) return forbiddenCsrfResponse();
+  const { user, denial } = await requireIssuer(request);
+  if (denial) return denial;
 
   if (!env.DATABASE_URL) {
     return NextResponse.json({ detail: 'Database is not configured' }, { status: 503 });

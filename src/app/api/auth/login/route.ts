@@ -1,3 +1,4 @@
+import { log, requestIdOf } from '../../../../lib/logger';
 import { NextResponse } from 'next/server';
 import { mutationAllowed, forbiddenCsrfResponse } from '../../../../lib/server-auth';
 import { createHash, timingSafeEqual } from 'crypto';
@@ -9,6 +10,7 @@ import {
 import { ensureAdminUser, toPublicUser } from '../../../../lib/accounts';
 import { checkRateLimit, getClientIp } from '../../../../lib/rate-limit';
 import { env } from '../../../../lib/env';
+import { ensureSuperAdminRow, getPlatformPermissions } from '../../../../lib/platform-access';
 
 function safeCompare(a: string, b: string): boolean {
   const hashA = createHash('sha256').update(a).digest();
@@ -35,6 +37,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ detail: 'Invalid request body' }, { status: 400 });
   }
 
+  if (!body || typeof body !== 'object') {
+    return NextResponse.json({ detail: 'Invalid request body' }, { status: 400 });
+  }
   const creds = getPasswordCredentials();
   if (!creds || !env.DATABASE_URL) {
     return NextResponse.json(
@@ -58,7 +63,10 @@ export async function POST(request: Request) {
 
   try {
     const account = await ensureAdminUser();
-    const user = toPublicUser(account);
+    await ensureSuperAdminRow();
+    const permissions = await getPlatformPermissions(account.email);
+    if (!permissions) throw new Error('Superadmin permissions are unavailable');
+    const user = toPublicUser(account, permissions);
     const rememberMe = Boolean(body.rememberMe ?? true);
     const token = createSessionToken(
       { userId: user.userId, email: user.email, role: user.role, name: user.name },
@@ -68,7 +76,7 @@ export async function POST(request: Request) {
     appendSessionCookie(response, token, rememberMe);
     return response;
   } catch (error) {
-    console.error('[Login error]:', error);
+    log.warn('auth', 'Sign-in failed', { requestId: requestIdOf(request) }, error);
     return NextResponse.json({ detail: 'Sign-in is temporarily unavailable' }, { status: 500 });
   }
 }

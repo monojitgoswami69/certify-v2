@@ -34,162 +34,79 @@ export default async function PrivacyPolicyPage() {
       {/* Main Editorial Content */}
       <main className="max-w-3xl mx-auto px-6 py-12 sm:py-16">
         <header className="pb-8 border-b border-stone-200/70">
-          <h1 className="text-3xl sm:text-4xl font-saira font-bold tracking-tight text-stone-950">
+          <h1 className="page-title text-stone-950">
             Privacy Policy
           </h1>
           <p className="mt-2 text-sm text-stone-700 font-sans">
-            Effective Date: October 15, 2026 · Last Updated: October 2026
+            Effective October 15, 2026 · Updated November 24, 2026
           </p>
         </header>
 
-        <div className="mt-8 space-y-10 text-stone-800 text-[15px] sm:text-base leading-relaxed font-sans">
-          {/* Section 1 */}
+        <div className="mt-8 space-y-10 text-stone-800 text-sm leading-relaxed">
           <section className="space-y-3">
-            <h2 className="text-xl font-saira font-semibold text-stone-900">
-              1. Overview
-            </h2>
+            <h2 className="section-title text-stone-900">1. Overview</h2>
             <p>
-              Certify (&quot;we&quot;, &quot;our&quot;, or &quot;the Service&quot;), accessible at{' '}
-              <a
-                href="https://certify.mgbuilds.in"
-                className="text-stone-900 underline underline-offset-2 hover:text-stone-600 transition-colors"
-              >
-                https://certify.mgbuilds.in
+              <Link href="/" className="text-primary-800 underline underline-offset-2">Certify</Link>{' '}
+              helps event organizers design, generate, verify, and deliver certificates. This policy covers the account, certificate, and Gmail data used to provide those features.
+            </p>
+          </section>
+
+          <section className="space-y-3">
+            <h2 className="section-title text-stone-900">2. Information we collect</h2>
+            <ul className="list-disc space-y-2 pl-5 text-stone-700">
+              <li><strong>Google sign-in.</strong> Google provides your verified email address, name, and profile photo when available. Certify uses those details to check whether you can sign in, maintain your account, and show your profile. A session cookie keeps you signed in.</li>
+              <li><strong>Certificate and recipient data.</strong> Certify processes the roster, artwork, layouts, and event details you provide. Saving templates or drafts can store artwork, layouts, or recipient information on our servers. Registering certificates stores event and recipient records and the design needed to reproduce issued certificates.</li>
+              <li><strong>Optional Gmail connection.</strong> If you authorize Gmail, Certify checks that Google verifies the same email address you used to sign in. Certify encrypts its stored Gmail access and refresh tokens and uses them to send the certificate emails you initiate.</li>
+            </ul>
+          </section>
+
+          <section className="space-y-3">
+            <h2 className="section-title text-stone-900">3. How we use and share information</h2>
+            <ul className="list-disc space-y-2 pl-5 text-stone-700">
+              <li>Certify renders certificate files and packages ZIP downloads in your browser. It stores registered records so recipients can verify or download issued certificates.</li>
+              <li>Anyone with a valid public verification link can see certificate details such as the recipient name, event, and issuer. When a download is available, it can include the fields printed on the certificate. Private roster fields and recipient email addresses stay out of the public verification response.</li>
+              <li>When you initiate a send, Certify processes the recipient address, message, and certificate attachment and submits them to Google’s Gmail API for delivery. The recipient receives the message and sender address.</li>
+              <li>Hosting and database providers process data on Certify’s behalf to operate the service. Certify does not sell Google user data or use it for advertising or generalized AI model training.</li>
+            </ul>
+          </section>
+
+          <section className="space-y-3">
+            <h2 className="section-title text-stone-900">4. Google API Services and Limited Use</h2>
+            <p>
+              Certify requests the sensitive, send-only Gmail scope{' '}
+              <code className="font-mono text-xs [overflow-wrap:anywhere]">https://www.googleapis.com/auth/gmail.send</code>{' '}
+              to send the certificate emails you start. Certify does not read your inbox, drafts, or Gmail history.
+            </p>
+            <p>
+              Certify&apos;s use and transfer to any other app of information received from Google APIs will adhere to the{' '}
+              <a href="https://developers.google.com/terms/api-services-user-data-policy" className="text-primary-800 underline underline-offset-2">
+                Google API Services User Data Policy
               </a>
-              , provides organizations and event organizers with tools to design, bulk generate, verify, and deliver custom certificates and credentials. We are committed to protecting your privacy and being transparent about how user data is handled.
+              , including the Limited Use requirements.
             </p>
+            <p>Certify limits human access to Google user data in accordance with Google’s Limited Use requirements, such as troubleshooting with your permission or complying with a legal obligation.</p>
           </section>
 
-          {/* Section 2 */}
           <section className="space-y-3">
-            <h2 className="text-xl font-saira font-semibold text-stone-900">
-              2. Information We Collect
-            </h2>
-            <p>
-              Depending on how you interact with Certify, we may process the following types of information:
-            </p>
-            <ul className="list-disc pl-5 space-y-2 text-stone-700">
-              <li>
-                <strong className="text-stone-900">Account Credentials:</strong> Administrative session identifiers and credentials used to authenticate authorized operators into the studio workspace.
+            <h2 className="section-title text-stone-900">5. Retention, deletion, and revocation</h2>
+            <ul className="list-disc space-y-2 pl-5 text-stone-700">
+              <li><strong>Disconnecting Gmail.</strong> Certify stores Gmail credentials while Gmail is connected. Selecting <strong>Disconnect Gmail</strong> in the email interface removes those credentials from Certify and requests revocation with Google.</li>
+              <li>You can also revoke Certify’s access through your{' '}
+                <a href="https://myaccount.google.com/permissions" className="text-primary-800 underline underline-offset-2">Google Account permissions</a>.
               </li>
-              <li>
-                <strong className="text-stone-900">Recipient & Roster Data:</strong> Names, email addresses, and event metadata provided in CSV or spreadsheet files uploaded solely to populate and generate personalized certificates.
-              </li>
-              <li>
-                <strong className="text-stone-900">Google Account Profile:</strong> When you connect your Google Account to send certificate delivery emails via Gmail, we access your basic profile information (email address and display name) strictly to identify the active sender account in the user interface.
-              </li>
+              <li>Certify keeps account information while your account exists and keeps issued records to support verification. Contact us to request deletion of your account information, saved data, or Google user data. Disconnecting Gmail does not delete sent messages or issued records.</li>
             </ul>
           </section>
 
-          {/* Section 3 */}
           <section className="space-y-3">
-            <h2 className="text-xl font-saira font-semibold text-stone-900">
-              3. How We Use Collected Information
-            </h2>
-            <p>We process information solely to perform core functionality requested by you:</p>
-            <ul className="list-disc pl-5 space-y-2 text-stone-700">
-              <li>Rendering personalized text, QR verification codes, and graphical certificate assets.</li>
-              <li>Maintaining cryptographic verification records for issued credentials on the public registry.</li>
-              <li>
-                Dispatching generated certificate attachments directly to designated recipient email addresses via your connected Gmail account upon your explicit instruction.
-              </li>
-            </ul>
+            <h2 className="section-title text-stone-900">6. Data security</h2>
+            <p>Certify uses HTTPS for data in transit, encrypts stored Gmail tokens, and checks account permissions before exposing private workspace data. Public verification identifiers are checked against stored hashes.</p>
           </section>
 
-          {/* Section 4: Google API Disclosure */}
-          <section className="space-y-3 pt-2">
-            <h2 className="text-xl font-saira font-semibold text-stone-900">
-              4. Google API Services & Limited Use Disclosure
-            </h2>
-            <p>
-              Certify integrates with the Gmail API via the restricted scope{' '}
-              <code className="text-xs bg-stone-100 px-1.5 py-0.5 rounded text-stone-800 font-mono">
-                https://www.googleapis.com/auth/gmail.send
-              </code>{' '}
-              to send outgoing emails containing generated credentials on your behalf.
-            </p>
-            <div className="border-l-2 border-stone-400 pl-4 py-1 text-stone-800 space-y-2">
-              <p className="font-medium text-stone-950">
-                Certify&apos;s use and transfer to any other app of information received from Google APIs will adhere to the{' '}
-                <a
-                  href="https://developers.google.com/terms/api-services-user-data-policy"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline underline-offset-2 text-stone-950 hover:text-stone-600 transition-colors"
-                >
-                  Google API Services User Data Policy
-                </a>
-                , including the Limited Use requirements.
-              </p>
-              <ul className="list-disc pl-5 space-y-1.5 text-stone-700 text-sm">
-                <li>
-                  <strong>Send-Only Access:</strong> We strictly request send-only permission. We do <em>not</em> read, inspect, store, or monitor your personal emails, inbox messages, drafts, or email metadata.
-                </li>
-                <li>
-                  <strong>No Commercial Sharing:</strong> We do not sell, rent, or transfer Google user data to data brokers, advertising networks, or any third parties.
-                </li>
-                <li>
-                  <strong>No Model Training:</strong> Google user data is never used to train generalized artificial intelligence or machine learning models.
-                </li>
-                <li>
-                  <strong>Human Access:</strong> No human will read or inspect your email data unless you have given explicit consent for debugging a specific issue, or as required by law.
-                </li>
-              </ul>
-            </div>
-          </section>
-
-          {/* Section 5 */}
           <section className="space-y-3">
-            <h2 className="text-xl font-saira font-semibold text-stone-900">
-              5. Data Retention & Revocation
-            </h2>
-            <p>
-              You maintain full control over your connected accounts and uploaded data:
-            </p>
-            <ul className="list-disc pl-5 space-y-2 text-stone-700">
-              <li>
-                <strong>Immediate Disconnect:</strong> You may disconnect your Google Account at any time directly in the Certify email interface, which immediately clears and invalidates server-held authorization credentials.
-              </li>
-              <li>
-                <strong>Google Account Permissions:</strong> You can revoke Certify&apos;s access at any moment through your{' '}
-                <a
-                  href="https://myaccount.google.com/permissions"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline underline-offset-2 hover:text-stone-600 transition-colors"
-                >
-                  Google Account Security Permissions
-                </a>
-                .
-              </li>
-              <li>
-                <strong>Client-Side Processing:</strong> Certificate image rendering and ZIP archiving occur directly within your browser&apos;s local memory without uploading template source files to persistent external storage.
-              </li>
-            </ul>
-          </section>
-
-          {/* Section 6 */}
-          <section className="space-y-3">
-            <h2 className="text-xl font-saira font-semibold text-stone-900">
-              6. Data Security
-            </h2>
-            <p>
-              We implement industry-standard administrative, physical, and technical measures to protect your information, including HTTPS encryption in transit, strict Content Security Policies, cryptographic token hashing for public verification endpoints, and minimal credential retention.
-            </p>
-          </section>
-
-          {/* Section 7 */}
-          <section className="space-y-3">
-            <h2 className="text-xl font-saira font-semibold text-stone-900">
-              7. Contact Us
-            </h2>
-            <p>
-              If you have any questions or inquiries regarding this Privacy Policy or our data practices, please contact us at:
-            </p>
-            <p className="font-mono text-sm text-stone-800">
-              Email: contact@mgbuilds.in
-              <br />
-              Website: https://certify.mgbuilds.in
+            <h2 className="section-title text-stone-900">7. Contact</h2>
+            <p>For questions about this policy or to request data deletion, email{' '}
+              <a href="mailto:contact@mgbuilds.in" className="text-primary-800 underline underline-offset-2">contact@mgbuilds.in</a>.
             </p>
           </section>
         </div>

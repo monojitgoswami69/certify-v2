@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Save, Check, AlertCircle, LayoutTemplate } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
-import { useAuthStore } from '../../store/useAuthStore';
+import { apiFetch } from '../../lib/api-client';
 
 interface SaveTemplateModalProps {
   isOpen: boolean;
@@ -13,8 +13,7 @@ interface SaveTemplateModalProps {
 }
 
 export function SaveTemplateModal({ isOpen, onClose, onSaved }: SaveTemplateModalProps) {
-  const { templateImage, templateFile, boxes, qrZones, defaultFont, defaultFontSize, defaultFontColor } = useAppStore();
-  const { token } = useAuthStore();
+  const { templateImage, templateFile, boxes, qrZones, images, defaultFont, defaultFontSize, defaultFontColor } = useAppStore();
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -71,17 +70,17 @@ export function SaveTemplateModal({ isOpen, onClose, onSaved }: SaveTemplateModa
         layoutConfig: {
           boxes,
           qrZones,
+          images,
           defaultFont,
           defaultFontSize,
           defaultFontColor,
         },
       };
 
-      const res = await fetch('/api/templates', {
+      const res = await apiFetch('/api/templates', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify(payload),
       });

@@ -1,170 +1,67 @@
 #!/usr/bin/env node
-import fs from 'fs';
-import path from 'path';
+import fs from 'node:fs';
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { neon } from '@neondatabase/serverless';
-
-function loadEnv() {
-  const envPath = path.resolve(process.cwd(), '.env');
-  if (fs.existsSync(envPath)) {
-    const content = fs.readFileSync(envPath, 'utf8');
-    for (const line of content.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const eqIdx = trimmed.indexOf('=');
-      if (eqIdx !== -1) {
-        const key = trimmed.slice(0, eqIdx).trim();
-        let val = trimmed.slice(eqIdx + 1).trim();
-        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-          val = val.slice(1, -1);
-        }
-        if (!process.env[key]) {
-          process.env[key] = val;
-        }
-      }
-    }
-  }
-}
-
-loadEnv();
-
-const dbUrl = process.env.DATABASE_URL;
-if (!dbUrl) {
-  console.error('❌ Error: DATABASE_URL not found in environment or .env file');
-  process.exit(1);
-}
-
-const sql = neon(dbUrl);
-
-// Never write credential material to disk, even locally: Gmail refresh tokens
-// grant send-as access until revoked at Google.
-const EXCLUDED_TABLES = new Set(['google_credentials']);
+import { databaseUrl, reportSnapshotFailure, snapshotTables } from './db-snapshot.mjs';
 
 async function main() {
-  console.log('🔒 Starting secure database snapshot...');
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const backupDir = path.resolve(process.cwd(), 'backups', `backup-${timestamp}`);
-  const latestDir = path.resolve(process.cwd(), 'backups', 'latest');
+  const url = databaseUrl();
+  const sql = neon(url);
+  const tables = Object.keys(snapshotTables);
+  const rows = await sql.transaction(
+    tables.map((table) => sql.query(`SELECT ${snapshotTables[table].columns.replaceAll(' ', ', ')} FROM public.${table}`)),
+    { isolationLevel: 'RepeatableRead', readOnly: true }
+  );
+  const timestamp = new Date().toISOString();
+  const root = path.resolve('backups');
+  const backupName = `backup-${timestamp.replace(/[:.]/g, '-')}`;
+  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
 
-  fs.mkdirSync(backupDir, { recursive: true });
-  fs.mkdirSync(latestDir, { recursive: true });
+  const tempDir = fs.mkdtempSync(path.join(root, '.backup-'));
+  const backupDir = path.join(root, backupName);
+  const latest = path.join(root, 'latest');
+  const nextLink = path.join(root, `.latest-${randomUUID()}`);
+  let previousLatest;
 
-  // 1. Query tables in public schema
-  const tablesResult = await sql`
-    SELECT table_name
-    FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
-    ORDER BY table_name;
-  `;
-  const tableNames = tablesResult.map((t) => t.table_name);
-  console.log(`📋 Found public tables: ${tableNames.join(', ')}`);
-
-  const manifest = {
-    timestamp: new Date().toISOString(),
-    databaseHost: new URL(dbUrl.replace(/^postgresql:\/\//, 'http://')).host,
-    tables: {},
-    excludedTables: Array.from(EXCLUDED_TABLES),
-    summary: {
-      totalCertificates: 0,
-      totalTemplates: 0,
-      events: [],
-    },
-  };
-
-  // 2. Backup templates
-  if (tableNames.includes('templates')) {
-    console.log('📦 Backing up templates...');
-    const templateRows = await sql`SELECT * FROM templates ORDER BY created_at ASC;`;
-    manifest.tables['templates'] = templateRows.length;
-    manifest.summary.totalTemplates = templateRows.length;
-
-    fs.writeFileSync(
-      path.join(backupDir, 'templates.json'),
-      JSON.stringify(templateRows, null, 2),
-      'utf8'
-    );
-    fs.writeFileSync(
-      path.join(latestDir, 'templates.json'),
-      JSON.stringify(templateRows, null, 2),
-      'utf8'
-    );
-    console.log(`   ✓ Saved ${templateRows.length} templates.`);
-  }
-
-  // 3. Backup certificates
-  if (tableNames.includes('certificates')) {
-    console.log('📦 Backing up certificates & verification records...');
-    const certRows = await sql`SELECT * FROM certificates ORDER BY issued_at ASC;`;
-    manifest.tables['certificates'] = certRows.length;
-    manifest.summary.totalCertificates = certRows.length;
-
-    const eventSet = new Set();
-    certRows.forEach((c) => {
-      if (c.event_name || c.eventName) eventSet.add(c.event_name || c.eventName);
+  try {
+    const write = (name, data) => {
+      fs.writeFileSync(path.join(tempDir, `${name}.json`), JSON.stringify(data, null, 2), { mode: 0o600 });
+    };
+    tables.forEach((table, i) => write(table, rows[i]));
+    const certificateRows = rows[tables.indexOf('certificates')];
+    write('manifest', {
+      timestamp,
+      databaseHost: new URL(url).host,
+      tables: Object.fromEntries(tables.map((table, i) => [table, rows[i].length])),
+      excludedTables: ['google_credentials'],
+      summary: {
+        totalCertificates: certificateRows.length,
+        totalTemplates: rows[tables.indexOf('templates')].length,
+        events: [...new Set(certificateRows.map((row) => row.event_name).filter(Boolean))],
+      },
     });
-    manifest.summary.events = Array.from(eventSet);
+    fs.renameSync(tempDir, backupDir);
+    fs.symlinkSync(backupName, nextLink, 'dir');
 
-    fs.writeFileSync(
-      path.join(backupDir, 'certificates.json'),
-      JSON.stringify(certRows, null, 2),
-      'utf8'
-    );
-    fs.writeFileSync(
-      path.join(latestDir, 'certificates.json'),
-      JSON.stringify(certRows, null, 2),
-      'utf8'
-    );
-    console.log(`   ✓ Saved ${certRows.length} certificates across ${eventSet.size} events: [${Array.from(eventSet).join(', ')}].`);
-  }
-
-  // 4. Users and any other custom tables (credentials excluded — see above).
-  for (const table of tableNames) {
-    if (table === 'certificates' || table === 'templates' || EXCLUDED_TABLES.has(table)) {
-      if (EXCLUDED_TABLES.has(table)) {
-        console.log(`⏭️  Skipping ${table} (credential material is never written to backups).`);
-      }
-      continue;
+    // Older releases used a directory for latest. Preserve its contents when
+    // converting it to a symlink for atomic publication of future backups.
+    if (fs.lstatSync(latest, { throwIfNoEntry: false })?.isDirectory()) {
+      const previous = path.join(root, `previous-latest-${randomUUID()}`);
+      fs.renameSync(latest, previous);
+      previousLatest = previous;
     }
-    console.log(`📦 Backing up additional table: ${table}...`);
-    const rows = await sql(`SELECT * FROM ${table};`);
-    manifest.tables[table] = rows.length;
-    fs.writeFileSync(
-      path.join(backupDir, `${table}.json`),
-      JSON.stringify(rows, null, 2),
-      'utf8'
-    );
-    fs.writeFileSync(
-      path.join(latestDir, `${table}.json`),
-      JSON.stringify(rows, null, 2),
-      'utf8'
-    );
-    console.log(`   ✓ Saved ${rows.length} rows from ${table}.`);
+    fs.renameSync(nextLink, latest);
+  } catch (error) {
+    if (previousLatest) fs.renameSync(previousLatest, latest);
+    throw error;
+  } finally {
+    fs.rmSync(nextLink, { force: true });
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
 
-  // Write manifest
-  fs.writeFileSync(
-    path.join(backupDir, 'manifest.json'),
-    JSON.stringify(manifest, null, 2),
-    'utf8'
-  );
-  fs.writeFileSync(
-    path.join(latestDir, 'manifest.json'),
-    JSON.stringify(manifest, null, 2),
-    'utf8'
-  );
-
-  console.log('\n======================================================');
-  console.log('✅ BACKUP COMPLETE & SECURELY STORED LOCALLY');
-  console.log(`📁 Timestamped backup: ${backupDir}`);
-  console.log(`📁 Latest shortcut:   ${latestDir}`);
-  console.log(`📊 Total Certificates: ${manifest.summary.totalCertificates}`);
-  console.log(`📊 Total Templates:    ${manifest.summary.totalTemplates}`);
-  console.log(`📊 Events:             ${manifest.summary.events.join(', ')}`);
-  console.log('======================================================');
-  console.log('ℹ️  Backups contain recipient PII. They live in gitignored local');
-  console.log   ('   storage only — never commit, sync, or upload them.');
+  console.log(`Database snapshot saved to ${backupDir}`);
+  console.log(`Latest snapshot: ${latest}`);
 }
 
-main().catch((err) => {
-  console.error('❌ Backup failed with error:', err);
-  process.exit(1);
-});
+main().catch((error) => reportSnapshotFailure('Backup', error));

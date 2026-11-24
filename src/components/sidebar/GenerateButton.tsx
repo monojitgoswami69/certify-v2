@@ -22,7 +22,7 @@ import { useBatchRegistration } from './useBatchRegistration';
 import { CertificateGenerationModal } from '../modals/CertificateGenerationModal';
 
 export function GenerateButton() {
-  const { csvData, setViewMode, eventName } = useAppStore();
+  const { csvData, setViewMode, eventName, issuanceStarted } = useAppStore();
 
   const {
     isBatchRegistered,
@@ -80,7 +80,7 @@ export function GenerateButton() {
                 <p className="text-[11px] text-slate-500 mt-0.5">
                   {isBatchRegistered
                     ? registrationDirty
-                      ? 'Canvas layout or dataset modified · Re-sync required'
+                      ? 'Review the issued batch from the dashboard'
                       : `${registeredCertIds.size} certificates registered & active`
                     : csvData.length > 0
                     ? `${csvData.length} certificates ready to register in database`
@@ -99,7 +99,7 @@ export function GenerateButton() {
             {!isBatchRegistered ? (
               <button
                 type="button"
-                onClick={() => registerBatch(false)}
+                onClick={() => registerBatch()}
                 disabled={isBatchRegistering || csvData.length === 0}
                 className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-sm font-semibold transition-all shadow-sm disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed cursor-pointer"
               >
@@ -111,49 +111,11 @@ export function GenerateButton() {
                 ) : (
                   <>
                     <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                    <span>Register Event Batch ({csvData.length} Certificates)</span>
+                    <span>{issuanceStarted ? 'Finish issuing' : 'Register Event Batch'} ({csvData.length} Certificates)</span>
                   </>
                 )}
               </button>
-            ) : registrationDirty ? (
-              <div className="space-y-1.5">
-                <button
-                  type="button"
-                  onClick={() => registerBatch(true)}
-                  disabled={isBatchRegistering}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-semibold transition-all shadow-sm cursor-pointer"
-                >
-                  {isBatchRegistering ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      <span>Updating Registry...</span>
-                    </>
-                  ) : (
-                    <>
-                      <RefreshCw className="w-3.5 h-3.5" />
-                      <span>Update Registry ({csvData.length} Certificates)</span>
-                    </>
-                  )}
-                </button>
-                <p className="text-[10px] text-amber-700 leading-tight">
-                  Template layout or recipient fields were updated. Re-sync to update registry and template.
-                </p>
-              </div>
-            ) : (
-              <div className="flex items-center justify-between text-xs text-slate-500 pt-0.5">
-                <span className="text-[11px] font-mono">
-                  {registeredCertIds.size} / {csvData.length} registered
-                </span>
-                <button
-                  type="button"
-                  onClick={() => registerBatch(true)}
-                  disabled={isBatchRegistering}
-                  className="text-[11px] font-medium text-slate-500 hover:text-slate-800 underline underline-offset-2 transition-colors cursor-pointer"
-                >
-                  Re-sync registry
-                </button>
-              </div>
-            )}
+            ) : null}
 
             {batchRegistrationError && (
               <div className="flex items-start gap-1.5 p-2 text-xs text-red-600 bg-red-50 rounded-lg">

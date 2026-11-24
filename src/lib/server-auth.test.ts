@@ -32,14 +32,17 @@ describe('session transport', () => {
     expect(session?.userId).toBe(USER_ID);
   });
 
-  it('prefers the bearer header when both are present', () => {
-    const good = makeToken();
-    const session = getSessionFromRequest(
-      requestWith({
-        Authorization: `Bearer ${good}`,
-        cookie: `certify_session=${makeToken()}`,
-      })
-    );
+  it('keeps the browser account when a legacy bearer identifies a different account', () => {
+    const legacyToken = createSessionToken({
+      userId: '00000000-0000-4000-8000-000000000002',
+      email: 'legacy@example.test',
+      role: 'user',
+      name: 'Legacy',
+    });
+    const session = getSessionFromRequest(requestWith({
+      Authorization: `Bearer ${legacyToken}`,
+      cookie: `certify_session=${makeToken()}`,
+    }));
     expect(session?.userId).toBe(USER_ID);
   });
 
@@ -62,6 +65,10 @@ describe('mutationAllowed (CSRF guard)', () => {
 
   it('rejects plain cross-site requests with no marker', () => {
     expect(mutationAllowed(requestWith({ cookie: 'certify_session=stolen-by-csrf' }))).toBe(false);
+    expect(mutationAllowed(requestWith({
+      cookie: 'certify_session=valid-cookie',
+      Authorization: 'Bearer invalid-token',
+    }))).toBe(false);
     expect(mutationAllowed(requestWith({}))).toBe(false);
     expect(mutationAllowed(requestWith({ 'x-certify-request': '0' }))).toBe(false);
   });

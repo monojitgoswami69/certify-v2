@@ -2,10 +2,14 @@
  * Minimal structured logger.
  *
  * Emits single-line JSON (time, level, tag, message, request id when known,
- * stack for errors) so logs are greppable and ingestible without any
+ * error type when applicable) so logs are greppable and ingestible without any
  * platform lock-in. Replace the internals with pino/Sentry later if needed —
  * keep the call sites stable.
  */
+
+import { randomUUID } from 'node:crypto';
+import { DrizzleQueryError } from 'drizzle-orm';
+import { NeonDbError } from '@neondatabase/serverless';
 
 type Level = 'debug' | 'info' | 'warn' | 'error';
 
@@ -24,10 +28,10 @@ function emit(level: Level, tag: string, message: string, meta: LogMeta = {}, er
     ...meta,
   };
   if (error instanceof Error) {
-    entry.error = error.message;
-    entry.stack = error.stack;
-  } else if (error !== undefined) {
-    entry.error = String(error);
+    // Never include database messages, stacks, SQL, or bound parameter values.
+    const cause = error instanceof DrizzleQueryError ? error.cause : error;
+    entry.error = error.name;
+    if (cause instanceof NeonDbError && cause.code) entry.databaseCode = cause.code;
   }
   const line = JSON.stringify(entry);
   if (level === 'error') console.error(line);
@@ -46,7 +50,13 @@ export const log = {
     emit('error', tag, message, meta, error),
 };
 
-/** Correlation id stamped on every request by src/proxy.ts. */
-export function requestIdOf(request: Request): string | null {
-  return request.headers.get('x-request-id');
+/** Server-side correlation ID for a request. */
+const requestIds = new WeakMap<Request, string>();
+
+export function requestIdOf(request: Request): string {
+  const existing = requestIds.get(request);
+  if (existing) return existing;
+  const id = randomUUID();
+  requestIds.set(request, id);
+  return id;
 }

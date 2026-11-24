@@ -100,6 +100,10 @@ interface AppStore {
   csvHeaders: string[];
   csvData: CsvRow[];
   eventName: string;
+  eventLabel: string;
+  registrationEventId: string | null;
+  issuanceStarted: boolean;
+  setEventLabel: (label: string) => void;
   setEventName: (name: string) => void;
   setCsvData: (file: File, headers: string[], data: CsvRow[]) => void;
   clearCsvData: () => void;
@@ -182,6 +186,9 @@ const initialState = {
   csvHeaders: [] as string[],
   csvData: [] as CsvRow[],
   eventName: '',
+  eventLabel: '',
+  registrationEventId: null,
+  issuanceStarted: false,
   emailColumn: '',
   defaultFont: '',
   defaultFontSize: 60,
@@ -484,6 +491,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       };
     });
   },
+
+  setEventLabel: (eventLabel) => set({ eventLabel }),
 
   setEventName: (eventName) =>
     set((state) => ({

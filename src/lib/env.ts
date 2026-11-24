@@ -24,6 +24,7 @@ const envSchema = z.object({
   // Google OAuth
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
+  GMAIL_TOKEN_ENCRYPTION_KEY: z.string().optional(),
   NEXT_PUBLIC_GOOGLE_CLIENT_ID: z.string().optional(),
 
   // Networking
@@ -33,6 +34,7 @@ const envSchema = z.object({
   ISSUED_BY: z.string().optional(),
   NEXT_PUBLIC_ISSUED_BY: z.string().optional(),
   NEXT_PUBLIC_APP_URL: z.string().url().default('http://localhost:3000'),
+  VERIFY_MAINTENANCE: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
 });
 
 export type Env = z.infer<typeof envSchema>;

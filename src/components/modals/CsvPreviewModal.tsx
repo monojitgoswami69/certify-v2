@@ -53,10 +53,10 @@ export function CsvPreviewModal({ isOpen, onClose }: CsvPreviewModalProps) {
           <div className="flex items-center gap-2.5 min-w-0">
             <Table className="w-5 h-5 text-primary-600 shrink-0 stroke-[1.75]" />
             <div className="min-w-0">
-              <h2 className="font-jura font-bold text-slate-900 text-base sm:text-lg tracking-tight truncate font-[700]">
+              <h2 className="font-semibold text-slate-900 text-base sm:text-lg tracking-tight truncate">
                 CSV Data Preview
               </h2>
-              <p className="font-quicksand text-xs text-slate-500 truncate mt-0.5 font-medium">
+              <p className="text-xs text-slate-500 truncate mt-0.5 font-medium">
                 <span className="font-semibold text-slate-700">{csvFile?.name || 'Uploaded Dataset'}</span>
                 {' · '}
                 <span>{csvData.length} records</span>

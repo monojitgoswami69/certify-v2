@@ -1,105 +1,111 @@
-/**
- * Platform access allowlist + role model (server-only).
- *
- * Only emails added by an admin can sign in. Roles:
- *   'user'        — normal platform access
- *   'admin'       — can access /admin, manage the allowlist (users only)
- *   'super_admin' — everything admins can do, plus granting admin roles
- *
- * The ADMIN_EMAIL account bootstraps as super_admin on first sign-in; every
- * pre-existing account was grandfathered as 'user' by migration 0005.
- */
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, ne, sql } from 'drizzle-orm';
 import { db } from './db';
 import { platformAccess } from '../db/schema';
 import { env } from './env';
+import type { MailLimits } from './mail-limits';
+import type { PlatformPermissions, PlatformRole } from './access-role';
 
-export type PlatformRole = 'user' | 'admin' | 'super_admin';
+export type { PlatformRole } from './access-role';
+export type ManagedRole = Exclude<PlatformRole, 'super_admin'>;
 
-const VALID_ROLES: PlatformRole[] = ['user', 'admin', 'super_admin'];
-
-export function isPlatformRole(value: unknown): value is PlatformRole {
-  return typeof value === 'string' && (VALID_ROLES as string[]).includes(value);
-}
-
-function normalizeEmail(email: string): string {
-  return email.trim().toLowerCase();
-}
-
-export async function getPlatformRole(email: string): Promise<PlatformRole | null> {
-  const normalized = normalizeEmail(email);
-  if (!normalized) return null;
-  const adminEmail = env.ADMIN_EMAIL ?? null;
-
-  try {
-    const [row] = await db
-      .select({ role: platformAccess.role })
-      .from(platformAccess)
-      .where(eq(platformAccess.email, normalized))
-      .limit(1);
-    if (row && isPlatformRole(row.role)) return row.role;
-  } catch (err) {
-    console.warn('[platform-access] lookup failed:', err);
+export async function getPlatformPermissions(email: string): Promise<PlatformPermissions | null> {
+  const normalized = email.trim().toLowerCase();
+  const [row] = await db
+    .select({ role: platformAccess.role, canIssueCertificates: platformAccess.canIssueCertificates })
+    .from(platformAccess)
+    .where(eq(platformAccess.email, normalized))
+    .limit(1);
+  if (normalized === env.ADMIN_EMAIL) {
+    return { platformRole: 'super_admin', canIssueCertificates: row?.canIssueCertificates === true };
   }
-
-  // Bootstrap: the env-configured admin always has super_admin access, even
-  // before its allowlist row exists. The row is created lazily on sign-in.
-  if (adminEmail && normalized === adminEmail) return 'super_admin';
-  return null;
+  if (!row || !['admin', 'user', 'super_admin'].includes(row.role)) return null;
+  return { platformRole: row.role === 'admin' ? 'admin' : 'user', canIssueCertificates: row.canIssueCertificates };
 }
 
-/** Ensures the env-configured admin has a super_admin allowlist row. */
 export async function ensureSuperAdminRow(): Promise<void> {
-  const adminEmail = env.ADMIN_EMAIL ?? null;
+  const adminEmail = env.ADMIN_EMAIL;
   if (!adminEmail) return;
-  try {
-    await db
-      .insert(platformAccess)
-      .values({ email: adminEmail, role: 'super_admin' })
-      .onConflictDoUpdate({
-        target: platformAccess.email,
-        set: { role: 'super_admin', updatedAt: new Date() },
-      });
-  } catch (err) {
-    console.warn('[platform-access] super admin bootstrap failed:', err);
-  }
+  await db.insert(platformAccess).values({ email: adminEmail, role: 'super_admin' })
+    .onConflictDoNothing({ target: platformAccess.email });
 }
 
-export async function listPlatformAccess(): Promise<
-  Array<{ email: string; role: PlatformRole; createdAt: Date }>
-> {
+export async function listPlatformAccess() {
+  await ensureSuperAdminRow();
   const rows = await db
-    .select({ email: platformAccess.email, role: platformAccess.role, createdAt: platformAccess.createdAt })
+    .select({
+      email: platformAccess.email,
+      role: platformAccess.role,
+      canIssueCertificates: platformAccess.canIssueCertificates,
+      createdAt: platformAccess.createdAt,
+      mailsPerMinute: platformAccess.mailsPerMinute,
+      mailsPerSecond: platformAccess.mailsPerSecond,
+    })
     .from(platformAccess)
     .orderBy(sql`${platformAccess.createdAt} desc`);
-  return rows.map((r) => ({
-    email: r.email,
-    role: isPlatformRole(r.role) ? r.role : 'user',
-    createdAt: r.createdAt,
+  const rootEmail = env.ADMIN_EMAIL;
+  return rows.map((row) => ({
+    ...row,
+    role: row.email === rootEmail ? 'super_admin' : row.role === 'admin' ? 'admin' : 'user',
   }));
 }
 
 export async function addToPlatformAccess(
   email: string,
-  role: PlatformRole,
-  addedByUserId: string
-): Promise<void> {
-  await db
-    .insert(platformAccess)
-    .values({ email: normalizeEmail(email), role, addedBy: addedByUserId })
+  role: ManagedRole,
+  actor: { userId: string; role: PlatformRole }
+): Promise<boolean> {
+  if (email === env.ADMIN_EMAIL || (role === 'admin' && actor.role !== 'super_admin')) return false;
+  const rows = await db.insert(platformAccess).values({ email, role, addedBy: actor.userId })
     .onConflictDoUpdate({
       target: platformAccess.email,
-      set: { role, addedBy: addedByUserId, updatedAt: new Date() },
-    });
+      set: { role, addedBy: actor.userId, updatedAt: new Date() },
+      setWhere: actor.role === 'super_admin' ? undefined : ne(platformAccess.role, 'admin'),
+    })
+    .returning({ email: platformAccess.email });
+  return rows.length > 0;
 }
 
-export async function removeFromPlatformAccess(email: string): Promise<boolean> {
-  const normalized = normalizeEmail(email);
-  const adminEmail = env.ADMIN_EMAIL ?? null;
-  if (adminEmail && normalized === adminEmail) return false; // the root admin cannot be removed
-  const deleted = await db
-    .delete(platformAccess)
-    .where(eq(platformAccess.email, normalized))
+export async function updateMailLimits(email: string, limits: MailLimits): Promise<boolean> {
+  if (email === env.ADMIN_EMAIL) await ensureSuperAdminRow();
+  const rows = await db.update(platformAccess).set({ ...limits, updatedAt: new Date() })
+    .where(eq(platformAccess.email, email))
     .returning({ email: platformAccess.email });
-  return deleted.length > 0;
+  return rows.length > 0;
+}
+
+export async function updateIssuanceAccess(
+  email: string,
+  canIssueCertificates: boolean,
+  callerRole: Exclude<PlatformRole, 'user'>
+): Promise<boolean> {
+  if (email === env.ADMIN_EMAIL) {
+    if (callerRole !== 'super_admin') return false;
+    await ensureSuperAdminRow();
+  }
+  const target = and(
+    eq(platformAccess.email, email),
+    callerRole === 'super_admin' ? undefined : ne(platformAccess.role, 'admin')
+  );
+  const rows = await db.update(platformAccess).set({ canIssueCertificates, updatedAt: new Date() })
+    .where(target)
+    .returning({ email: platformAccess.email });
+  return rows.length > 0;
+}
+
+export async function removeFromPlatformAccess(email: string, callerRole: PlatformRole): Promise<boolean> {
+  if (email === env.ADMIN_EMAIL) return false;
+  const canRemove = and(
+    eq(platformAccess.email, email),
+    callerRole === 'super_admin' ? undefined : ne(platformAccess.role, 'admin')
+  );
+  const result = await db.execute(sql`
+    WITH removed AS (
+      DELETE FROM platform_access WHERE ${canRemove} RETURNING email
+    ), revoked AS (
+      UPDATE users SET sessions_valid_after = clock_timestamp(), updated_at = now()
+      FROM removed WHERE users.email = removed.email RETURNING users.id
+    )
+    SELECT EXISTS (SELECT 1 FROM removed) AS removed
+  `);
+  return result.rows[0]?.removed === true;
 }

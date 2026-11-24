@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { env } from './lib/env';
+import { verificationMaintenancePage } from './lib/verification-maintenance';
 
 /**
  * Per-request nonce-based Content Security Policy.
@@ -21,6 +23,9 @@ const DEV = process.env.NODE_ENV === 'development';
 
 export function proxy(request: NextRequest) {
   const nonce = Buffer.from(crypto.randomUUID()).toString('base64');
+  if (/^\/verify\/[^/]+\/?$/.test(request.nextUrl.pathname) && env.VERIFY_MAINTENANCE) {
+    return verificationMaintenancePage(nonce);
+  }
   const requestId = crypto.randomUUID();
 
   const csp = [

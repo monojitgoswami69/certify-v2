@@ -2,14 +2,15 @@
 
 import { Mail, Paperclip, FileImage, FileText as FilePdf, Code } from 'lucide-react';
 import { useState } from 'react';
+import { useAuthStore } from '../../store/useAuthStore';
 import { useAppStore } from '../../store/useAppStore';
 import { replaceTemplateVariables, resolveFieldValue } from '../../lib/utils';
 
 export function EmailPreviewPane() {
-  const { csvData, boxes, emailColumn, emailSettings, connectedGoogleAccount } = useAppStore();
+  const { csvData, boxes, emailColumn, emailSettings } = useAppStore();
   const [viewType, setViewType] = useState<'plain' | 'html'>('plain');
 
-  const senderEmail = connectedGoogleAccount?.email || 'sender@example.com';
+  const senderEmail = useAuthStore((state) => state.user?.email) ?? '';
 
   const previewData = csvData.length > 0 ? csvData[0] : {};
 

@@ -3,7 +3,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { downloadZip } from 'client-zip';
 import { useAppStore } from '../../store/useAppStore';
-import { useAuthStore } from '../../store/useAuthStore';
 import {
   downloadBlob,
   downloadErrorReport,
@@ -15,7 +14,6 @@ import {
 import { generateCertificate } from '../../lib/certificate-engine';
 import { ensureFontsLoaded, loadFontsForWorker, type WorkerFontData } from '../../lib/font-loader';
 import { buildVerifyUrlFor } from '../../lib/cert-registration';
-import { autoSaveCurrentTemplate } from '../../lib/template-autosave';
 import {
   CertificateWorkerPool,
   type OutputFormat,
@@ -211,7 +209,6 @@ export function useCertificateBatchGenerator() {
     isBatchRegistered,
   } = useAppStore();
 
-  const { token } = useAuthStore();
 
   const [progress, setProgress] = useState<GenerateProgress>(DEFAULT_PROGRESS);
   const [logs, setLogs] = useState<GenerateLogs>(DEFAULT_LOGS);
@@ -235,7 +232,7 @@ export function useCertificateBatchGenerator() {
   const failedMapRef = useRef<Map<number, { error: string; timestamp: string }>>(new Map());
   const errorsRef = useRef<FailedRecord[]>([]);
 
-  const validBoxes = boxes.filter((b) => b.field);
+  const validBoxes = boxes.filter((b) => b.field || b.kind === 'static');
   const useQr = qrZones.length > 0;
   const isReady = Boolean(
     templateImage &&
@@ -831,21 +828,6 @@ export function useCertificateBatchGenerator() {
 
       setRetryQueue(currentErrors);
 
-      // Step 7: Auto-save template & layout configuration
-      if (allSuccessfulCerts.length > 0 && !abortRef.current) {
-        autoSaveCurrentTemplate({
-          templateImage,
-          templateFile,
-          eventName,
-          boxes,
-          qrZones,
-          images,
-          defaultFont,
-          defaultFontSize,
-          defaultFontColor,
-          token,
-        }).catch((err) => console.warn('[AutoSave Template Error]:', err));
-      }
       } finally {
         generateInFlightRef.current = false;
       }
@@ -861,7 +843,6 @@ export function useCertificateBatchGenerator() {
       defaultFont,
       defaultFontSize,
       defaultFontColor,
-      token,
       exportFormats,
       setError,
       getFilenameBasis,

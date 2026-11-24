@@ -1,3 +1,4 @@
+import { log, requestIdOf } from '../../../../lib/logger';
 import { NextResponse } from 'next/server';
 import { mutationAllowed, forbiddenCsrfResponse } from '../../../../lib/server-auth';
 import { unauthorizedResponse, clearSessionCookie } from '../../../../lib/server-auth';
@@ -21,7 +22,7 @@ export async function POST(request: Request) {
     clearSessionCookie(response);
     return response;
   } catch (error) {
-    console.error('[Logout error]:', error);
+    log.warn('auth', 'Sign-out failed', { requestId: requestIdOf(request) }, error);
     return NextResponse.json({ detail: 'Logout failed' }, { status: 500 });
   }
 }

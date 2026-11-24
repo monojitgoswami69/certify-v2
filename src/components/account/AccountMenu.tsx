@@ -1,12 +1,15 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { LogOut, UserRound } from 'lucide-react';
+import Link from 'next/link';
+import { usePathname, useRouter } from 'next/navigation';
+import { KeyRound, LogOut, UserRound } from 'lucide-react';
+import { canManageAccess } from '../../lib/access-role';
 import { useAuthStore } from '../../store/useAuthStore';
 
 export function AccountMenu({ compact = false }: { compact?: boolean }) {
   const router = useRouter();
+  const pathname = usePathname();
   const user = useAuthStore((state) => state.user);
   const logout = useAuthStore((state) => state.logout);
   const updateProfile = useAuthStore((state) => state.updateProfile);
@@ -66,7 +69,7 @@ export function AccountMenu({ compact = false }: { compact?: boolean }) {
         aria-expanded={open}
         aria-haspopup="menu"
         aria-label={`Account menu for ${label}`}
-        className="flex items-center gap-2 px-1.5 py-1 text-stone-800 hover:text-stone-950 cursor-pointer"
+        className={`flex items-center gap-2 rounded-md px-1.5 py-1 text-stone-800 hover:text-stone-950 focus-visible:outline-2 focus-visible:outline-primary-600 cursor-pointer ${compact ? '' : 'min-h-10'}`}
         title={user.email}
       >
         {user.picture ? (
@@ -81,18 +84,31 @@ export function AccountMenu({ compact = false }: { compact?: boolean }) {
             {initial}
           </span>
         )}
-        {!compact && (
-          <span className="hidden sm:block max-w-[9rem] truncate text-sm font-medium">{label}</span>
-        )}
+        {!compact && <span className="hidden sm:block max-w-[9rem] truncate text-sm font-semibold">{label}</span>}
       </button>
 
       {open && (
         <div role="menu" className="absolute right-0 top-full mt-1 w-60 bg-white border border-stone-200 z-50">
           <div className="px-3 py-2.5 border-b border-stone-200">
-            <p className="text-sm font-medium text-stone-900 truncate">{user.name}</p>
-            <p className="text-xs text-stone-500 truncate">{user.email}</p>
-            {user.role === 'admin' && <p className="text-xs text-stone-400 mt-1">Administrator</p>}
+            <p className="text-sm font-semibold text-stone-900 truncate">{user.name}</p>
+            <p className="text-sm text-stone-700 truncate">{user.email}</p>
+            {canManageAccess(user.platformRole) && (
+              <p className="text-sm text-stone-700 mt-1">
+                {user.platformRole === 'super_admin' ? 'Super admin' : 'Administrator'}
+              </p>
+            )}
           </div>
+          {canManageAccess(user.platformRole) && pathname !== '/admin' && (
+            <Link
+              href="/admin"
+              role="menuitem"
+              onClick={() => setOpen(false)}
+              className="w-full px-3 py-2 text-sm text-stone-800 hover:bg-stone-50 flex items-center gap-2"
+            >
+              <KeyRound className="w-4 h-4" aria-hidden="true" />
+              Manage access
+            </Link>
+          )}
           <button
             type="button"
             role="menuitem"
@@ -129,13 +145,13 @@ export function AccountMenu({ compact = false }: { compact?: boolean }) {
             className="w-full max-w-md bg-[#FBFAF5] border border-stone-300 p-6"
             onClick={(event) => event.stopPropagation()}
           >
-            <h2 id="profile-title" className="font-jura text-2xl text-stone-900">
+            <h2 id="profile-title" className="section-title text-stone-900">
               Profile
             </h2>
             <p className="mt-1 text-sm text-stone-500">
               This name is shown as the issuer when someone verifies a certificate you published.
             </p>
-            <label className="mt-5 block text-xs uppercase tracking-wider text-stone-500" htmlFor="issued-by">
+            <label className="mt-5 block text-sm font-medium text-stone-700" htmlFor="issued-by">
               Issued by
             </label>
             <input
@@ -143,7 +159,7 @@ export function AccountMenu({ compact = false }: { compact?: boolean }) {
               value={issuedByName}
               onChange={(event) => setIssuedByName(event.target.value)}
               maxLength={120}
-              className="mt-2 w-full bg-transparent border-b border-stone-300 py-2 text-stone-900 outline-none focus:border-stone-900"
+              className="form-control-text mt-2 w-full bg-transparent border-b border-stone-300 py-2 text-stone-900 outline-none focus:border-stone-900"
             />
             {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
             <div className="mt-6 flex justify-end gap-4">

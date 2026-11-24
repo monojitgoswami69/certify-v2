@@ -3,10 +3,11 @@
 import { useState, useEffect, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
+import Link from 'next/link';
 import { Eye, EyeOff } from 'lucide-react';
 import { GoogleLogin, GoogleOAuthProvider } from '@react-oauth/google';
 import { useAuthStore } from '../../store/useAuthStore';
-import { getAuthToken } from '../../lib/api-client';
+import { signedInHome } from '../../lib/access-role';
 
 const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || '';
 
@@ -24,7 +25,7 @@ function LoginPageInner() {
   const [isLoading, setIsLoading] = useState(false);
   const [isCheckingSession, setIsCheckingSession] = useState(true);
 
-  const { isAuthenticated, isLoading: authLoading, initialize, login, loginWithGoogle } = useAuthStore();
+  const { user, isAuthenticated, isLoading: authLoading, initialize, login, loginWithGoogle } = useAuthStore();
   const router = useRouter();
 
   // On mount: restore remembered username and initialize session
@@ -35,26 +36,22 @@ function LoginPageInner() {
         setEmail(savedUser);
         setRememberMe(true);
       }
-      const hasStoredToken = Boolean(getAuthToken());
-      if (!hasStoredToken) {
-        setIsCheckingSession(false);
-      }
     } catch {
-      setIsCheckingSession(false);
+      // Sign-in still works when browser storage is unavailable.
     }
     initialize();
   }, [initialize]);
 
-  // If already authenticated with a valid session, redirect to dashboard
+  // A verified profile supplies the destination for every sign-in method.
   useEffect(() => {
     if (!authLoading) {
       if (isAuthenticated) {
-        router.replace('/dashboard');
+        router.replace(signedInHome(user?.platformRole));
       } else {
         setIsCheckingSession(false);
       }
     }
-  }, [authLoading, isAuthenticated, router]);
+  }, [authLoading, isAuthenticated, user?.platformRole, router]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -63,7 +60,6 @@ function LoginPageInner() {
 
     try {
       await login(email, password, rememberMe);
-      router.push('/dashboard');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An unexpected error occurred. Please try again.');
     } finally {
@@ -73,7 +69,7 @@ function LoginPageInner() {
 
   if (isCheckingSession && (authLoading || isAuthenticated)) {
     return (
-      <div className="login-page relative isolate min-h-screen flex items-center justify-center p-4 md:p-8 transition-colors duration-300">
+      <div className="relative isolate min-h-screen flex items-center justify-center p-4 md:p-8 transition-colors duration-300">
         <div className="login-mountain-bg">
           <Image
             src="/login_background.webp"
@@ -103,7 +99,7 @@ function LoginPageInner() {
   }
 
   return (
-    <div className="login-page relative isolate min-h-screen flex items-center justify-center p-4 md:p-8 transition-colors duration-300">
+    <div className="relative isolate min-h-screen flex items-center justify-center p-4 md:p-8 transition-colors duration-300">
       <div className="login-mountain-bg">
         <Image
           src="/login_background.webp"
@@ -135,10 +131,10 @@ function LoginPageInner() {
             <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent"></div>
 
             <div className="relative z-10 p-8 md:p-12 mb-4">
-              <h1 className="text-3xl md:text-5xl font-jura font-bold leading-tight tracking-tight drop-shadow-sm font-[700]">
+              <h1 className="text-2xl md:text-4xl font-semibold leading-tight tracking-tight drop-shadow-sm">
                 Welcome to <span className="text-amber-300 font-jura font-bold tracking-normal font-[700]">Certify</span>
               </h1>
-              <p className="mt-6 text-white/95 text-base sm:text-lg font-quicksand font-medium leading-relaxed">
+              <p className="mt-6 text-white/95 text-base sm:text-lg font-medium leading-relaxed">
                 Your one-stop destination for generating, exporting, and emailing professional certificates.
               </p>
             </div>
@@ -148,14 +144,14 @@ function LoginPageInner() {
         <div className="md:w-[55%] p-8 md:p-16 flex flex-col justify-center relative">
           <div className="max-w-md mx-auto w-full">
             <div className="mb-8">
-              <h2 className="text-3xl font-jura font-bold text-slate-800 tracking-tight mb-2 font-[700]">Welcome back</h2>
-              <p className="text-slate-500 font-quicksand font-medium text-base">
+              <h2 className="page-title text-slate-900 mb-2">Welcome back</h2>
+              <p className="text-sm leading-relaxed text-slate-700">
                 Sign in with Google. The organization admin can also use email and password.
               </p>
             </div>
 
             {error && (
-              <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl text-red-600 font-quicksand text-sm font-semibold">
+              <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl text-red-600 text-sm font-semibold">
                 {error}
               </div>
             )}
@@ -171,7 +167,6 @@ function LoginPageInner() {
                     setError('');
                     setIsLoading(true);
                     loginWithGoogle(credentialResponse.credential, undefined, rememberMe)
-                      .then(() => router.push('/dashboard'))
                       .catch((err: unknown) => {
                         setError(err instanceof Error ? err.message : 'Google sign-in failed');
                       })
@@ -185,7 +180,7 @@ function LoginPageInner() {
                 />
                 <div className="flex items-center gap-3 mt-6">
                   <div className="h-px flex-1 bg-stone-200" />
-                  <span className="text-[11px] uppercase tracking-wider text-stone-400 font-quicksand">Admin password</span>
+                  <span className="text-xs font-medium text-stone-700">Admin password</span>
                   <div className="h-px flex-1 bg-stone-200" />
                 </div>
               </div>
@@ -193,11 +188,11 @@ function LoginPageInner() {
 
             <form className="space-y-6" onSubmit={handleSubmit}>
               <div>
-                <label className="block text-xs uppercase tracking-wider font-bold font-quicksand text-slate-700 mb-2 ml-1" htmlFor="email">
+                <label className="block text-sm font-medium text-slate-800 mb-2 ml-1" htmlFor="email">
                   Email
                 </label>
                 <input
-                  className="w-full px-4 py-3.5 rounded-xl login-input-glass text-slate-900 font-quicksand font-medium transition-all outline-none placeholder:text-slate-500 shadow-xs"
+                  className="w-full px-4 py-3.5 rounded-xl login-input-glass form-control-text text-slate-900 transition-all outline-none placeholder:text-slate-500 shadow-xs"
                   id="email"
                   name="email"
                   placeholder="admin@organization.com"
@@ -210,12 +205,12 @@ function LoginPageInner() {
               </div>
 
               <div>
-                <label className="block text-xs uppercase tracking-wider font-bold font-quicksand text-slate-700 mb-2 ml-1" htmlFor="password">
+                <label className="block text-sm font-medium text-slate-800 mb-2 ml-1" htmlFor="password">
                   Password
                 </label>
                 <div className="relative">
                   <input
-                    className="w-full px-4 py-3.5 rounded-xl login-input-glass text-slate-900 font-quicksand font-medium transition-all outline-none placeholder:text-slate-500 shadow-xs pr-12"
+                    className="w-full px-4 py-3.5 rounded-xl login-input-glass form-control-text text-slate-900 transition-all outline-none placeholder:text-slate-500 shadow-xs pr-12"
                     id="password"
                     name="password"
                     placeholder="Enter your password"
@@ -244,19 +239,23 @@ function LoginPageInner() {
                   onChange={(e) => setRememberMe(e.target.checked)}
                   className="w-4 h-4 rounded border-slate-300 text-primary-600 focus:ring-0 focus:outline-none transition-colors cursor-pointer accent-primary-600"
                 />
-                <label htmlFor="remember" className="text-sm font-quicksand font-semibold text-slate-600 cursor-pointer select-none">
+                <label htmlFor="remember" className="text-sm font-semibold text-slate-600 cursor-pointer select-none">
                   Remember me
                 </label>
               </div>
 
               <button
-                className="w-full bg-primary-600 hover:bg-primary-700 text-white font-saira font-bold uppercase tracking-wider py-3.5 rounded-xl shadow-lg shadow-primary-600/25 transition-all transform hover:-translate-y-0.5 active:translate-y-0 text-base mt-4 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none cursor-pointer"
+                className="w-full bg-primary-600 hover:bg-primary-700 text-white font-semibold py-3 rounded-xl shadow-lg shadow-primary-600/25 transition-all transform hover:-translate-y-0.5 active:translate-y-0 text-sm mt-4 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none cursor-pointer"
                 type="submit"
                 disabled={isLoading}
               >
                 {isLoading ? 'Signing in...' : 'Sign In'}
               </button>
             </form>
+            <nav aria-label="Legal" className="mt-5 flex gap-4 text-xs font-medium text-slate-700">
+              <Link href="/privacy" className="underline underline-offset-2">Privacy Policy</Link>
+              <Link href="/terms" className="underline underline-offset-2">Terms of Service</Link>
+            </nav>
           </div>
         </div>
       </div>

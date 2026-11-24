@@ -86,7 +86,7 @@ export function EmailSendButton() {
             <div className="space-y-2">
               <button
                 type="button"
-                onClick={() => registerBatch(registrationDirty)}
+                onClick={() => registerBatch()}
                 disabled={isBatchRegistering}
                 className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-medium disabled:from-slate-200 disabled:to-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed transition-all shadow-md shadow-slate-900/10 cursor-pointer"
               >
@@ -237,13 +237,13 @@ export function EmailSendButton() {
 
           <div
             className={`p-3 rounded-lg ${
-              emailProgress.errors.length > 0
+              (emailProgress.errors.length > 0 || emailProgress.current < emailProgress.total)
                 ? 'bg-amber-50 border border-amber-200'
                 : 'bg-emerald-50 border border-emerald-200'
             }`}
           >
             <div className="flex items-start gap-2">
-              {emailProgress.errors.length > 0 ? (
+              {(emailProgress.errors.length > 0 || emailProgress.current < emailProgress.total) ? (
                 <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
               ) : (
                 <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0 mt-0.5" />
@@ -251,19 +251,19 @@ export function EmailSendButton() {
               <div>
                 <p
                   className={`font-medium ${
-                    emailProgress.errors.length > 0 ? 'text-amber-800' : 'text-emerald-800'
+                    (emailProgress.errors.length > 0 || emailProgress.current < emailProgress.total) ? 'text-amber-800' : 'text-emerald-800'
                   }`}
                 >
-                  {emailProgress.errors.length > 0
+                  {(emailProgress.errors.length > 0 || emailProgress.current < emailProgress.total)
                     ? 'Completed with issues'
-                    : 'All emails sent successfully!'}
+                    : 'Batch finished'}
                 </p>
                 <p
                   className={`text-sm ${
-                    emailProgress.errors.length > 0 ? 'text-amber-600' : 'text-emerald-600'
+                    (emailProgress.errors.length > 0 || emailProgress.current < emailProgress.total) ? 'text-amber-600' : 'text-emerald-600'
                   }`}
                 >
-                  {emailProgress.sent.length} of {csvData.length} emails delivered
+                  {allTrackedRecords.filter(({ status }) => status === 'sent').length} of {csvData.length} emails accepted by Gmail
                 </p>
               </div>
             </div>
@@ -308,10 +308,10 @@ export function EmailSendButton() {
                 <button
                   onClick={handleDownloadErrorReport}
                   className="flex items-center justify-center gap-1.5 py-1.5 px-2.5 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition-colors cursor-pointer"
-                  title="Download CSV of failed records only"
+                  title="Download CSV of send issues"
                 >
                   <Download className="w-3.5 h-3.5 text-red-600" />
-                  <span>Export Failed CSV</span>
+                  <span>Export Issues CSV</span>
                 </button>
               ) : (
                 <div className="flex items-center justify-center text-[11px] text-emerald-600 font-medium">

@@ -1,439 +1,211 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import {
-  ShieldCheck,
-  RefreshCw,
-  UserPlus,
-  Trash2,
-  BarChart3,
-  KeyRound,
-  LayoutDashboard,
-  Eye,
-} from 'lucide-react';
+import { BarChart3, KeyRound, LayoutDashboard, RefreshCw } from 'lucide-react';
 import { useAuthStore } from '../../store/useAuthStore';
-import { getAuthToken } from '../../lib/api-client';
+import { CertifyHeader } from '../../components/account/CertifyHeader';
+import { apiFetch } from '../../lib/api-client';
+import type { ManagedRole } from '../../lib/platform-access';
+import { AccessManagement, type AccessRow } from './AccessManagement';
+import { AdminOverview, type AccountRow, type Overview } from './AdminOverview';
 
-interface Overview {
-  accounts: number;
-  newAccounts30d: number;
-  events: number;
-  certificates: number;
-  activeCertificates: number;
-  revokedCertificates: number;
-  totalViews: number;
-  templates: number;
-  batches: number;
-  certs7d: number;
-  certs30d: number;
-}
-
-interface AccountRow {
-  email: string;
-  role: string;
-  createdAt: string | null;
-  eventCount: number;
-  certificateCount: number;
-  activeCount: number;
-  revokedCount: number;
-  totalViews: number;
-  lastIssuedAt: string | null;
-  lastActiveAt: string | null;
-}
-
-interface AccessRow {
-  email: string;
-  role: 'user' | 'admin' | 'super_admin';
-  createdAt: string;
-}
-
-/**
- * Admin console — a separate surface from the dashboard/studio. Shows
- * platform analytics and manages the sign-in allowlist. Analytics are
- * strictly aggregate: recipient data never appears here.
- */
-function AdminClient() {
+export default function AdminClient() {
   const router = useRouter();
-  const { isAuthenticated, isLoading: authLoading, initialize } = useAuthStore();
+  const { isAuthenticated, isLoading: authLoading, user, initialize, checkAuth } = useAuthStore();
 
-  const [tab, setTab] = useState<'overview' | 'access'>('overview');
+  const [tab, setTab] = useState<'overview' | 'access'>('access');
   const [loading, setLoading] = useState(true);
   const [forbidden, setForbidden] = useState(false);
   const [overview, setOverview] = useState<Overview | null>(null);
-  const [accounts, setAccounts] = useState<AccountRow[]>([]);
-  const [access, setAccess] = useState<AccessRow[]>([]);
+  const [accounts, setAccounts] = useState<AccountRow[] | null>(null);
+  const [access, setAccess] = useState<AccessRow[] | null>(null);
   const [callerRole, setCallerRole] = useState<'admin' | 'super_admin'>('admin');
-  const [newEmail, setNewEmail] = useState('');
-  const [newRole, setNewRole] = useState<'user' | 'admin'>('user');
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
-  const authedFetch = useCallback(async (path: string, init?: RequestInit) => {
-    const token = getAuthToken();
-    const res = await fetch(path, {
-      credentials: 'same-origin',
-      headers: {
-        'X-Certify-Request': '1',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      ...init,
-    });
-    return res;
-  }, []);
-
   const loadAll = useCallback(async () => {
     setLoading(true);
+    setMessage(null);
     try {
-      const [ovRes, acRes, axRes] = await Promise.all([
-        authedFetch('/api/admin/overview'),
-        authedFetch('/api/admin/accounts'),
-        authedFetch('/api/admin/access'),
+      const [overviewResponse, accountsResponse, accessResponse] = await Promise.all([
+        apiFetch('/api/admin/overview'),
+        apiFetch('/api/admin/accounts'),
+        apiFetch('/api/admin/access'),
       ]);
-      if (ovRes.status === 403 || acRes.status === 403) {
+      const responses = [overviewResponse, accountsResponse, accessResponse];
+      if (responses.some((response) => response.status === 403)) {
         setForbidden(true);
+        setOverview(null);
+        setAccounts(null);
+        setAccess(null);
         return;
       }
-      if (ovRes.ok) setOverview((await ovRes.json()).overview);
-      if (acRes.ok) setAccounts((await acRes.json()).accounts);
-      if (axRes.ok) {
-        const data = await axRes.json();
-        setAccess(data.access ?? []);
-        setCallerRole(data.callerRole ?? 'admin');
+      setForbidden(false);
+      if (overviewResponse.ok) setOverview((await overviewResponse.json()).overview);
+      if (accountsResponse.ok) setAccounts((await accountsResponse.json()).accounts);
+      if (accessResponse.ok) {
+        const data = await accessResponse.json();
+        setAccess(data.access);
+        setCallerRole(data.callerRole);
       }
+      if (responses.some((response) => !response.ok)) {
+        throw new Error('Some admin data could not be loaded. Try refreshing.');
+      }
+    } catch (error) {
+      setMessage({ ok: false, text: error instanceof Error ? error.message : 'Could not load admin data' });
     } finally {
       setLoading(false);
     }
-  }, [authedFetch]);
+  }, []);
+
+  useEffect(() => { initialize(); }, [initialize]);
 
   useEffect(() => {
-    initialize();
-  }, [initialize]);
-
-  useEffect(() => {
-    if (!authLoading && !isAuthenticated) router.push('/login');
-    if (!authLoading && isAuthenticated) void loadAll();
+    if (authLoading) return;
+    if (isAuthenticated) void loadAll();
+    else router.replace('/login');
   }, [authLoading, isAuthenticated, router, loadAll]);
 
-  const saveAccess = async () => {
-    if (!newEmail.trim() || saving) return;
+  async function updateAccess(
+    { method, body, email }: {
+      method: 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+      body?: object;
+      email: string;
+    },
+    confirmation: string,
+    fallback: string
+  ) {
+    if (saving || loading) return false;
     setSaving(true);
     setMessage(null);
     try {
-      const res = await authedFetch('/api/admin/access', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: newEmail.trim(), role: newRole }),
+      const path = method === 'DELETE' ? `/api/admin/access?email=${encodeURIComponent(email)}` : '/api/admin/access';
+      const response = await apiFetch(path, {
+        method,
+        headers: body ? { 'Content-Type': 'application/json' } : undefined,
+        body: body ? JSON.stringify({ email, ...body }) : undefined,
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.detail || 'Failed to update access');
-      setAccess(data.access ?? []);
-      setCallerRole(data.callerRole ?? callerRole);
-      setNewEmail('');
-      setMessage({ ok: true, text: `${newEmail.trim()} can now access the platform.` });
-    } catch (err) {
-      setMessage({ ok: false, text: err instanceof Error ? err.message : 'Failed' });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || fallback);
+      setAccess(data.access);
+      setCallerRole(data.callerRole);
+      if (method === 'PUT' && email === user?.email) await checkAuth();
+      setMessage({ ok: true, text: confirmation });
+      return true;
+    } catch (error) {
+      setMessage({ ok: false, text: error instanceof Error ? error.message : fallback });
+      return false;
     } finally {
       setSaving(false);
     }
-  };
-
-  const removeAccess = async (email: string) => {
-    if (saving) return;
-    setSaving(true);
-    setMessage(null);
-    try {
-      const res = await authedFetch(`/api/admin/access?email=${encodeURIComponent(email)}`, {
-        method: 'DELETE',
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.detail || 'Failed to remove access');
-      setAccess(data.access ?? []);
-      setMessage({ ok: true, text: `${email} can no longer sign in.` });
-    } catch (err) {
-      setMessage({ ok: false, text: err instanceof Error ? err.message : 'Failed' });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  if (authLoading || loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <RefreshCw className="w-6 h-6 animate-spin text-stone-400" />
-      </div>
-    );
   }
 
-  if (forbidden) {
-    return (
-      <div className="min-h-screen flex items-center justify-center p-6">
-        <div className="max-w-sm text-center">
-          <ShieldCheck className="w-10 h-10 text-stone-300 mx-auto mb-3" />
-          <h1 className="font-jura font-bold text-xl text-stone-900">Admin access required</h1>
-          <p className="text-sm text-stone-500 mt-1.5 font-quicksand">
-            This console is limited to accounts your organization's admin has elevated.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  const tiles = overview
-    ? [
-        { label: 'Accounts', value: overview.accounts, sub: `+${overview.newAccounts30d} in 30 days` },
-        { label: 'Events', value: overview.events, sub: null },
-        { label: 'Certificates', value: overview.certificates, sub: `${overview.certs30d} in 30 days` },
-        { label: 'Active', value: overview.activeCertificates, sub: `${overview.revokedCertificates} revoked` },
-        { label: 'Verification views', value: overview.totalViews, sub: null },
-        { label: 'Templates', value: overview.templates, sub: `${overview.batches} batch runs` },
-      ]
-    : [];
+  const isCheckingAccess = authLoading || !isAuthenticated;
+  const canOpenCertificates = access?.some((account) => account.email === user?.email && account.canIssueCertificates);
+  const unavailable = tab === 'access' ? !access : !overview && !accounts;
 
   return (
-    <div className="min-h-screen">
-      <header className="border-b border-stone-200/80 bg-[#FBFAF5]">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <ShieldCheck className="w-6 h-6 text-primary-600" />
-            <div>
-              <h1 className="font-jura font-bold text-lg text-stone-900 leading-tight">Admin console</h1>
-              <p className="text-[11px] text-stone-500 font-quicksand">
-                Aggregate analytics &amp; access management — user data stays with users.
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void loadAll()}
-              className="p-2 hover:bg-stone-100 rounded-lg transition-colors cursor-pointer"
-              title="Refresh"
-              aria-label="Refresh"
-            >
-              <RefreshCw className="w-4 h-4 text-stone-500" />
-            </button>
-            <button
-              type="button"
-              onClick={() => router.push('/dashboard')}
-              className="px-3 py-1.5 text-xs font-semibold text-stone-600 border border-stone-200 rounded-lg hover:bg-stone-50 transition-colors cursor-pointer"
-            >
-              Back to app
-            </button>
-          </div>
-        </div>
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 flex gap-1 pb-px">
-          {(
-            [
-              { id: 'overview' as const, label: 'Overview', Icon: BarChart3 },
-              { id: 'access' as const, label: 'Access management', Icon: KeyRound },
-            ]
-          ).map(({ id, label, Icon }) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setTab(id)}
-              className={`inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-t-lg border border-b-0 transition-colors cursor-pointer ${
-                tab === id
-                  ? 'bg-white border-stone-200 text-stone-900 -mb-px'
-                  : 'text-stone-500 hover:text-stone-800'
-              }`}
-            >
-              <Icon className="w-4 h-4" />
-              {label}
-            </button>
-          ))}
-        </div>
-      </header>
-
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
-        {tab === 'overview' && (
-          <div className="space-y-6 animate-fade-in">
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-              {tiles.map((t) => (
-                <div key={t.label} className="py-3 px-4 rounded-xl border border-[#E5DAC3] bg-white/70">
-                  <p className="text-[11px] font-semibold uppercase tracking-wider text-stone-500 font-quicksand">
-                    {t.label}
-                  </p>
-                  <p className="font-saira font-bold text-2xl text-slate-900 tabular-nums mt-0.5">
-                    {t.value.toLocaleString()}
-                  </p>
-                  {t.sub && <p className="text-[11px] text-stone-400 font-quicksand">{t.sub}</p>}
-                </div>
-              ))}
-            </div>
-
-            <div>
-              <h2 className="font-jura font-bold text-base text-stone-900 mb-2 flex items-center gap-1.5">
-                <LayoutDashboard className="w-4 h-4 text-stone-400" />
-                Per-account activity
-              </h2>
-              <p className="text-xs text-stone-500 font-quicksand mb-2">
-                Counts and dates only — certificate contents and recipient data are never visible to admins.
-              </p>
-              <div className="overflow-x-auto rounded-xl border border-[#E5DAC3] bg-white/70">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="text-left text-[11px] uppercase tracking-wider text-stone-500 border-b border-[#E5DAC3]">
-                      <th className="px-3 py-2 font-quicksand">Account</th>
-                      <th className="px-3 py-2 font-quicksand">Role</th>
-                      <th className="px-3 py-2 font-quicksand text-right">Events</th>
-                      <th className="px-3 py-2 font-quicksand text-right">Certs</th>
-                      <th className="px-3 py-2 font-quicksand text-right">Active</th>
-                      <th className="px-3 py-2 font-quicksand text-right">Revoked</th>
-                      <th className="px-3 py-2 font-quicksand text-right">Views</th>
-                      <th className="px-3 py-2 font-quicksand">Joined</th>
-                      <th className="px-3 py-2 font-quicksand">Last active</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-stone-100 font-quicksand text-slate-700">
-                    {accounts.map((a) => (
-                      <tr key={a.email}>
-                        <td className="px-3 py-2 font-medium break-all">{a.email}</td>
-                        <td className="px-3 py-2">
-                          <span
-                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase border ${
-                              a.role === 'super_admin'
-                                ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
-                                : a.role === 'admin'
-                                  ? 'bg-amber-50 text-amber-700 border-amber-200'
-                                  : 'bg-slate-50 text-slate-500 border-slate-200'
-                            }`}
-                          >
-                            {a.role}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums">{a.eventCount}</td>
-                        <td className="px-3 py-2 text-right tabular-nums">{a.certificateCount}</td>
-                        <td className="px-3 py-2 text-right tabular-nums text-emerald-700">{a.activeCount}</td>
-                        <td className="px-3 py-2 text-right tabular-nums text-red-600">{a.revokedCount}</td>
-                        <td className="px-3 py-2 text-right tabular-nums">
-                          <span className="inline-flex items-center gap-1">
-                            <Eye className="w-3 h-3 text-stone-300" />
-                            {a.totalViews.toLocaleString()}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 text-stone-500">{a.createdAt ?? '—'}</td>
-                        <td className="px-3 py-2 text-stone-500">{a.lastActiveAt ?? '—'}</td>
-                      </tr>
-                    ))}
-                    {accounts.length === 0 && (
-                      <tr>
-                        <td colSpan={9} className="px-3 py-6 text-center text-stone-400">
-                          No accounts yet.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
+    <div className="min-h-screen bg-app-background text-sm text-slate-900">
+      <CertifyHeader>
+        {!isCheckingAccess && !forbidden && canOpenCertificates && (
+          <Link href="/dashboard" className="inline-flex min-h-10 items-center gap-2 rounded-md border border-app-border bg-white px-2.5 text-sm font-semibold text-slate-800 hover:bg-app-background hover:text-primary-700 sm:px-3.5">
+            <LayoutDashboard className="size-4" aria-hidden="true" />
+            Certificates
+          </Link>
         )}
+      </CertifyHeader>
 
-        {tab === 'access' && (
-          <div className="space-y-5 animate-fade-in max-w-3xl">
-            <div className="p-4 rounded-xl border border-[#E5DAC3] bg-white/70 space-y-3">
-              <h2 className="font-jura font-bold text-base text-stone-900 flex items-center gap-1.5">
-                <UserPlus className="w-4 h-4 text-stone-400" />
-                Grant platform access
-              </h2>
-              <p className="text-xs text-stone-500 font-quicksand">
-                Only emails on this list can sign in.
-                {callerRole === 'super_admin'
-                  ? ' As super admin you can also elevate other admins.'
-                  : ' Only the super admin can add more admins.'}
-              </p>
-              <div className="flex flex-col sm:flex-row gap-2">
-                <input
-                  value={newEmail}
-                  onChange={(e) => setNewEmail(e.target.value)}
-                  placeholder="name@organization.com"
-                  type="email"
-                  className="flex-1 px-3 py-2 text-sm bg-white border border-[#E5DAC3] rounded-lg focus:outline-none focus:border-slate-400 font-quicksand"
-                  aria-label="Email to grant access"
-                />
-                <select
-                  value={newRole}
-                  onChange={(e) => setNewRole(e.target.value as 'user' | 'admin')}
-                  className="px-3 py-2 text-sm bg-white border border-[#E5DAC3] rounded-lg focus:outline-none focus:border-slate-400 font-quicksand cursor-pointer"
-                  aria-label="Role"
-                >
-                  <option value="user">User</option>
-                  {callerRole === 'super_admin' && <option value="admin">Admin</option>}
-                </select>
+      <main className="mx-auto w-full max-w-6xl px-4 pt-4 pb-10 sm:px-6 sm:pt-5">
+        {isCheckingAccess ? (
+          <p role="status" className="text-stone-700">Checking your access…</p>
+        ) : forbidden ? (
+          <>
+            <h1 className="page-title">Admin access required</h1>
+            <p className="mt-3 text-stone-700">Access management is available to administrators.</p>
+            <Link href="/dashboard" className="mt-4 inline-flex min-h-10 items-center font-semibold text-primary-700 underline">
+              Back to certificates
+            </Link>
+          </>
+        ) : (
+          <>
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+              <h1 className="page-title">Admin console</h1>
+              <button
+                type="button"
+                onClick={() => void loadAll()}
+                disabled={loading || saving}
+                className="inline-flex min-h-10 items-center gap-2 rounded-md px-2 text-sm font-semibold text-primary-800 enabled:hover:bg-primary-50 disabled:text-stone-600"
+              >
+                <RefreshCw className={`size-4 ${loading ? 'motion-safe:animate-spin' : ''}`} aria-hidden="true" />
+                {loading ? 'Refreshing…' : 'Refresh'}
+              </button>
+            </div>
+
+            <nav aria-label="Admin console" className="mt-2 flex gap-5 border-b border-app-border sm:gap-6">
+              {[
+                { id: 'access' as const, label: 'Access management', Icon: KeyRound },
+                { id: 'overview' as const, label: 'Overview', Icon: BarChart3 },
+              ].map(({ id, label, Icon }) => (
                 <button
+                  key={id}
                   type="button"
-                  onClick={() => void saveAccess()}
-                  disabled={saving || !newEmail.trim()}
-                  className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-sm font-semibold transition-colors cursor-pointer disabled:opacity-50 shrink-0"
+                  aria-pressed={tab === id}
+                  onClick={() => setTab(id)}
+                  className={`-mb-px inline-flex min-h-11 items-center gap-2 border-b-2 text-sm font-medium ${
+                    tab === id ? 'border-primary-600 text-primary-800' : 'border-transparent text-stone-700 hover:text-primary-800'
+                  }`}
                 >
-                  Grant access
+                  <Icon className="size-4" aria-hidden="true" />
+                  {label}
                 </button>
-              </div>
-              {message && (
-                <p className={`text-xs font-quicksand font-medium ${message.ok ? 'text-emerald-700' : 'text-red-600'}`} role="status">
+              ))}
+            </nav>
+
+            <div className="pt-5">
+              {message && (tab === 'access' || !message.ok) && (
+                <p role={message.ok ? 'status' : 'alert'} className={`mb-5 text-sm leading-relaxed font-medium ${message.ok ? 'text-emerald-800' : 'text-red-800'}`}>
                   {message.text}
                 </p>
               )}
+              {unavailable && loading && <p role="status" className="text-stone-700">Loading {tab === 'access' ? 'accounts' : 'activity'}…</p>}
+              {access && (
+                <div hidden={tab !== 'access'}>
+                  <AccessManagement
+                    access={access}
+                    callerRole={callerRole}
+                    busy={saving || loading}
+                    error={message?.ok === false ? message.text : null}
+                    onOpenAction={() => setMessage(null)}
+                    onGrant={(email: string, role: ManagedRole) => updateAccess(
+                      { method: 'POST', email, body: { role } },
+                      `Sign-in access saved for ${email}.`,
+                      'Could not save sign-in access.'
+                    )}
+                    onIssue={(email, canIssueCertificates) => updateAccess(
+                      { method: 'PUT', email, body: { canIssueCertificates } },
+                      `Certificate issuance ${canIssueCertificates ? 'enabled' : 'disabled'} for ${email}.`,
+                      'Could not update certificate issuance.'
+                    )}
+                    onLimits={(email, limits) => updateAccess(
+                      { method: 'PATCH', email, body: limits },
+                      `Sending limits updated for ${email}.`,
+                      'Could not save sending limits.'
+                    )}
+                    onRevoke={(email) => updateAccess(
+                      { method: 'DELETE', email },
+                      `Sign-in access revoked for ${email}.`,
+                      'Could not revoke sign-in access.'
+                    )}
+                  />
+                </div>
+              )}
+              {tab === 'overview' && !unavailable && <AdminOverview overview={overview} accounts={accounts} />}
             </div>
-
-            <div className="rounded-xl border border-[#E5DAC3] bg-white/70 overflow-hidden">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="text-left text-[11px] uppercase tracking-wider text-stone-500 border-b border-[#E5DAC3]">
-                    <th className="px-4 py-2 font-quicksand">Email</th>
-                    <th className="px-4 py-2 font-quicksand">Role</th>
-                    <th className="px-4 py-2 font-quicksand">Added</th>
-                    <th className="px-4 py-2 w-10" />
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-stone-100 font-quicksand text-slate-700">
-                  {access.map((a) => (
-                    <tr key={a.email}>
-                      <td className="px-4 py-2 font-medium break-all">{a.email}</td>
-                      <td className="px-4 py-2">
-                        <span
-                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase border ${
-                            a.role === 'super_admin'
-                              ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
-                              : a.role === 'admin'
-                                ? 'bg-amber-50 text-amber-700 border-amber-200'
-                                : 'bg-slate-50 text-slate-500 border-slate-200'
-                          }`}
-                        >
-                          {a.role}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2 text-stone-500">
-                        {new Date(a.createdAt).toLocaleDateString()}
-                      </td>
-                      <td className="px-4 py-2 text-right">
-                        {a.role !== 'super_admin' && (
-                          <button
-                            type="button"
-                            onClick={() => void removeAccess(a.email)}
-                            disabled={saving}
-                            className="p-1.5 text-stone-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
-                            title="Revoke access"
-                            aria-label={`Revoke access for ${a.email}`}
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          </>
         )}
       </main>
     </div>
   );
-}
-
-export default function AdminPage() {
-  return <AdminClient />;
 }

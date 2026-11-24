@@ -2,8 +2,8 @@ import { NextResponse } from 'next/server';
 import { and, eq } from 'drizzle-orm';
 import { db } from '../../../../lib/db';
 import { events } from '../../../../db/schema';
-import { unauthorizedResponse } from '../../../../lib/server-auth';
-import { getAuthenticatedUser } from '../../../../lib/accounts';
+import { mutationAllowed, forbiddenCsrfResponse } from '../../../../lib/server-auth';
+import { requireIssuer } from '../../../../lib/issuer-auth';
 import { env } from '../../../../lib/env';
 import { isValidCertificateId } from '../../../../lib/verification';
 import { log, requestIdOf } from '../../../../lib/logger';
@@ -16,10 +16,9 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const user = await getAuthenticatedUser(request);
-  if (!user) {
-    return unauthorizedResponse('Invalid or expired token');
-  }
+  if (!mutationAllowed(request)) return forbiddenCsrfResponse();
+  const { user, denial } = await requireIssuer(request);
+  if (denial) return denial;
 
   const { id } = await params;
   if (!isValidCertificateId(id)) {

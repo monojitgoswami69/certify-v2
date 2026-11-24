@@ -80,7 +80,7 @@ export function AddRecipientForm() {
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && !saving && void submit()}
           placeholder="Full name"
-          className="flex-1 min-w-0 px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 font-quicksand"
+          className="flex-1 min-w-0 px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400"
           aria-label="Recipient name"
         />
         {emailHeader && (
@@ -89,7 +89,7 @@ export function AddRecipientForm() {
             onChange={(e) => setEmail(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && !saving && void submit()}
             placeholder="Email"
-            className="flex-1 min-w-0 px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 font-quicksand"
+            className="flex-1 min-w-0 px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400"
             aria-label="Recipient email"
           />
         )}

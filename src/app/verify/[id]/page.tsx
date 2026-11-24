@@ -37,7 +37,7 @@ export default async function VerifyPage({
           className="inline-flex items-baseline gap-1.5 text-stone-500 hover:text-stone-900 transition-colors group"
           title="Certify — Verification Registry"
         >
-          <span className="text-[11px] sm:text-xs font-quicksand font-semibold tracking-wide text-stone-500 group-hover:text-stone-700">
+          <span className="text-[11px] sm:text-xs font-semibold tracking-wide text-stone-500 group-hover:text-stone-700">
             powered by
           </span>
           <span className="text-xs sm:text-sm font-jura font-bold tracking-tight text-stone-800 group-hover:text-stone-950 font-[700]">

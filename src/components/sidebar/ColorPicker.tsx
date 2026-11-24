@@ -384,7 +384,7 @@ export function ColorPicker({
             className="w-5 h-5 rounded-md ring-1 ring-inset ring-black/10 flex-shrink-0"
             style={{ backgroundColor: value }}
           />
-          <span className="font-tomorrow text-xs font-semibold text-slate-700 tracking-wider truncate">
+          <span className="font-mono text-xs font-semibold text-slate-700 tracking-wider truncate">
             {currentHexDisplay}
           </span>
         </div>
@@ -469,14 +469,14 @@ export function ColorPicker({
 
             {/* 3. HEX Input Box (h-8 height) */}
             <div className="flex-1 h-8 flex items-center bg-slate-50 border border-slate-200 rounded-lg px-2.5 focus-within:border-slate-400 focus-within:bg-white transition-colors">
-              <span className="font-tomorrow text-xs text-slate-400 font-semibold mr-1.5 select-none">#</span>
+              <span className="font-mono text-xs text-slate-400 font-semibold mr-1.5 select-none">#</span>
               <input
                 type="text"
                 value={hexInput}
                 maxLength={6}
                 onChange={(e) => handleHexChange(e.target.value)}
                 onBlur={handleHexBlur}
-                className="w-full bg-transparent font-tomorrow text-xs font-semibold text-slate-800 uppercase focus:outline-none tracking-wider"
+                className="w-full bg-transparent font-mono text-xs font-semibold text-slate-800 uppercase focus:outline-none tracking-wider"
                 placeholder="000000"
               />
             </div>
@@ -484,7 +484,7 @@ export function ColorPicker({
 
           {/* Curated Swatches (Razor-sharp inset rings, NO blurry drop shadows) */}
           <div className="pt-2 border-t border-slate-100">
-            <div className="text-[10px] font-quicksand font-bold uppercase tracking-wider text-slate-400 mb-2">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">
               Classic Inks & Tones
             </div>
             <div className="grid grid-cols-6 gap-2">
