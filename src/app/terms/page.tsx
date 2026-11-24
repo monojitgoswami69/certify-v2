@@ -157,7 +157,7 @@ export default async function TermsOfServicePage() {
             <p>
               For any questions regarding these Terms of Service, please contact:
             </p>
-            <a href="mailto:contact@mgbuilds.in" className="text-primary-800 underline underline-offset-2">contact@mgbuilds.in</a>
+            <a href="mailto:monojit.goswami.0905@gmail.com" className="text-primary-800 underline underline-offset-2">monojit.goswami.0905@gmail.com</a>
           </section>
         </div>
 

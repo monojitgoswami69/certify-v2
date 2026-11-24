@@ -106,7 +106,7 @@ export default async function PrivacyPolicyPage() {
           <section className="space-y-3">
             <h2 className="section-title text-stone-900">7. Contact</h2>
             <p>For questions about this policy or to request data deletion, email{' '}
-              <a href="mailto:contact@mgbuilds.in" className="text-primary-800 underline underline-offset-2">contact@mgbuilds.in</a>.
+              <a href="mailto:monojit.goswami.0905@gmail.com" className="text-primary-800 underline underline-offset-2">monojit.goswami.0905@gmail.com</a>.
             </p>
           </section>
         </div>
