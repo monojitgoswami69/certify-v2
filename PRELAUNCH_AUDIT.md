@@ -13,10 +13,12 @@ A synthetic 4,000 × 3,000 PNG measured 4,960,381 bytes on disk. Certify accepte
 
 ### The standard database migration command does not provision the app
 
-I applied the journal to a fresh PostgreSQL fixture. The result lacked the account allowlist, issuance permission, and frozen issue design. Applying the six subsequent SQL files produced the required schema. The custom stamp script records the journal entries as applied and currently assumes the target already contains the corresponding schema. A fresh Vercel environment or restore can appear to deploy successfully with an incomplete database. [Migration journal](drizzle/meta/_journal.json) · [Baseline stamp script](scripts/db-stamp-baseline.mjs) · [CI workflow](.github/workflows/ci.yml)
+I applied the journal to a fresh PostgreSQL fixture. The result lacked the account allowlist, issuance permission, and frozen issue design. Applying the six subsequent SQL files produced the required schema. The custom stamp script records the journal entries as applied and currently assumes the target already contains the corresponding schema. A fresh Vercel environment or restore can appear to deploy successfully with an incomplete database. [Migration journal](drizzle/meta/_journal.json) · the former baseline stamp script · [CI workflow](.github/workflows/ci.yml)
 
 - Consolidate migrations into one supported command. Reconcile the existing production history before adding entries and ensure the stamp tool can only mark migrations verified to exist.
 - In CI, create a disposable PostgreSQL database, run the same migration command used for deploys, boot the production build, and run the smoke suite. Exercise an upgrade from the legacy schema and a restore separately.
+
+The migration workflow was subsequently consolidated under Drizzle Kit. See the [current migration instructions](HANDOVER.md).
 
 ## High-priority findings
 

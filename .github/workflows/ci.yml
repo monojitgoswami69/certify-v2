@@ -19,6 +19,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check migration history and schema drift
+        run: |
+          npm run db:check
+          npm run db:generate
+          git diff --exit-code -- drizzle
+
       - name: Lint (typegen + tsc)
         run: npm run lint
 

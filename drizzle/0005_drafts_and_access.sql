@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS "workspace_drafts" (
   "state" jsonb NOT NULL,
   "updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
+--> statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS "platform_access" (
   "email" text PRIMARY KEY NOT NULL,
@@ -22,6 +23,7 @@ CREATE TABLE IF NOT EXISTS "platform_access" (
   "created_at" timestamp with time zone DEFAULT now() NOT NULL,
   "updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
+--> statement-breakpoint
 
 -- The app bootstraps ADMIN_EMAIL. Grant other accounts through the Admin
 -- console so reapplying this migration cannot restore previously revoked access.

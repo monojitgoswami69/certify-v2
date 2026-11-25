@@ -6,5 +6,6 @@ ALTER TABLE certificates
   ADD COLUMN IF NOT EXISTS mail_updated_at timestamptz,
   ADD COLUMN IF NOT EXISTS mail_gmail_id text,
   ADD COLUMN IF NOT EXISTS mail_detail text;
+--> statement-breakpoint
 
 ALTER TABLE events ADD COLUMN IF NOT EXISTS mail_preferences jsonb;

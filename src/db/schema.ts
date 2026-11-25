@@ -175,7 +175,7 @@ export const templateVersions = pgTable(
     imageHash: text('image_hash'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index('template_versions_template_idx').on(table.templateId, table.createdAt)]
+  (table) => [index('template_versions_template_idx').on(table.templateId, table.createdAt.desc().nullsFirst())]
 );
 
 /**

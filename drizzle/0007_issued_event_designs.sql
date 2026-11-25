@@ -1,6 +1,9 @@
 ALTER TABLE "events" ADD COLUMN IF NOT EXISTS "label" text;
+--> statement-breakpoint
 ALTER TABLE "events" ADD COLUMN IF NOT EXISTS "issued_design" jsonb;
+--> statement-breakpoint
 ALTER TABLE "certificates" ADD COLUMN IF NOT EXISTS "render_fields" jsonb;
+--> statement-breakpoint
 
 -- Prefer the original event for pre-FK certificates before names can repeat.
 WITH original_events AS (
@@ -14,7 +17,9 @@ FROM original_events
 WHERE certificates.event_id IS NULL
   AND certificates.user_id = original_events.user_id
   AND COALESCE(NULLIF(certificates.event_name, ''), 'General Event') = original_events.name;
+--> statement-breakpoint
 
 -- Display names can repeat. Dashboard actions now identify the event by UUID.
 DROP INDEX IF EXISTS "events_user_name_idx";
+--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "events_user_display_name_idx" ON "events" ("user_id", "name");
