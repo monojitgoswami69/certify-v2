@@ -21,6 +21,7 @@ export class CertificateWorkerPool {
   private workers: Worker[] = [];
   private failedWorkers = new Map<Worker, string>();
   private pendingResolves: Array<() => void> = [];
+  private terminated = false;
 
   /**
    * Concurrency is configured to (cores - 1) to saturate available multi-core hardware
@@ -75,6 +76,9 @@ export class CertificateWorkerPool {
     maxWorkers?: number,
     images?: ImageElement[]
   ): Promise<number> {
+    this.terminate();
+    this.terminated = false;
+
     const optimal = CertificateWorkerPool.getOptimalWorkerCount(templateWidth, templateHeight);
     const workerCount = Math.max(1, Math.min(maxWorkers ?? optimal, optimal));
     const initPromises: Promise<void>[] = [];
@@ -87,15 +91,24 @@ export class CertificateWorkerPool {
 
       const initPromise = new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
+          cleanup();
           reject(new Error(`Worker ${i} initialization timed out`));
         }, 20000);
 
+        const cleanup = () => {
+          clearTimeout(timeout);
+          worker.removeEventListener('message', onReady);
+          worker.removeEventListener('error', onError);
+        };
+
+        const cancel = () => {
+          cleanup();
+          resolve();
+        };
+
         const onReady = (event: MessageEvent) => {
           if (event.data.type === 'ready') {
-            clearTimeout(timeout);
-            worker.removeEventListener('message', onReady);
-            worker.removeEventListener('error', onError);
-
+            cleanup();
             if (event.data.result?.error) {
               reject(new Error(event.data.result.error));
             } else {
@@ -105,49 +118,60 @@ export class CertificateWorkerPool {
         };
 
         const onError = (event: ErrorEvent) => {
-          clearTimeout(timeout);
-          worker.removeEventListener('message', onReady);
-          worker.removeEventListener('error', onError);
+          cleanup();
           reject(new Error(`Worker ${i} error: ${event.message}`));
         };
 
         worker.addEventListener('message', onReady);
         worker.addEventListener('error', onError);
 
-        this.pendingResolves.push(resolve);
+        this.pendingResolves.push(cancel);
       });
 
       this.workers.push(worker);
       initPromises.push(initPromise);
 
-      worker.postMessage({
-        type: 'init',
-        templateBlob: templateFile,
-        templateWidth,
-        templateHeight,
-        boxes,
-        qrZones,
-        images,
-        formats,
-        jpegQuality: 0.92,
-        fonts: fonts
-          ? fonts.map((f) => ({
-              family: f.family,
-              buffer: f.buffer.slice(0),
-              weight: f.weight,
-              style: f.style,
-            }))
-          : undefined,
-      });
+      const clonedFonts = fonts
+        ? fonts.map((f) => ({
+            family: f.family,
+            buffer: f.buffer.slice(0),
+            weight: f.weight,
+            style: f.style,
+          }))
+        : undefined;
+      const transferables = clonedFonts ? clonedFonts.map((f) => f.buffer) : [];
+
+      worker.postMessage(
+        {
+          type: 'init',
+          templateBlob: templateFile,
+          templateWidth,
+          templateHeight,
+          boxes,
+          qrZones,
+          images,
+          formats,
+          jpegQuality: 0.92,
+          fonts: clonedFonts,
+        },
+        transferables
+      );
     }
 
-    await Promise.all(initPromises);
-    this.pendingResolves = [];
-    return workerCount;
+    try {
+      await Promise.all(initPromises);
+      this.pendingResolves = [];
+      return workerCount;
+    } catch (err) {
+      this.terminate();
+      throw err;
+    }
   }
 
   /**
-   * Process a chunk of tasks evenly distributed across all active workers in parallel.
+   * Process a chunk dynamically across healthy workers using work-stealing micro-batches.
+   * Healthy workers absorb work from slower or crashed workers, and crashed workers are
+   * excluded from subsequent chunks so one bad worker never poisons later batches.
    */
   async processChunk(
     tasks: WorkerTask[],
@@ -156,62 +180,105 @@ export class CertificateWorkerPool {
     if (tasks.length === 0) return;
     if (this.workers.length === 0) throw new Error('Worker pool not initialized');
 
-    const workerCount = this.workers.length;
-    const tasksPerWorker = Math.ceil(tasks.length / workerCount);
-
-    const workerBatches: WorkerTask[][] = [];
-    for (let i = 0; i < workerCount; i++) {
-      const start = i * tasksPerWorker;
-      const end = Math.min(start + tasksPerWorker, tasks.length);
-      if (start < tasks.length) {
-        workerBatches.push(tasks.slice(start, end));
-      }
+    const healthyWorkers = this.workers.filter((w) => !this.failedWorkers.has(w));
+    if (healthyWorkers.length === 0) {
+      throw new Error('All certificate workers have failed');
     }
 
-    let completedCount = 0;
+    const pendingQueue: WorkerTask[] = [...tasks];
+    const settledTaskIds = new Set<number>();
+    const retriedTaskIds = new Set<number>();
     const totalCount = tasks.length;
+    let completedCount = 0;
+    let inFlightWorkers = 0;
+    let lastFailureError = 'Certificate rendering failed';
+    const queueWaiters: Array<() => void> = [];
 
-    const workerPromises = workerBatches.map((batch, workerIndex) => {
-      return new Promise<void>((resolve) => {
-        const worker = this.workers[workerIndex];
+    const wakeAll = () => {
+      while (queueWaiters.length > 0) {
+        queueWaiters.shift()!();
+      }
+    };
 
-        const reportedTaskIds = new Set<number>();
+    const emitSettled = (result: BatchResultItem) => {
+      if (settledTaskIds.has(result.id)) return;
+      settledTaskIds.add(result.id);
+      completedCount++;
+      onResult?.(result, completedCount, totalCount);
+    };
+
+    const nextMicroBatch = (): WorkerTask[] => {
+      const remaining = pendingQueue.length;
+      if (remaining === 0) return [];
+      const aliveCount = Math.max(1, this.workers.filter((w) => !this.failedWorkers.has(w)).length);
+      const batchSize =
+        remaining <= aliveCount * 2
+          ? 1
+          : Math.min(4, Math.max(1, Math.floor(remaining / (aliveCount * 2))));
+      return pendingQueue.splice(0, batchSize);
+    };
+
+    const runMicroBatch = (worker: Worker, batch: WorkerTask[]): Promise<void> =>
+      new Promise<void>((resolve) => {
+        let settled = false;
         let timer: ReturnType<typeof setTimeout>;
-        const finish = (error: string, failed = false) => {
+
+        const finishMicroBatch = (error: string, failed: boolean) => {
+          if (settled) return;
+          settled = true;
           cleanup();
+
           if (failed) {
+            lastFailureError = error;
             this.failedWorkers.set(worker, error);
             worker.terminate();
           }
+
+          const hasHealthyReplacement = this.workers.some((w) => !this.failedWorkers.has(w));
           for (const task of batch) {
-            if (reportedTaskIds.has(task.id)) continue;
-            completedCount++;
-            onResult?.({ id: task.id, rowIndex: task.rowIndex, filename: task.filename, error }, completedCount, totalCount);
+            if (settledTaskIds.has(task.id)) continue;
+            if (failed && hasHealthyReplacement && !retriedTaskIds.has(task.id)) {
+              retriedTaskIds.add(task.id);
+              pendingQueue.push(task);
+            } else {
+              emitSettled({
+                id: task.id,
+                rowIndex: task.rowIndex,
+                filename: task.filename,
+                error,
+              });
+            }
           }
           resolve();
         };
+
         const restartTimer = () => {
           clearTimeout(timer);
-          timer = setTimeout(() => finish('Certificate rendering timed out', true), 90_000);
+          timer = setTimeout(() => finishMicroBatch('Certificate rendering timed out', true), 90_000);
         };
+
         const cancel = () => {
+          if (settled) return;
+          settled = true;
           cleanup();
           resolve();
         };
+
         const handler = (event: MessageEvent) => {
           if (event.data.type === 'itemComplete') {
             const result: BatchResultItem = event.data.result;
-            if (reportedTaskIds.has(result.id)) return;
-            reportedTaskIds.add(result.id);
+            emitSettled(result);
             restartTimer();
-            completedCount++;
-            onResult?.(result, completedCount, totalCount);
           } else if (event.data.type === 'batchComplete') {
-            finish('Worker finished without returning this certificate');
+            finishMicroBatch('Worker finished without returning this certificate', false);
           }
         };
-        const errorHandler = (event: ErrorEvent) => finish(event.message || 'Worker thread execution error', true);
-        const messageErrorHandler = () => finish('Cannot read the worker output', true);
+
+        const errorHandler = (event: ErrorEvent) =>
+          finishMicroBatch(event.message || 'Worker thread execution error', true);
+        const messageErrorHandler = () =>
+          finishMicroBatch('Cannot read the worker output', true);
+
         const cleanup = () => {
           clearTimeout(timer);
           worker.removeEventListener('message', handler);
@@ -219,11 +286,6 @@ export class CertificateWorkerPool {
           worker.removeEventListener('messageerror', messageErrorHandler);
         };
 
-        const previousFailure = this.failedWorkers.get(worker);
-        if (previousFailure) {
-          finish(previousFailure);
-          return;
-        }
         this.pendingResolves.push(cancel);
         worker.addEventListener('message', handler);
         worker.addEventListener('error', errorHandler);
@@ -241,13 +303,46 @@ export class CertificateWorkerPool {
           })),
         });
       });
+
+    const workerLoops = healthyWorkers.map(async (worker) => {
+      while (!this.terminated && !this.failedWorkers.has(worker)) {
+        const batch = nextMicroBatch();
+        if (batch.length === 0) {
+          if (inFlightWorkers === 0) break;
+          await new Promise<void>((r) => {
+            queueWaiters.push(r);
+            this.pendingResolves.push(r);
+          });
+          continue;
+        }
+        inFlightWorkers++;
+        try {
+          await runMicroBatch(worker, batch);
+        } finally {
+          inFlightWorkers--;
+          wakeAll();
+        }
+      }
     });
 
-    await Promise.all(workerPromises);
+    await Promise.all(workerLoops);
     this.pendingResolves = [];
+
+    if (!this.terminated) {
+      while (pendingQueue.length > 0) {
+        const leftover = pendingQueue.shift()!;
+        emitSettled({
+          id: leftover.id,
+          rowIndex: leftover.rowIndex,
+          filename: leftover.filename,
+          error: lastFailureError,
+        });
+      }
+    }
   }
 
   terminate(): void {
+    this.terminated = true;
     for (const resolve of this.pendingResolves) {
       resolve();
     }

@@ -12,9 +12,9 @@
 import { jsPDF } from 'jspdf';
 import type { QrStyleConfig, ImageElement, TextBox } from '../types';
 import { resolveFieldValue } from './utils';
-import { drawStyledQr } from './qr-renderer';
+import { drawStyledQr, ensureSvgDataUriDimensions } from './qr-renderer';
 import { getFontFamilyCSS } from './font-loader';
-import { drawCertificateText } from './certificate-text';
+import { clearTextMeasurements, drawCertificateText } from './certificate-text';
 
 export type OutputFormat = 'png' | 'jpg' | 'pdf';
 
@@ -341,6 +341,25 @@ self.onmessage = async (event: MessageEvent<InitMessage | GenerateBatchMessage>)
         }
       }
 
+      // Release any previously held GPU bitmaps & cached text metrics on re-init.
+      cachedTemplateBitmap?.close();
+      cachedTemplateBitmap = null;
+      for (const item of cachedImageElements) {
+        item.bitmap?.close();
+      }
+      cachedImageElements = [];
+      for (const bitmap of cachedLogoBitmaps.values()) {
+        bitmap.close();
+      }
+      cachedLogoBitmaps.clear();
+      if (reusableContexts) {
+        for (const cx of reusableContexts) {
+          clearTextMeasurements(cx);
+        }
+      }
+      reusableCanvases = null;
+      reusableContexts = null;
+
       cachedTemplateBitmap = await Promise.race([
         createImageBitmap(message.templateBlob),
         new Promise<never>((_, reject) =>
@@ -355,10 +374,11 @@ self.onmessage = async (event: MessageEvent<InitMessage | GenerateBatchMessage>)
       cachedQrZones = message.qrZones || [];
 
       // Decode decorative image elements (logos, signatures) once per init.
-      cachedImageElements = [];
       for (const el of message.images ?? []) {
         try {
-          const res = await fetch(el.src);
+          const res = await fetch(ensureSvgDataUriDimensions(el.src), {
+            signal: AbortSignal.timeout(10_000),
+          });
           const blob = await res.blob();
           const bitmap = await createImageBitmap(blob);
           cachedImageElements.push({ el, bitmap });
@@ -367,11 +387,12 @@ self.onmessage = async (event: MessageEvent<InitMessage | GenerateBatchMessage>)
         }
       }
 
-      cachedLogoBitmaps.clear();
       for (const zone of cachedQrZones) {
         if (zone.style?.logo && !cachedLogoBitmaps.has(zone.style.logo)) {
           try {
-            const res = await fetch(zone.style.logo);
+            const res = await fetch(ensureSvgDataUriDimensions(zone.style.logo), {
+              signal: AbortSignal.timeout(10_000),
+            });
             const blob = await res.blob();
             const bitmap = await createImageBitmap(blob);
             cachedLogoBitmaps.set(zone.style.logo, bitmap);

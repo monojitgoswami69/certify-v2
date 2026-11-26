@@ -24,6 +24,7 @@ import { useAppStore } from '../../store/useAppStore';
 import { useHistoryStore } from '../../store/useHistoryStore';
 import { IssuerWorkspace } from '../../components/account/IssuerWorkspace';
 import { loadWorkspace } from '../../lib/workspace-loader';
+import { getCachedEncodedImage } from '../../lib/template-autosave';
 import {
   fetchWorkspaceDraft,
   saveWorkspaceDraft,
@@ -142,7 +143,11 @@ function WorkspaceContent() {
     if (hydratedFromEvent || !templateImage || draftRecovery || recoveringDraft || issuanceStarted || isBatchRegistering) return;
     if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
     let current = true;
-    draftSaveTimerRef.current = setTimeout(() => {
+    draftSaveTimerRef.current = setTimeout(async () => {
+      const encoded = templateFile
+        ? await getCachedEncodedImage(templateImage, templateFile).catch(() => null)
+        : null;
+      if (!current) return;
       void saveWorkspaceDraft({
         eventName,
         eventLabel,
@@ -158,7 +163,12 @@ function WorkspaceContent() {
         defaultFontSize: defaultFontSize ?? undefined,
         defaultFontColor: defaultFontColor ?? undefined,
         templateRef: templateFile
-          ? { fileName: templateFile.name, width: templateImage.naturalWidth, height: templateImage.naturalHeight }
+          ? {
+              fileName: templateFile.name,
+              width: templateImage.naturalWidth,
+              height: templateImage.naturalHeight,
+              ...(encoded?.hash ? { imageHash: encoded.hash } : {}),
+            }
           : null,
       }).then(() => {
         if (current) setDraftNotice(null);
@@ -205,12 +215,16 @@ function WorkspaceContent() {
         const res = await apiFetch('/api/templates');
         if (!res.ok) throw new Error('Could not load saved templates');
         const data = await res.json();
-        const templates: Array<{ id: string; name: string; width?: number; height?: number }> = data.templates ?? [];
-        const match = names.map((name) => templates.find((template) =>
-          template.name.trim().toLowerCase() === name &&
-          (!template.width || template.width === draft.templateRef?.width) &&
-          (!template.height || template.height === draft.templateRef?.height)
-        )).find(Boolean);
+        const templates: Array<{ id: string; name: string; imageHash?: string | null; width?: number; height?: number }> = data.templates ?? [];
+        const match =
+          (draft.templateRef.imageHash
+            ? templates.find((template) => template.imageHash && template.imageHash === draft.templateRef?.imageHash)
+            : undefined)
+          ?? names.map((name) => templates.find((template) =>
+            template.name.trim().toLowerCase() === name &&
+            (!template.width || template.width === draft.templateRef?.width) &&
+            (!template.height || template.height === draft.templateRef?.height)
+          )).find(Boolean);
         if (!match) throw new Error('Saved artwork not found');
 
         const full = await apiFetch(`/api/templates/${match.id}`);
@@ -317,7 +331,7 @@ function WorkspaceContent() {
   const step1Complete = Boolean(templateImage);
   const step2Complete = csvData.length > 0;
   const step3Complete = boxes.length > 0 || qrZones.length > 0;
-  const validBoxes = boxes.filter((b) => b.field);
+  const validBoxes = boxes.filter((b) => b.field || b.kind === 'static');
   const step4Complete = validBoxes.length > 0 || qrZones.length > 0;
 
   const step1Status = step1Complete ? 'completed' : 'active';

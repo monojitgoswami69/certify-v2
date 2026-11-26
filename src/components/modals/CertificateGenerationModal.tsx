@@ -52,6 +52,15 @@ export function CertificateGenerationModal({
     setMounted(true);
   }, []);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isOpen, onClose]);
+
   const activeFormatsText = useMemo(() => {
     const list: string[] = [];
     if (exportFormats?.png) list.push('PNG');
@@ -144,14 +153,23 @@ export function CertificateGenerationModal({
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/50 animate-in fade-in duration-200">
-      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/50 animate-in fade-in duration-200"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="cert-generation-modal-title"
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Modal Header */}
         <div className="px-6 py-4.5 border-b border-slate-200 flex items-center justify-between bg-white">
           <div className="flex items-center gap-3">
             <FileBarChart className="w-6 h-6 text-primary-600 shrink-0 stroke-[2]" />
             <div>
-              <h2 className="text-lg font-bold text-slate-900 tracking-tight leading-none">Certificate Generation Report</h2>
+              <h2 id="cert-generation-modal-title" className="text-lg font-bold text-slate-900 tracking-tight leading-none">Certificate Generation Report</h2>
               <p className="text-xs text-slate-500 mt-1">
                 {eventName ? `Event: ${eventName}` : 'Direct Certificate Batch Generation'} ·{' '}
                 {records.length} total recipients

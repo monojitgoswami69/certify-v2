@@ -23,7 +23,10 @@ export function useAdaptiveBorder(templateImage: HTMLImageElement | null): Adapt
   const [adaptiveBorder, setAdaptiveBorder] = useState<AdaptiveBorder>(DEFAULT_BORDER);
 
   useEffect(() => {
-    if (!templateImage) return;
+    if (!templateImage) {
+      setAdaptiveBorder(DEFAULT_BORDER);
+      return;
+    }
 
     try {
       const offscreen = document.createElement('canvas');

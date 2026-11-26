@@ -66,3 +66,35 @@ it('shares text sizing with the renderer and detects ink past the artwork', () =
   expect(parseFloat(mock.font)).toBe(fitted.size);
   expect(inspectCertificateText(context, 'Ada', { ...box, x: 970 }, '"Test Family"', 1000, 1000).status).toBe('overflow');
 });
+
+it('restores canvas context even on draw errors and safely ignores degenerate bounds', () => {
+  let shouldThrow = true;
+  const mock = {
+    font: '',
+    save: vi.fn(),
+    restore: vi.fn(),
+    measureText: vi.fn((text: string) => ({ width: (parseFloat(mock.font) || 10) * text.length })),
+    fillText: vi.fn(() => {
+      if (shouldThrow) throw new Error('canvas write failed');
+    }),
+  };
+  const context = mock as unknown as CanvasRenderingContext2D;
+  const zeroBox: TextBox = {
+    id: 'z', field: 'Name', x: 0, y: 0, w: 0, h: 20, fontSize: 16,
+    hAlign: 'center', vAlign: 'middle', fontColor: '#000', fontFamily: 'Inter',
+  };
+  drawCertificateText(context, 'Ada', zeroBox, 'Inter');
+  expect(mock.fillText).not.toHaveBeenCalled();
+
+  const validBox: TextBox = { ...zeroBox, w: 200, h: 50 };
+  expect(() => drawCertificateText(context, 'Ada', validBox, 'Inter')).toThrow('canvas write failed');
+  expect(mock.save).toHaveBeenCalledTimes(1);
+  expect(mock.restore).toHaveBeenCalledTimes(1);
+
+  shouldThrow = false;
+  // LRU cache pressure test (> 1024 unique entries should stay responsive and bounded)
+  for (let i = 0; i < 1200; i++) {
+    drawCertificateText(context, `Participant ${i}`, validBox, 'Inter');
+  }
+  expect(mock.save.mock.calls.length).toBe(mock.restore.mock.calls.length);
+});

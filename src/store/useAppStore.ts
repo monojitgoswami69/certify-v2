@@ -44,17 +44,32 @@ const DEFAULT_EMAIL_PROGRESS: EmailProgress = {
   records: [],
 };
 
-function generateBoxId(): string {
-  return `box_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+function generateElementId(prefix: 'box' | 'img' | 'qr'): string {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 }
 
-function generateImageId(): string {
-  return `img_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-}
+const SELECTION_CLEAR = {
+  activeBoxId: null as string | null,
+  activeImageId: null as string | null,
+  activeQrId: null as string | null,
+  isPlacingQr: false,
+};
 
-function generateQrId(): string {
-  return `qr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-}
+const RESET_TEMPLATE_STATE = {
+  ...SELECTION_CLEAR,
+  boxes: [] as TextBox[],
+  images: [] as ImageElement[],
+  qrZones: [] as QrZone[],
+  registrationEventId: null as string | null,
+  issuanceStarted: false,
+  isBatchRegistered: false,
+  registeredCertIds: new Map<number, string>(),
+  verificationOrigin: null as string | null,
+  registeredAt: null as string | null,
+  isBatchRegistering: false,
+  batchRegistrationError: null as string | null,
+  registrationDirty: false,
+};
 
 interface AppStore {
   // Template State
@@ -230,51 +245,25 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   setTemplate: (file, image, info) =>
     set({
+      ...RESET_TEMPLATE_STATE,
       templateFile: file,
       templateImage: image,
       templateInfo: info,
       defaultFontSize: defaultCertificateFontSize(image.naturalWidth || image.width, image.naturalHeight || image.height),
-      boxes: [],
-      activeBoxId: null,
-      images: [],
-      activeImageId: null,
-      qrZones: [],
-      activeQrId: null,
-      isPlacingQr: false,
-      isBatchRegistered: false,
-      registeredCertIds: new Map<number, string>(),
-      verificationOrigin: null,
-      registeredAt: null,
-      isBatchRegistering: false,
-      batchRegistrationError: null,
-      registrationDirty: false,
     }),
 
   clearTemplate: () =>
     set({
+      ...RESET_TEMPLATE_STATE,
       templateFile: null,
       templateImage: null,
       templateInfo: '',
-      boxes: [],
-      activeBoxId: null,
-      images: [],
-      activeImageId: null,
-      qrZones: [],
-      activeQrId: null,
-      isPlacingQr: false,
-      isBatchRegistered: false,
-      registeredCertIds: new Map<number, string>(),
-      verificationOrigin: null,
-      registeredAt: null,
-      isBatchRegistering: false,
-      batchRegistrationError: null,
-      registrationDirty: false,
     }),
 
   addBox: (boxData) => {
     const { defaultFont, defaultFontSize, defaultFontColor, csvHeaders } = get();
     const newBox: TextBox = {
-      id: generateBoxId(),
+      id: generateElementId('box'),
       ...boxData,
       field: csvHeaders[0] || '',
       fontSize: defaultFontSize,
@@ -285,6 +274,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     };
     set((state) => ({
       boxes: [...state.boxes, newBox],
+      ...SELECTION_CLEAR,
       activeBoxId: newBox.id,
       registrationDirty: state.isBatchRegistered ? true : state.registrationDirty,
     }));
@@ -304,10 +294,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     })),
 
   setActiveBox: (activeBoxId) =>
-    set((state) => ({
-      activeBoxId,
-      activeQrId: activeBoxId ? null : state.activeQrId,
-    })),
+    set(() => (activeBoxId ? { ...SELECTION_CLEAR, activeBoxId } : { activeBoxId: null })),
 
   setBoxes: (boxes) =>
     set((state) => ({
@@ -318,7 +305,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   addStaticTextBox: (boxData) => {
     const { defaultFont, defaultFontSize, defaultFontColor } = get();
     const newBox: TextBox = {
-      id: generateBoxId(),
+      id: generateElementId('box'),
       ...boxData,
       field: '',
       kind: 'static',
@@ -331,15 +318,17 @@ export const useAppStore = create<AppStore>((set, get) => ({
     };
     set((state) => ({
       boxes: [...state.boxes, newBox],
+      ...SELECTION_CLEAR,
       activeBoxId: newBox.id,
       registrationDirty: state.isBatchRegistered ? true : state.registrationDirty,
     }));
   },
 
   addImage: (imageData) => {
-    const newImage: ImageElement = { id: generateImageId(), ...imageData };
+    const newImage: ImageElement = { id: generateElementId('img'), ...imageData };
     set((state) => ({
       images: [...state.images, newImage],
+      ...SELECTION_CLEAR,
       activeImageId: newImage.id,
       registrationDirty: state.isBatchRegistered ? true : state.registrationDirty,
     }));
@@ -359,11 +348,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     })),
 
   setActiveImage: (activeImageId) =>
-    set((state) => ({
-      activeImageId,
-      activeBoxId: activeImageId ? null : state.activeBoxId,
-      activeQrId: activeImageId ? null : state.activeQrId,
-    })),
+    set(() => (activeImageId ? { ...SELECTION_CLEAR, activeImageId } : { activeImageId: null })),
 
   setImages: (images) =>
     set((state) => ({
@@ -372,11 +357,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     })),
 
   setIsPlacingQr: (isPlacingQr) =>
-    set({
-      isPlacingQr,
-      activeBoxId: isPlacingQr ? null : get().activeBoxId,
-      activeQrId: isPlacingQr ? null : get().activeQrId,
-    }),
+    set(() => (isPlacingQr ? { ...SELECTION_CLEAR, isPlacingQr: true } : { isPlacingQr: false })),
 
   addQrZone: (x, y, size) => {
     const { templateImage, qrZones } = get();
@@ -385,7 +366,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       (templateImage
         ? Math.round(Math.min(templateImage.width, templateImage.height) * 0.15)
         : 180);
-    const id = generateQrId();
+    const id = generateElementId('qr');
     const newZone: QrZone = {
       id,
       x: Math.max(0, Math.round(x)),
@@ -403,9 +384,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const updated = [...qrZones, newZone];
     set((state) => ({
       qrZones: updated,
+      ...SELECTION_CLEAR,
       activeQrId: id,
-      isPlacingQr: false,
-      activeBoxId: null,
       registrationDirty: state.isBatchRegistered ? true : state.registrationDirty,
     }));
     return id;
@@ -427,10 +407,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     })),
 
   setActiveQrId: (activeQrId) =>
-    set((state) => ({
-      activeQrId,
-      activeBoxId: activeQrId ? null : state.activeBoxId,
-    })),
+    set(() => (activeQrId ? { ...SELECTION_CLEAR, activeQrId } : { activeQrId: null })),
 
   setQrZones: (qrZones) =>
     set((state) => ({
@@ -515,13 +492,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
     })),
 
   clearCsvData: () =>
-    set({
+    set((state) => ({
       csvFile: null,
       csvHeaders: [],
       csvData: [],
       csvReview: { numbers: [], ignored: [] },
       eventName: '',
       emailColumn: '',
+      registrationEventId: state.issuanceStarted ? state.registrationEventId : null,
       isBatchRegistered: false,
       registeredCertIds: new Map<number, string>(),
       verificationOrigin: null,
@@ -529,7 +507,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       isBatchRegistering: false,
       batchRegistrationError: null,
       registrationDirty: false,
-    }),
+    })),
 
   setEmailColumn: (emailColumn) =>
     set((state) => ({

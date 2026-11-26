@@ -137,6 +137,9 @@ export function ColorPicker({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const satValBoxRef = useRef<HTMLDivElement>(null);
   const hueSliderRef = useRef<HTMLDivElement>(null);
+  const dragCleanupRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => () => dragCleanupRef.current?.(), []);
 
   // Sync internal representations from external `value` prop
   useEffect(() => {
@@ -258,13 +261,16 @@ export function ColorPicker({
 
   // Saturation / Value 2D dragging
   const handleSatValPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
     e.preventDefault();
+    dragCleanupRef.current?.();
     onStartEdit?.();
     const box = satValBoxRef.current;
     if (!box) return;
 
     const updateFromEvent = (clientX: number, clientY: number) => {
       const rect = box.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
       const s = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
       const v = Math.max(0, Math.min(1, 1 - (clientY - rect.top) / rect.height));
       setSat(s);
@@ -279,25 +285,38 @@ export function ColorPicker({
       updateFromEvent(moveEvent.clientX, moveEvent.clientY);
     };
 
-    const onPointerUp = () => {
+    const cleanupDrag = () => {
       window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointerup', endDrag);
+      window.removeEventListener('pointercancel', endDrag);
+      window.removeEventListener('blur', endDrag);
+      if (dragCleanupRef.current === cleanupDrag) dragCleanupRef.current = null;
+    };
+
+    const endDrag = () => {
+      cleanupDrag();
       onFinishEdit?.();
     };
 
+    dragCleanupRef.current = cleanupDrag;
     window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointerup', endDrag);
+    window.addEventListener('pointercancel', endDrag);
+    window.addEventListener('blur', endDrag);
   };
 
   // Hue slider dragging
   const handleHuePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
     e.preventDefault();
+    dragCleanupRef.current?.();
     onStartEdit?.();
     const slider = hueSliderRef.current;
     if (!slider) return;
 
     const updateFromEvent = (clientX: number) => {
       const rect = slider.getBoundingClientRect();
+      if (rect.width <= 0) return;
       const fraction = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
       const newHue = fraction * 360;
       setHue(newHue);
@@ -311,14 +330,24 @@ export function ColorPicker({
       updateFromEvent(moveEvent.clientX);
     };
 
-    const onPointerUp = () => {
+    const cleanupDrag = () => {
       window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointerup', endDrag);
+      window.removeEventListener('pointercancel', endDrag);
+      window.removeEventListener('blur', endDrag);
+      if (dragCleanupRef.current === cleanupDrag) dragCleanupRef.current = null;
+    };
+
+    const endDrag = () => {
+      cleanupDrag();
       onFinishEdit?.();
     };
 
+    dragCleanupRef.current = cleanupDrag;
     window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointerup', endDrag);
+    window.addEventListener('pointercancel', endDrag);
+    window.addEventListener('blur', endDrag);
   };
 
   // Hex Input Change Handler

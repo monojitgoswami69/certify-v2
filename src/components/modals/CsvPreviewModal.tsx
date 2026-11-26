@@ -22,6 +22,15 @@ export function CsvPreviewModal({ isOpen, onClose }: CsvPreviewModalProps) {
     setMounted(true);
   }, []);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isOpen, onClose]);
+
   const filteredRows = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return csvData.map((row, index) => ({ number: csvReview.numbers[index], row }))
@@ -41,7 +50,12 @@ export function CsvPreviewModal({ isOpen, onClose }: CsvPreviewModalProps) {
   if (!isOpen || !mounted) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-150">
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-150"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="csv-preview-modal-title"
+    >
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-xs" onClick={onClose} />
       <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[90vh] flex flex-col overflow-hidden border border-slate-200/80 animate-in zoom-in-95 duration-150">
         {/* Fixed Modal Header */}
@@ -49,7 +63,7 @@ export function CsvPreviewModal({ isOpen, onClose }: CsvPreviewModalProps) {
           <div className="flex items-center gap-2.5 min-w-0">
             <Table className="w-5 h-5 text-primary-600 shrink-0 stroke-[1.75]" />
             <div className="min-w-0">
-              <h2 className="font-semibold text-slate-900 text-base sm:text-lg tracking-tight truncate">
+              <h2 id="csv-preview-modal-title" className="font-semibold text-slate-900 text-base sm:text-lg tracking-tight truncate">
                 CSV Data Preview
               </h2>
               <p className="text-xs text-slate-500 truncate mt-0.5 font-medium">

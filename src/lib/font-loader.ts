@@ -107,6 +107,98 @@ export interface WorkerFontData {
 }
 
 const workerFontCache = new Map<string, WorkerFontData[]>();
+const workerFontInFlight = new Map<string, Promise<WorkerFontData[]>>();
+const FONT_FETCH_TIMEOUT_MS = 8_000;
+
+async function fetchFamilyFontData(family: string): Promise<WorkerFontData[]> {
+  let css = '';
+  const uaHeaders = {
+    'User-Agent':
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  };
+
+  try {
+    const res = await fetch(
+      `${GOOGLE_FONTS_CSS_URL}?family=${encodeURIComponent(family)}:wght@400;600;700&display=swap`,
+      { headers: uaHeaders, signal: AbortSignal.timeout(FONT_FETCH_TIMEOUT_MS) }
+    );
+    if (res.ok) css = await res.text();
+  } catch {
+    // Fallback to plain family query without explicit weight axis
+  }
+
+  if (!css) {
+    try {
+      const fallbackRes = await fetch(
+        `${GOOGLE_FONTS_CSS_URL}?family=${encodeURIComponent(family)}&display=swap`,
+        { headers: uaHeaders, signal: AbortSignal.timeout(FONT_FETCH_TIMEOUT_MS) }
+      );
+      if (fallbackRes.ok) css = await fallbackRes.text();
+    } catch {
+      // ignore
+    }
+  }
+
+  if (!css) return [];
+
+  const regex = /@font-face\s*\{([^}]+)\}/g;
+  let match: RegExpExecArray | null;
+  const fontFaces: Array<{
+    weight: string;
+    style: string;
+    url: string;
+    isLatin: boolean;
+  }> = [];
+
+  while ((match = regex.exec(css)) !== null) {
+    const block = match[1];
+    const weight = block.match(/font-weight:\s*([^;]+)/)?.[1]?.trim() || '400';
+    const style = block.match(/font-style:\s*([^;]+)/)?.[1]?.trim() || 'normal';
+    const srcMatch = block
+      .match(/src:\s*url\(([^)]+)\)/)?.[1]
+      ?.replace(/['"]/g, '')
+      .trim();
+    const isLatin = block.includes('U+0000-00FF') || !block.includes('unicode-range');
+    if (srcMatch) {
+      fontFaces.push({ weight, style, url: srcMatch, isLatin });
+    }
+  }
+
+  // Prefer Latin subsets (standard ASCII/European glyphs for certificate names)
+  const latinFaces = fontFaces.filter((f) => f.isLatin);
+  const facesToUse = latinFaces.length > 0 ? latinFaces : fontFaces;
+
+  // Group by weight so we download at most 1 woff2 per weight variant
+  const byWeight = new Map<string, (typeof facesToUse)[0]>();
+  for (const face of facesToUse) {
+    if (!byWeight.has(face.weight)) {
+      byWeight.set(face.weight, face);
+    }
+  }
+
+  const familyFontData: WorkerFontData[] = [];
+  for (const [weight, face] of byWeight.entries()) {
+    try {
+      const fontRes = await fetch(face.url, { signal: AbortSignal.timeout(FONT_FETCH_TIMEOUT_MS) });
+      if (fontRes.ok) {
+        const buffer = await fontRes.arrayBuffer();
+        familyFontData.push({
+          family,
+          buffer,
+          weight,
+          style: face.style,
+        });
+      }
+    } catch (fetchErr) {
+      console.warn(`[FontLoader] Failed to download font binary for ${family}:`, fetchErr);
+    }
+  }
+
+  if (familyFontData.length > 0) {
+    workerFontCache.set(family, familyFontData);
+  }
+  return familyFontData;
+}
 
 /**
  * Downloads font binary data (WOFF2) for the given font families so they can be transferred
@@ -118,119 +210,36 @@ export async function loadFontsForWorker(fonts: Iterable<string>): Promise<Worke
     .filter(Boolean);
 
   const results: WorkerFontData[] = [];
-  const uncached: string[] = [];
+  const pending: Promise<WorkerFontData[]>[] = [];
 
   for (const family of families) {
     const cached = workerFontCache.get(family);
     if (cached && cached.length > 0) {
       results.push(...cached);
-    } else {
-      uncached.push(family);
+      continue;
     }
+
+    let inFlight = workerFontInFlight.get(family);
+    if (!inFlight) {
+      inFlight = fetchFamilyFontData(family)
+        .catch((err) => {
+          console.warn(`[FontLoader] Failed to process worker font ${family}:`, err);
+          return [];
+        })
+        .finally(() => {
+          workerFontInFlight.delete(family);
+        });
+      workerFontInFlight.set(family, inFlight);
+    }
+    pending.push(inFlight);
   }
 
-  if (uncached.length === 0) return results;
-
-  await Promise.all(
-    uncached.map(async (family) => {
-      try {
-        let css = '';
-        try {
-          const res = await fetch(
-            `${GOOGLE_FONTS_CSS_URL}?family=${encodeURIComponent(family)}:wght@400;600;700&display=swap`,
-            {
-              headers: {
-                'User-Agent':
-                  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-              },
-            }
-          );
-          if (res.ok) css = await res.text();
-        } catch {
-          // ignore
-        }
-
-        if (!css) {
-          try {
-            const fallbackRes = await fetch(
-              `${GOOGLE_FONTS_CSS_URL}?family=${encodeURIComponent(family)}&display=swap`,
-              {
-                headers: {
-                  'User-Agent':
-                    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                },
-              }
-            );
-            if (fallbackRes.ok) css = await fallbackRes.text();
-          } catch {
-            // ignore
-          }
-        }
-
-        if (!css) return;
-
-        const regex = /@font-face\s*\{([^}]+)\}/g;
-        let match: RegExpExecArray | null;
-        const fontFaces: Array<{
-          weight: string;
-          style: string;
-          url: string;
-          isLatin: boolean;
-        }> = [];
-
-        while ((match = regex.exec(css)) !== null) {
-          const block = match[1];
-          const weight = block.match(/font-weight:\s*([^;]+)/)?.[1]?.trim() || '400';
-          const style = block.match(/font-style:\s*([^;]+)/)?.[1]?.trim() || 'normal';
-          const srcMatch = block
-            .match(/src:\s*url\(([^)]+)\)/)?.[1]
-            ?.replace(/['"]/g, '')
-            .trim();
-          const isLatin = block.includes('U+0000-00FF') || !block.includes('unicode-range');
-          if (srcMatch) {
-            fontFaces.push({ weight, style, url: srcMatch, isLatin });
-          }
-        }
-
-        // Prefer Latin subsets (standard ASCII/European glyphs for certificate names)
-        const latinFaces = fontFaces.filter((f) => f.isLatin);
-        const facesToUse = latinFaces.length > 0 ? latinFaces : fontFaces;
-
-        // Group by weight so we download at most 1 woff2 per weight variant
-        const byWeight = new Map<string, (typeof facesToUse)[0]>();
-        for (const face of facesToUse) {
-          if (!byWeight.has(face.weight)) {
-            byWeight.set(face.weight, face);
-          }
-        }
-
-        const familyFontData: WorkerFontData[] = [];
-        for (const [weight, face] of byWeight.entries()) {
-          try {
-            const fontRes = await fetch(face.url);
-            if (fontRes.ok) {
-              const buffer = await fontRes.arrayBuffer();
-              familyFontData.push({
-                family,
-                buffer,
-                weight,
-                style: face.style,
-              });
-            }
-          } catch (fetchErr) {
-            console.warn(`[FontLoader] Failed to download font binary for ${family}:`, fetchErr);
-          }
-        }
-
-        if (familyFontData.length > 0) {
-          workerFontCache.set(family, familyFontData);
-          results.push(...familyFontData);
-        }
-      } catch (err) {
-        console.warn(`[FontLoader] Failed to process worker font ${family}:`, err);
-      }
-    })
-  );
+  if (pending.length > 0) {
+    const loaded = await Promise.all(pending);
+    for (const chunk of loaded) {
+      results.push(...chunk);
+    }
+  }
 
   return results;
 }

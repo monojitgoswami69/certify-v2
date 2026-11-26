@@ -81,44 +81,52 @@ export function useCanvasZoomPan({
 
   // Reset to initial Fit view
   const handleResetFit = useCallback(() => {
+    zoomRef.current = 1;
+    panRef.current = { x: 0, y: 0 };
     setZoom(1);
     setPan({ x: 0, y: 0 });
     setIsZoomMenuOpen(false);
     fitImageToCanvas();
   }, [fitImageToCanvas]);
 
-  // Handle Zoom change
+  // Handle Zoom change (reads synchronous zoomRef/panRef so rapid wheel events never drop deltas)
   const handleZoomChange = useCallback(
     (newZoom: number, originScreenPoint?: { x: number; y: number }) => {
       const clampedZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, newZoom));
       if (clampedZoom <= 1.0) {
+        zoomRef.current = clampedZoom;
+        panRef.current = { x: 0, y: 0 };
         setZoom(clampedZoom);
-        setPan({ x: 0, y: 0 }); // Center if fully visible
+        setPan({ x: 0, y: 0 });
         return;
       }
 
       if (!originScreenPoint || !containerRef.current) {
+        zoomRef.current = clampedZoom;
         setZoom(clampedZoom);
         return;
       }
 
-      // Smooth zoom centered on mouse cursor
+      const prevZoom = zoomRef.current;
+      const prevPan = panRef.current;
       const containerRect = containerRef.current.getBoundingClientRect();
       const mouseOffset = {
-        x: originScreenPoint.x - (containerRect.left + containerRect.width / 2) - pan.x,
-        y: originScreenPoint.y - (containerRect.top + containerRect.height / 2) - pan.y,
+        x: originScreenPoint.x - (containerRect.left + containerRect.width / 2) - prevPan.x,
+        y: originScreenPoint.y - (containerRect.top + containerRect.height / 2) - prevPan.y,
       };
 
-      const scaleRatio = clampedZoom / zoom;
+      const scaleRatio = clampedZoom / prevZoom;
       const newPan = {
-        x: pan.x - mouseOffset.x * (scaleRatio - 1),
-        y: pan.y - mouseOffset.y * (scaleRatio - 1),
+        x: prevPan.x - mouseOffset.x * (scaleRatio - 1),
+        y: prevPan.y - mouseOffset.y * (scaleRatio - 1),
       };
 
+      zoomRef.current = clampedZoom;
+      panRef.current = newPan;
       setZoom(clampedZoom);
       setPan(newPan);
     },
-    [zoom, pan, containerRef]
+    [containerRef]
   );
 
   // Keep the latest zoom/pan/handler available to the stable listeners below.
@@ -194,20 +202,25 @@ export function useCanvasZoomPan({
 
       if (e.shiftKey) {
         // Shift + Wheel = Horizontal Scroll
-        // On macOS, the browser automatically translates Shift + vertical wheel into deltaX.
-        // On Windows/Linux, some browsers keep deltaY and leave deltaX = 0.
-        // We pick whichever delta has non-zero magnitude to guarantee horizontal scrolling across all platforms.
         const horizontalDelta = Math.abs(normX) > 0 ? normX : normY;
-        setPan((prev) => ({
-          x: Math.max(-maxPanX, Math.min(maxPanX, prev.x - horizontalDelta)),
-          y: prev.y,
-        }));
+        setPan((prev) => {
+          const next = {
+            x: Math.max(-maxPanX, Math.min(maxPanX, prev.x - horizontalDelta)),
+            y: prev.y,
+          };
+          panRef.current = next;
+          return next;
+        });
       } else {
         // Standard 2D pan: handles vertical wheel, horizontal tilt wheel, and fluid diagonal trackpad gestures
-        setPan((prev) => ({
-          x: Math.max(-maxPanX, Math.min(maxPanX, prev.x - normX)),
-          y: Math.max(-maxPanY, Math.min(maxPanY, prev.y - normY)),
-        }));
+        setPan((prev) => {
+          const next = {
+            x: Math.max(-maxPanX, Math.min(maxPanX, prev.x - normX)),
+            y: Math.max(-maxPanY, Math.min(maxPanY, prev.y - normY)),
+          };
+          panRef.current = next;
+          return next;
+        });
       }
     };
 
@@ -241,18 +254,33 @@ export function useCanvasZoomPan({
         const scaleChange = currentDist / initialTouchDist;
         const targetZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, initialTouchZoom * scaleChange));
 
+        if (targetZoom <= 1.0) {
+          zoomRef.current = targetZoom;
+          panRef.current = { x: 0, y: 0 };
+          setZoom(targetZoom);
+          setPan({ x: 0, y: 0 });
+          return;
+        }
+
         const currentMid = {
           x: (t1.clientX + t2.clientX) / 2,
           y: (t1.clientY + t2.clientY) / 2,
         };
-        const midDiffX = currentMid.x - initialMidpoint.x;
-        const midDiffY = currentMid.y - initialMidpoint.y;
+        const containerRect = container.getBoundingClientRect();
+        const midOffset = {
+          x: initialMidpoint.x - (containerRect.left + containerRect.width / 2) - initialTouchPan.x,
+          y: initialMidpoint.y - (containerRect.top + containerRect.height / 2) - initialTouchPan.y,
+        };
+        const ratio = targetZoom / initialTouchZoom;
+        const nextPan = {
+          x: initialTouchPan.x - midOffset.x * (ratio - 1) + (currentMid.x - initialMidpoint.x),
+          y: initialTouchPan.y - midOffset.y * (ratio - 1) + (currentMid.y - initialMidpoint.y),
+        };
 
+        zoomRef.current = targetZoom;
+        panRef.current = nextPan;
         setZoom(targetZoom);
-        setPan({
-          x: initialTouchPan.x + midDiffX,
-          y: initialTouchPan.y + midDiffY,
-        });
+        setPan(nextPan);
       }
     };
 
@@ -308,9 +336,17 @@ export function useCanvasZoomPan({
   // Keyboard shortcut listeners
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ignore when typing in inputs/textareas
-      const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+      // Ignore when typing in form controls or while a modal dialog is open above the canvas
+      const target = e.target as HTMLElement | null;
+      if (
+        !target ||
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.tagName === 'SELECT' ||
+        target.isContentEditable ||
+        Boolean(target.closest('[aria-modal="true"], dialog[open]')) ||
+        Boolean(document.querySelector('[aria-modal="true"], dialog[open]'))
+      ) {
         return;
       }
 

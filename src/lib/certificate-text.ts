@@ -2,6 +2,7 @@ import type { TextBox } from '../types';
 
 type TextContext = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
+const MAX_FITTING_CACHE_ENTRIES = 1024;
 const fittingCaches = new WeakMap<TextContext, Map<string, number>>();
 
 export function clearTextMeasurements(ctx: TextContext) {
@@ -21,16 +22,22 @@ function fittedSize(
   width: number,
   height: number
 ): number {
+  const maximum = Math.min(cap, height / 1.2);
+  if (!(maximum > 0) || !(width > 0)) return 0;
+
   let cache = fittingCaches.get(ctx);
   if (!cache) {
     cache = new Map();
     fittingCaches.set(ctx, cache);
   }
-  const key = JSON.stringify([font, cap, width, height, text]);
+  const key = `${font}\0${cap}\0${width}\0${height}\0${text}`;
   const cached = cache.get(key);
-  if (cached !== undefined) return cached;
+  if (cached !== undefined) {
+    cache.delete(key);
+    cache.set(key, cached);
+    return cached;
+  }
 
-  const maximum = Math.min(cap, height / 1.2);
   const fits = (size: number) => {
     ctx.font = `${size}px ${font}`;
     return ctx.measureText(text).width <= width;
@@ -49,7 +56,7 @@ function fittedSize(
     size = Math.max(Math.min(maximum, 0.25), low);
   }
 
-  if (cache.size >= 1024) cache.delete(cache.keys().next().value!);
+  if (cache.size >= MAX_FITTING_CACHE_ENTRIES) cache.delete(cache.keys().next().value!);
   cache.set(key, size);
   return size;
 }
@@ -77,27 +84,35 @@ export function drawCertificateText(ctx: TextContext, text: string, box: TextBox
   if (!text.trim() || !(box.w > 0 && box.h > 0 && box.fontSize > 0)) return;
 
   ctx.save();
-  const { x, y, width } = placeText(ctx, text, box, font);
-  ctx.fillStyle = box.fontColor;
+  try {
+    const { x, y, width } = placeText(ctx, text, box, font);
+    ctx.fillStyle = box.fontColor;
 
-  ctx.fillText(text, x, y, width);
-  ctx.restore();
+    ctx.fillText(text, x, y, width);
+  } finally {
+    ctx.restore();
+  }
 }
 
 /** Measures the same fitted type, alignment and baseline used by the renderer. */
 export function inspectCertificateText(ctx: TextContext, text: string, box: TextBox, font: string,
   canvasWidth: number, canvasHeight: number) {
   if (!(box.w > 0 && box.h > 0 && box.fontSize > 0)) return { status: 'overflow' as const, size: 0 };
-  const { x, y, size, width } = placeText(ctx, text, box, font);
-  const metrics = ctx.measureText(text);
-  // fillText compresses horizontally when the fitted font still exceeds maxWidth.
-  const scale = metrics.width > width ? width / metrics.width : 1;
-  const left = x - metrics.actualBoundingBoxLeft * scale;
-  const right = x + metrics.actualBoundingBoxRight * scale;
-  const top = y - metrics.actualBoundingBoxAscent;
-  const bottom = y + metrics.actualBoundingBoxDescent;
-  const overflow = left < Math.max(0, box.x) - 0.5 || right > Math.min(canvasWidth, box.x + box.w) + 0.5
-    || top < Math.max(0, box.y) - 0.5 || bottom > Math.min(canvasHeight, box.y + box.h) + 0.5;
-  const status = overflow ? 'overflow' : size < box.fontSize * 0.8 || metrics.width >= width * 0.95 ? 'tight' : 'fits';
-  return { status, size };
+  ctx.save();
+  try {
+    const { x, y, size, width } = placeText(ctx, text, box, font);
+    const metrics = ctx.measureText(text);
+    // fillText compresses horizontally when the fitted font still exceeds maxWidth.
+    const scale = metrics.width > width && width > 0 ? width / metrics.width : 1;
+    const left = x - metrics.actualBoundingBoxLeft * scale;
+    const right = x + metrics.actualBoundingBoxRight * scale;
+    const top = y - metrics.actualBoundingBoxAscent;
+    const bottom = y + metrics.actualBoundingBoxDescent;
+    const overflow = left < Math.max(0, box.x) - 0.5 || right > Math.min(canvasWidth, box.x + box.w) + 0.5
+      || top < Math.max(0, box.y) - 0.5 || bottom > Math.min(canvasHeight, box.y + box.h) + 0.5;
+    const status = overflow ? 'overflow' : size < box.fontSize * 0.8 || metrics.width >= width * 0.95 ? 'tight' : 'fits';
+    return { status, size };
+  } finally {
+    ctx.restore();
+  }
 }

@@ -47,6 +47,7 @@ export function useEmailBatchRunner() {
     templateImage,
     templateFile,
     csvData,
+    csvReview,
     boxes,
     images,
     emailColumn,
@@ -468,7 +469,15 @@ export function useEmailBatchRunner() {
 
             const blocked = err instanceof EmailDeliveryBlockedError ? err.deliveryStatus : null;
             if (blocked === 'accepted') {
-              deliveryRecordsRef.current.set(rowIndex, { rowIndex, name: displayName, email, status: 'sent' });
+              const nowIso = new Date().toISOString();
+              sent.push({ rowIndex, name: displayName, email, sentAt: nowIso });
+              deliveryRecordsRef.current.set(rowIndex, {
+                rowIndex,
+                name: displayName,
+                email,
+                status: 'sent',
+                timestamp: nowIso,
+              });
               completedCount++;
               flushProgress(displayName);
               continue;
@@ -572,8 +581,8 @@ export function useEmailBatchRunner() {
   );
 
   const handleSend = useCallback(async () => {
-    const { csvReview } = useAppStore.getState();
-    const records = csvData.map((row, i) => ({ rowIndex: csvReview.numbers[i], row }));
+    const { csvReview: latestReview } = useAppStore.getState();
+    const records = csvData.map((row, i) => ({ rowIndex: latestReview.numbers[i] ?? i + 1, row }));
     await sendBatch(records, false);
   }, [csvData, sendBatch]);
 
@@ -590,9 +599,9 @@ export function useEmailBatchRunner() {
   };
 
   const handleResumeUnsent = useCallback(async () => {
-    const { csvReview } = useAppStore.getState();
+    const { csvReview: latestReview } = useAppStore.getState();
     const unsentRecords = csvData
-      .map((row, i) => ({ rowIndex: csvReview.numbers[i], row }))
+      .map((row, i) => ({ rowIndex: latestReview.numbers[i] ?? i + 1, row }))
       .filter(({ rowIndex }) => {
         if (deliveryRosterRef.current !== csvData) return true;
         const status = deliveryRecordsRef.current.get(rowIndex)?.status;
@@ -649,7 +658,7 @@ export function useEmailBatchRunner() {
       ? emailProgress.records
       : Array.from(deliveryRecordsRef.current.values());
 
-  const unsentCount = useAppStore.getState().csvReview.numbers.reduce((count, number) => (isRowSent(number) ? count : count + 1), 0);
+  const unsentCount = csvReview.numbers.reduce((count, number) => (isRowSent(number) ? count : count + 1), 0);
 
   return {
     emailProgress,

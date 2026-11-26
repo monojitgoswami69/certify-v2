@@ -80,6 +80,8 @@ function createSampleTemplate(): Promise<{ file: File; img: HTMLImageElement; in
 
 const ALLOWED_TEMPLATE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
 const MAX_TEMPLATE_BYTES = 15 * 1024 * 1024;
+const MAX_TEMPLATE_EDGE = 12_000;
+const MAX_TEMPLATE_PIXELS = 48_000_000;
 
 export function TemplateUpload() {
   const { setTemplate, setError } = useAppStore();
@@ -103,7 +105,15 @@ export function TemplateUpload() {
       const img = new Image();
       img.onload = () => {
         URL.revokeObjectURL(objectUrl);
-        const info = `${file.name} (${img.width}×${img.height})`;
+        const w = img.naturalWidth || img.width;
+        const h = img.naturalHeight || img.height;
+        if (w <= 0 || h <= 0 || w > MAX_TEMPLATE_EDGE || h > MAX_TEMPLATE_EDGE || w * h > MAX_TEMPLATE_PIXELS) {
+          setError(
+            `Template dimensions (${w}×${h}) exceed the safe limit of ${MAX_TEMPLATE_EDGE.toLocaleString()}px per side or 48MP.`
+          );
+          return;
+        }
+        const info = `${file.name} (${w}×${h})`;
         setError(null);
         setTemplate(file, img, info);
       };

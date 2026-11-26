@@ -481,17 +481,21 @@ export async function imageSourceToBlob(source: string): Promise<Blob> {
       throw new Error('Invalid data URL format: missing comma separator');
     }
     const header = source.slice(0, commaIdx);
-    const base64Data = source.slice(commaIdx + 1);
-    const mimeMatch = header.match(/data:([^;]+)/);
+    const payload = source.slice(commaIdx + 1);
+    const mimeMatch = header.match(/data:([^;,]+)/);
     const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';
 
-    const binaryString = atob(base64Data);
-    const len = binaryString.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
+    if (header.includes(';base64')) {
+      const binaryString = atob(payload);
+      const len = binaryString.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      return new Blob([bytes], { type: mimeType });
     }
-    return new Blob([bytes], { type: mimeType });
+
+    return new Blob([decodeURIComponent(payload)], { type: mimeType });
   }
 
   const res = await fetch(source);

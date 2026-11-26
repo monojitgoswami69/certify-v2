@@ -37,6 +37,19 @@ export class PooledCertificateRenderer {
           .processChunk(chunk, (result) => {
             this.cache.set(result.rowIndex, result);
           })
+          .catch((err) => {
+            const message = err instanceof Error ? err.message : 'Worker pool execution failed';
+            for (const item of chunk) {
+              if (!this.cache.has(item.rowIndex)) {
+                this.cache.set(item.rowIndex, {
+                  id: item.id,
+                  rowIndex: item.rowIndex,
+                  filename: item.filename,
+                  error: message,
+                });
+              }
+            }
+          })
           .finally(() => {
             this.inflight = null;
           });

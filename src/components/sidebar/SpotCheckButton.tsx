@@ -22,7 +22,15 @@ export function SpotCheckButton({ disabled }: { disabled?: boolean }) {
   const [dataUrl, setDataUrl] = useState<string | null>(null);
   const [rendering, setRendering] = useState(false);
   const cacheRef = useRef<Map<number, string>>(new Map());
+  const reusableCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const renderSeqRef = useRef(0);
+
+  const clearPreviewCache = useCallback(() => {
+    for (const url of cacheRef.current.values()) {
+      URL.revokeObjectURL(url);
+    }
+    cacheRef.current.clear();
+  }, []);
 
   const useQr = qrZones.length > 0;
   const validBoxes = useMemo(() => boxes.filter((b) => b.field || b.kind === 'static'), [boxes]);
@@ -32,26 +40,39 @@ export function SpotCheckButton({ disabled }: { disabled?: boolean }) {
   useEffect(() => {
     if (!open) {
       renderSeqRef.current++;
-      cacheRef.current.clear();
+      clearPreviewCache();
       setIndex(0);
       setDataUrl(null);
     }
-  }, [open]);
+  }, [open, clearPreviewCache]);
 
   useEffect(() => {
     renderSeqRef.current++;
-    cacheRef.current.clear();
+    clearPreviewCache();
     setDataUrl(null);
     setIndex((current) => Math.min(current, Math.max(0, csvData.length - 1)));
-  }, [templateImage, csvData, validBoxes, qrZones, images, registeredCertIds]);
+  }, [templateImage, csvData, validBoxes, qrZones, images, registeredCertIds, clearPreviewCache]);
+
+  useEffect(() => clearPreviewCache, [clearPreviewCache]);
 
   // Escape closes (matching the app's other modals).
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
-      if (e.key === 'ArrowRight') setIndex((i) => Math.min(i + 1, csvData.length - 1));
-      if (e.key === 'ArrowLeft') setIndex((i) => Math.max(i - 1, 0));
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        setOpen(false);
+        return;
+      }
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key === 'ArrowRight') {
+        e.stopPropagation();
+        setIndex((i) => Math.min(i + 1, csvData.length - 1));
+      }
+      if (e.key === 'ArrowLeft') {
+        e.stopPropagation();
+        setIndex((i) => Math.max(i - 1, 0));
+      }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
@@ -59,7 +80,7 @@ export function SpotCheckButton({ disabled }: { disabled?: boolean }) {
 
   useEffect(() => {
     if (!open || !templateImage || !csvData[index]) return;
-    const rowIndex = csvReview.numbers[index];
+    const rowIndex = csvReview.numbers[index] ?? index + 1;
     const row = csvData[index];
     const seq = ++renderSeqRef.current;
 
@@ -80,6 +101,9 @@ export function SpotCheckButton({ disabled }: { disabled?: boolean }) {
         const { generateCertificate } = await import('../../lib/certificate-engine');
         if (seq !== renderSeqRef.current) return;
 
+        if (!reusableCanvasRef.current) {
+          reusableCanvasRef.current = document.createElement('canvas');
+        }
         const certId = registeredCertIds.get(rowIndex);
         const cert = await generateCertificate({
           templateImage,
@@ -87,20 +111,25 @@ export function SpotCheckButton({ disabled }: { disabled?: boolean }) {
           row,
           filename: 'spot-check',
           includePng: true,
-          includeBase64: true,
           qrZones: useQr ? (qrZones as QrZone[]) : undefined,
           images,
+          canvas: reusableCanvasRef.current,
           verificationUrl: useQr && certId && !sampleQr ? buildVerifyUrlFor(certId, verificationOrigin) : undefined,
           sampleQr: useQr && (sampleQr || !certId),
         });
-        if (seq !== renderSeqRef.current || !cert.pngBase64) return;
+        if (seq !== renderSeqRef.current || !cert.pngBlob) return;
 
+        const objectUrl = URL.createObjectURL(cert.pngBlob);
         if (cacheRef.current.size >= PREVIEW_CACHE_LIMIT) {
           const oldest = cacheRef.current.keys().next().value;
-          if (oldest !== undefined) cacheRef.current.delete(oldest);
+          if (oldest !== undefined) {
+            const oldestUrl = cacheRef.current.get(oldest);
+            if (oldestUrl) URL.revokeObjectURL(oldestUrl);
+            cacheRef.current.delete(oldest);
+          }
         }
-        cacheRef.current.set(rowIndex, cert.pngBase64);
-        setDataUrl(cert.pngBase64);
+        cacheRef.current.set(rowIndex, objectUrl);
+        setDataUrl(objectUrl);
       } catch (err) {
         console.warn('[SpotCheck] render failed:', err);
         if (seq === renderSeqRef.current) setDataUrl(null);

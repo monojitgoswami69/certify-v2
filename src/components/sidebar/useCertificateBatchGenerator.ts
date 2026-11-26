@@ -13,6 +13,7 @@ import {
 } from '../../lib/utils';
 import { generateCertificate } from '../../lib/certificate-engine';
 import { ensureFontsLoaded, loadFontsForWorker, type WorkerFontData } from '../../lib/font-loader';
+import { templateImageToBlob } from '../../lib/render-service';
 import { buildVerifyUrlFor } from '../../lib/verification-links';
 import {
   CertificateWorkerPool,
@@ -450,6 +451,7 @@ export function useCertificateBatchGenerator() {
 
       // Step 2: Prepare tasks for worker pool. With QR enabled, a row without a registered
       // ID must fail loudly instead of silently producing a certificate with a blank QR.
+      const rowByIndex = new Map(records.map((rec) => [rec.rowIndex, rec.row]));
       const tasks: WorkerTask[] = [];
       records.forEach(({ rowIndex, row }, i) => {
         const name = getFilenameBasis(row);
@@ -482,15 +484,7 @@ export function useCertificateBatchGenerator() {
 
         try {
           // Obtain template Blob reference (zero-copy transfer across workers)
-          let templateBlob: Blob | null = templateFile;
-          if (!templateBlob && templateImage) {
-            const canvas = document.createElement('canvas');
-            canvas.width = templateImage.naturalWidth || templateImage.width;
-            canvas.height = templateImage.naturalHeight || templateImage.height;
-            const ctx = canvas.getContext('2d')!;
-            ctx.drawImage(templateImage, 0, 0);
-            templateBlob = await new Promise<Blob>((res) => canvas.toBlob((b) => res(b!), 'image/png'));
-          }
+          const templateBlob = templateImage ? await templateImageToBlob(templateImage, templateFile) : null;
 
           if (!templateBlob) throw new Error('Template graphic data is missing');
 
@@ -557,7 +551,7 @@ export function useCertificateBatchGenerator() {
               } else if (result.error) {
                 // Only track and stream failure logs
                 const errorMsg = result.error || 'Generation failed';
-                const rowObj = records.find((r) => r.rowIndex === result.rowIndex)?.row || {};
+                const rowObj = rowByIndex.get(result.rowIndex) || {};
                 const timestamp = new Date().toLocaleTimeString();
 
                 failedMapRef.current.set(result.rowIndex, {
@@ -614,12 +608,12 @@ export function useCertificateBatchGenerator() {
                 // so they land in the retry queue.
                 const timestamp = new Date().toLocaleTimeString();
                 for (const rowIndex of streamedRowIndexes) {
-                  const rec = records.find((r) => r.rowIndex === rowIndex);
+                  const rowData = rowByIndex.get(rowIndex);
                   failedMapRef.current.set(rowIndex, { error: ZIP_STREAM_FAIL_MESSAGE, timestamp });
                   errorsRef.current.push({
                     rowIndex,
-                    name: rec ? getFilenameBasis(rec.row) : `row ${rowIndex}`,
-                    row: rec?.row ?? {},
+                    name: rowData ? getFilenameBasis(rowData) : `row ${rowIndex}`,
+                    row: rowData ?? {},
                     error: ZIP_STREAM_FAIL_MESSAGE,
                   });
                   successfulCertsRef.current.delete(rowIndex);
@@ -658,6 +652,7 @@ export function useCertificateBatchGenerator() {
           }
         }
         const fallbackStartTime = performance.now();
+        const fallbackCanvas = document.createElement('canvas');
         for (let i = 0; i < remainingRecords.length; i++) {
           if (abortRef.current) break;
 
@@ -686,6 +681,7 @@ export function useCertificateBatchGenerator() {
               qrZones: useQr ? qrZones : undefined,
               images,
               verificationUrl,
+              canvas: fallbackCanvas,
             });
 
             successfulCertsRef.current.set(rowIndex, {
@@ -719,7 +715,7 @@ export function useCertificateBatchGenerator() {
             current: successfulCertsRef.current.size + errorsRef.current.length,
             total: records.length,
             currentName: filenameBasis,
-            status: 'generating',
+            status: pauseRef.current ? 'paused' : 'generating',
             errors: [...errorsRef.current],
             generated: successfulCertsRef.current.size,
             speed,
@@ -838,6 +834,7 @@ export function useCertificateBatchGenerator() {
       boxes,
       validBoxes,
       qrZones,
+      images,
       eventName,
       emailColumn,
       defaultFont,
@@ -853,7 +850,7 @@ export function useCertificateBatchGenerator() {
   const handleGenerate = useCallback(async () => {
     setIsReportOpen(false);
     const { csvReview } = useAppStore.getState();
-    const records = csvData.map((row, i) => ({ rowIndex: csvReview.numbers[i], row }));
+    const records = csvData.map((row, i) => ({ rowIndex: csvReview.numbers[i] ?? i + 1, row }));
     await generateBatch(records, false);
   }, [csvData, generateBatch]);
 

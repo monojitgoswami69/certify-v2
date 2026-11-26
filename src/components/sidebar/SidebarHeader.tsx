@@ -8,10 +8,15 @@ import { AccountMenu } from '../account/AccountMenu';
 export function SidebarHeader() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const eventIdParam = searchParams.get('eventId');
   const eventParam = searchParams.get('event');
   const fromParam = searchParams.get('from');
-  const isFromEvent = fromParam === 'event' && Boolean(eventParam);
-  const backLabel = isFromEvent && eventParam ? `Back to ${eventParam}` : 'Back to Dashboard';
+  const isFromEvent = fromParam === 'event' && Boolean(eventIdParam || eventParam);
+  const backLabel = isFromEvent && eventParam
+    ? `Back to ${eventParam}`
+    : isFromEvent
+      ? 'Back to Event'
+      : 'Back to Dashboard';
 
   const handleBack = () => {
     // Navigation Stack Logic:
@@ -19,7 +24,9 @@ export function SidebarHeader() {
     // return back to that event's detailed view.
     // Otherwise (Home -> Studio, fresh creation, or newly registered event batch):
     // ALWAYS return to Home dashboard (/dashboard).
-    if (isFromEvent && eventParam) {
+    if (isFromEvent && eventIdParam) {
+      router.push(`/dashboard?eventId=${encodeURIComponent(eventIdParam)}`);
+    } else if (isFromEvent && eventParam) {
       router.push(`/dashboard?event=${encodeURIComponent(eventParam)}`);
     } else {
       router.push('/dashboard');

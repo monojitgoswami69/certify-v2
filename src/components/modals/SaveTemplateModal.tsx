@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { X, Save, Check, AlertCircle, LayoutTemplate } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import { apiFetch } from '../../lib/api-client';
+import { prepareIssuedDesign } from '../../lib/template-autosave';
 
 interface SaveTemplateModalProps {
   isOpen: boolean;
@@ -32,7 +33,13 @@ export function SaveTemplateModal({ isOpen, onClose, onSaved }: SaveTemplateModa
     setTemplateName(templateFile?.name ? templateFile.name.replace(/\.[^/.]+$/, '') : 'Certificate Template');
     setError(null);
     setSuccess(false);
-  }, [isOpen, templateFile]);
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !saving) onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isOpen, templateFile, saving, onClose]);
 
   if (!isOpen || !mounted) return null;
 
@@ -52,29 +59,20 @@ export function SaveTemplateModal({ isOpen, onClose, onSaved }: SaveTemplateModa
     setError(null);
 
     try {
-      // Convert templateImage to Base64 data URL
-      const canvas = document.createElement('canvas');
-      canvas.width = templateImage.naturalWidth || templateImage.width;
-      canvas.height = templateImage.naturalHeight || templateImage.height;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) throw new Error('Could not initialize canvas context');
-
-      ctx.drawImage(templateImage, 0, 0);
-      const imageData = canvas.toDataURL('image/png', 0.95);
+      const design = await prepareIssuedDesign({
+        templateImage,
+        templateFile,
+        boxes,
+        qrZones,
+        images,
+        defaultFont,
+        defaultFontSize,
+        defaultFontColor,
+      });
 
       const payload = {
         name: templateName.trim(),
-        imageData,
-        width: canvas.width,
-        height: canvas.height,
-        layoutConfig: {
-          boxes,
-          qrZones,
-          images,
-          defaultFont,
-          defaultFontSize,
-          defaultFontColor,
-        },
+        ...design,
       };
 
       const res = await apiFetch('/api/templates', {
@@ -108,7 +106,13 @@ export function SaveTemplateModal({ isOpen, onClose, onSaved }: SaveTemplateModa
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 animate-in fade-in duration-150">
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 animate-in fade-in duration-150"
+      onClick={() => !saving && onClose()}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="save-template-title"
+    >
       <div
         className="bg-white rounded-2xl border border-slate-200 shadow-xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-150"
         onClick={(e) => e.stopPropagation()}
@@ -120,7 +124,7 @@ export function SaveTemplateModal({ isOpen, onClose, onSaved }: SaveTemplateModa
               <LayoutTemplate className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-sm font-bold text-slate-900">Save Reusable Template</h2>
+              <h2 id="save-template-title" className="text-sm font-bold text-slate-900">Save Reusable Template</h2>
               <p className="text-[11px] text-slate-400">Store layout &amp; graphic directly in database</p>
             </div>
           </div>

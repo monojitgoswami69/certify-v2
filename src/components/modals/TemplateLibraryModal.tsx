@@ -58,7 +58,8 @@ export function TemplateLibraryModal({ isOpen, onClose, onLoaded }: TemplateLibr
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
   const [historyFor, setHistoryFor] = useState<string | null>(null);
-  const [versions, setVersions] = useState<Array<{ id: string; createdAt: string; boxCount: number; qrCount: number }> | null>(null);
+  const [currentImageHash, setCurrentImageHash] = useState<string | null>(null);
+  const [versions, setVersions] = useState<Array<{ id: string; createdAt: string; imageHash?: string; boxCount: number; qrCount: number }> | null>(null);
   const [restoringId, setRestoringId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -85,10 +86,14 @@ export function TemplateLibraryModal({ isOpen, onClose, onLoaded }: TemplateLibr
   }, []);
 
   useEffect(() => {
-    if (isOpen) {
-      fetchTemplates();
-    }
-  }, [isOpen, fetchTemplates]);
+    if (!isOpen) return;
+    fetchTemplates();
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isOpen, fetchTemplates, onClose]);
 
   if (!isOpen || !mounted) return null;
 
@@ -186,12 +191,14 @@ export function TemplateLibraryModal({ isOpen, onClose, onLoaded }: TemplateLibr
   // Version history: list snapshots and restore one.
   const openHistory = async (templateId: string) => {
     setHistoryFor(templateId);
+    setCurrentImageHash(null);
     setVersions(null);
     setError(null);
     try {
       const res = await apiFetch(`/api/templates/${templateId}/versions`);
       if (!res.ok) throw new Error('Failed to load versions');
       const data = await res.json();
+      setCurrentImageHash(typeof data.currentImageHash === 'string' ? data.currentImageHash : null);
       setVersions(data.versions || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load versions');
@@ -250,7 +257,13 @@ export function TemplateLibraryModal({ isOpen, onClose, onLoaded }: TemplateLibr
   );
 
   return createPortal(
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 animate-in fade-in duration-150">
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 animate-in fade-in duration-150"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="template-library-title"
+    >
       <div
         className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-150"
         onClick={(e) => e.stopPropagation()}
@@ -262,7 +275,7 @@ export function TemplateLibraryModal({ isOpen, onClose, onLoaded }: TemplateLibr
               <LayoutTemplate className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-sm font-bold text-slate-900">Saved Templates Library</h2>
+              <h2 id="template-library-title" className="text-sm font-bold text-slate-900">Saved Templates Library</h2>
               <p className="text-[11px] text-slate-400">Reusable certificate layouts stored in database</p>
             </div>
           </div>
@@ -425,6 +438,9 @@ export function TemplateLibraryModal({ isOpen, onClose, onLoaded }: TemplateLibr
                                   minute: '2-digit',
                                 })}
                                 <span className="text-slate-400"> · {v.boxCount} fields · {v.qrCount} QR</span>
+                                {currentImageHash && v.imageHash && v.imageHash !== currentImageHash && (
+                                  <span className="text-amber-700 font-medium"> · Artwork differs</span>
+                                )}
                               </span>
                               <button
                                 onClick={() => void restoreVersion(t.id, v.id)}

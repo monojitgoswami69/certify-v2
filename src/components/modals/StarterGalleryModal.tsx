@@ -84,18 +84,26 @@ export function StarterGalleryModal({ open, onClose }: { open: boolean; onClose:
       const canvas = document.createElement('canvas');
       canvas.width = TEMPLATE_W;
       canvas.height = TEMPLATE_H;
-      canvas.getContext('2d')!.drawImage(img, 0, 0, TEMPLATE_W, TEMPLATE_H);
-      const dataUrl = canvas.toDataURL('image/png');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Canvas 2D context unavailable');
+      ctx.drawImage(img, 0, 0, TEMPLATE_W, TEMPLATE_H);
 
       const blob = await new Promise<Blob>((resolve, reject) =>
         canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('encode failed'))), 'image/png')
       );
       const file = new File([blob], `${t.id}.png`, { type: 'image/png' });
       const display = new Image();
+      const objectUrl = URL.createObjectURL(blob);
       await new Promise<void>((resolve, reject) => {
-        display.onload = () => resolve();
-        display.onerror = () => reject(new Error('redecode failed'));
-        display.src = dataUrl;
+        display.onload = () => {
+          URL.revokeObjectURL(objectUrl);
+          resolve();
+        };
+        display.onerror = () => {
+          URL.revokeObjectURL(objectUrl);
+          reject(new Error('redecode failed'));
+        };
+        display.src = objectUrl;
       });
 
       const makeBox = (seed: Record<string, unknown>, field: string, id: string): TextBox =>

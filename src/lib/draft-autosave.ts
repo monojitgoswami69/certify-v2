@@ -25,7 +25,7 @@ export interface DraftState {
   defaultFont?: string;
   defaultFontSize?: number;
   defaultFontColor?: string;
-  templateRef: { fileName: string; width: number; height: number } | null;
+  templateRef: { fileName: string; width: number; height: number; imageHash?: string } | null;
 }
 
 interface DraftResponse {
