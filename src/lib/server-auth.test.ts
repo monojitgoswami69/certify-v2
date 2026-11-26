@@ -1,9 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
+  buildSignedTemplateAssetUrl,
   createSessionToken,
   getSessionFromRequest,
   mutationAllowed,
   readSession,
+  signTemplateAssetParams,
+  templateImageDigestHex,
+  verifyTemplateAssetParams,
 } from './server-auth';
 
 const USER_ID = '00000000-0000-4000-8000-000000000001';
@@ -71,5 +75,29 @@ describe('mutationAllowed (CSRF guard)', () => {
     }))).toBe(false);
     expect(mutationAllowed(requestWith({}))).toBe(false);
     expect(mutationAllowed(requestWith({ 'x-certify-request': '0' }))).toBe(false);
+  });
+});
+
+describe('signed CDN template asset URLs', () => {
+  const EVENT_UUID = '11111111-1111-4111-8111-111111111111';
+  const digest = templateImageDigestHex('data:image/webp;base64,UklGRg==');
+
+  it('builds verifiable signed URLs and rejects tampered parameters', () => {
+    const url = buildSignedTemplateAssetUrl(EVENT_UUID, 'preview', digest);
+    const parsed = new URL(`https://app.example${url}`);
+    const sig = parsed.searchParams.get('sig') ?? '';
+
+    expect(parsed.pathname).toBe(`/api/verify/template/${EVENT_UUID}`);
+    expect(parsed.searchParams.get('kind')).toBe('preview');
+    expect(parsed.searchParams.get('v')).toBe(digest);
+    expect(verifyTemplateAssetParams(EVENT_UUID, 'preview', digest, sig)).toBe(true);
+
+    // Tampered kind, version, event ID, or signature must fail verification.
+    expect(verifyTemplateAssetParams(EVENT_UUID, 'full', digest, sig)).toBe(false);
+    expect(verifyTemplateAssetParams('22222222-2222-4222-8222-222222222222', 'preview', digest, sig)).toBe(false);
+    expect(verifyTemplateAssetParams(EVENT_UUID, 'preview', '0'.repeat(32), sig)).toBe(false);
+    expect(verifyTemplateAssetParams(EVENT_UUID, 'preview', digest, '0'.repeat(64))).toBe(false);
+    expect(verifyTemplateAssetParams(EVENT_UUID, 'preview', 'bad', sig)).toBe(false);
+    expect(sig).toBe(signTemplateAssetParams(EVENT_UUID, 'preview', digest));
   });
 });

@@ -13,7 +13,8 @@ export interface CertificateAssetSpec {
   verificationOrigin?: string;
   recipientName: string;
   template: {
-    imageData: string;
+    imageUrl?: string;
+    imageData?: string;
     width: number;
     height: number;
     previewWidth?: number;
@@ -105,10 +106,11 @@ export function CertificatePreview({
           )
         );
         if (cancelled) return;
+        const templateSrc = asset?.template?.imageUrl || asset?.template?.imageData;
         if (
           !asset ||
           asset.status !== 'ok' ||
-          !asset.template?.imageData ||
+          !templateSrc ||
           !asset.layoutConfig ||
           !Array.isArray(asset.layoutConfig.boxes) ||
           asset.layoutConfig.boxes.length === 0
@@ -121,7 +123,7 @@ export function CertificatePreview({
         layoutRef.current = asset.layoutConfig;
         verificationOriginRef.current = asset.verificationOrigin ?? null;
         fieldsRef.current = asset.fields ?? {};
-        isPreviewRef.current = Boolean(asset.template.isPreview);
+        isPreviewRef.current = Boolean(asset.template?.isPreview);
 
         const boxes = asset.layoutConfig.boxes ?? [];
         const fonts = new Set<string>(
@@ -130,15 +132,15 @@ export function CertificatePreview({
           )
         );
 
-        // Decode template image, load fonts, and load rendering code concurrently.
+        // Decode template image (served via CDN binary URL), load fonts, and load rendering code concurrently.
         const [img, , engine] = await Promise.all([
-          decodeImageSrc(asset.template.imageData),
+          decodeImageSrc(templateSrc),
           fonts.size > 0 ? ensureFontsLoaded(fonts) : Promise.resolve(),
           import('@/lib/certificate-engine'),
         ]);
         if (cancelled) return;
         templateImageRef.current = img;
-        if (!asset.template.isPreview) {
+        if (!asset.template?.isPreview) {
           fullTemplateImageRef.current = img;
         }
 
@@ -147,8 +149,8 @@ export function CertificatePreview({
         const preview = await engine.renderCertificatePreviewBlob(
           {
             templateImage: img,
-            logicalWidth: asset.template.width,
-            logicalHeight: asset.template.height,
+            logicalWidth: asset.template!.width,
+            logicalHeight: asset.template!.height,
             boxes,
             row: fieldsRef.current,
             frozenFields: true,
@@ -225,10 +227,11 @@ export function CertificatePreview({
             const res = await fetch(`/api/verify/${encodeURIComponent(certificateId)}/asset?full=1`);
             if (!res.ok) throw new Error('Full-resolution asset fetch failed');
             const fullAsset = (await res.json()) as AssetResponse;
-            if (fullAsset.status !== 'ok' || !fullAsset.template?.imageData) {
+            const fullSrc = fullAsset.template?.imageUrl || fullAsset.template?.imageData;
+            if (fullAsset.status !== 'ok' || !fullSrc) {
               throw new Error('Full-resolution template unavailable');
             }
-            const decoded = await decodeImageSrc(fullAsset.template.imageData);
+            const decoded = await decodeImageSrc(fullSrc);
             fullTemplateImageRef.current = decoded;
             return decoded;
           })(),

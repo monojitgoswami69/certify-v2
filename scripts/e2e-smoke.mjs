@@ -255,12 +255,29 @@ try {
     INSERT INTO templates (user_id, name, image_data, width, height, layout_config)
     VALUES (${user.id}, ${EVENT}, ${TINY_PNG}, 1, 1, ${JSON.stringify(DESIGN.layoutConfig)}::jsonb)`;
 
+  const fetchTemplateDataUrl = async (url) => {
+    const res = await fetch(`${BASE}${url}`);
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    return {
+      status: res.status,
+      contentType: res.headers.get('content-type') ?? '',
+      cacheControl: res.headers.get('cache-control') ?? '',
+      dataUrl: `data:${res.headers.get('content-type') ?? ''};base64,${Buffer.from(bytes).toString('base64')}`,
+    };
+  };
+
   const assetOk = await fetch(`${BASE}/api/verify/${r1.data.ids[0]}/asset`);
   const assetData = await assetOk.json().catch(() => ({}));
   check('asset endpoint returns render spec for valid cert (200)', assetOk.status === 200 && assetData.status === 'ok',
     `status=${assetOk.status}`);
-  check('asset resolves the template', Boolean(assetData.template?.imageData),
-    `template=${Boolean(assetData.template)}`);
+  const initialTemplate = assetData.template?.imageUrl ? await fetchTemplateDataUrl(assetData.template.imageUrl) : null;
+  check('asset resolves the immutable binary template URL',
+    Boolean(initialTemplate && initialTemplate.status === 200 && initialTemplate.cacheControl.includes('immutable') && initialTemplate.dataUrl === TINY_PNG),
+    `url=${assetData.template?.imageUrl} status=${initialTemplate?.status}`);
+  const tamperedTemplateRes = assetData.template?.imageUrl
+    ? await fetch(`${BASE}${assetData.template.imageUrl.replace(/sig=[0-9a-f]+/, `sig=${'0'.repeat(64)}`)}`)
+    : null;
+  check('tampered template CDN signatures are rejected (403)', tamperedTemplateRes?.status === 403, `status=${tamperedTemplateRes?.status}`);
   check('public downloads reuse the origin saved at issuance', assetData.verificationOrigin === newOrigin);
   check('asset returns only template-referenced fields',
     assetData.fields?.Name === 'Alice Smith' && !('Roll' in (assetData.fields ?? {})) &&
@@ -281,8 +298,9 @@ try {
     && latestTemplate.status === 200 && savedTemplate.template?.imageData === alternateImage);
 
   const afterEdit = await (await fetch(`${BASE}/api/verify/${r1.data.ids[0]}/asset`)).json();
+  const afterEditTemplate = afterEdit.template?.imageUrl ? await fetchTemplateDataUrl(afterEdit.template.imageUrl) : null;
   check('reusable template edits leave old artwork and public fields intact',
-    afterEdit.template?.imageData === TINY_PNG && afterEdit.fields?.Name === 'Alice Smith' && !('Private' in (afterEdit.fields || {})));
+    afterEditTemplate?.dataUrl === TINY_PNG && afterEdit.fields?.Name === 'Alice Smith' && !('Private' in (afterEdit.fields || {})));
   const blockedDesign = await register({ ...batch1, label: 'Attendees', design: { ...DESIGN, imageData: alternateImage } });
   check('an issued design cannot be replaced through registration', blockedDesign.status === 409);
   const changedRow = await register({ certificates: [{
@@ -316,11 +334,18 @@ try {
   check('registration accepts optional WebP preview image (200)', withPreview.status === 200, `status=${withPreview.status}`);
   const defaultAsset = await (await fetch(`${BASE}/api/verify/${withPreview.data.ids?.[0]}/asset`)).json();
   const fullAsset = await (await fetch(`${BASE}/api/verify/${withPreview.data.ids?.[0]}/asset?full=1`)).json();
+  const [defaultBin, fullBin] = await Promise.all([
+    defaultAsset.template?.imageUrl ? fetchTemplateDataUrl(defaultAsset.template.imageUrl) : null,
+    fullAsset.template?.imageUrl ? fetchTemplateDataUrl(fullAsset.template.imageUrl) : null,
+  ]);
   check('asset returns preview by default and full resolution on ?full=1',
     defaultAsset.template?.isPreview === true
-      && defaultAsset.template?.imageData === tinyWebp
+      && defaultBin?.contentType === 'image/webp'
+      && defaultBin?.cacheControl.includes('immutable')
+      && defaultBin?.dataUrl === tinyWebp
       && fullAsset.template?.isPreview === false
-      && fullAsset.template?.imageData === TINY_PNG);
+      && fullBin?.contentType === 'image/png'
+      && fullBin?.dataUrl === TINY_PNG);
   const retryWithoutPreview = await register({
     eventId: previewEventId,
     eventName: EVENT + ' Preview',

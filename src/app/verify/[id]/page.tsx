@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { cookies } from 'next/headers';
-import { preconnect } from 'react-dom';
+import { preconnect, preload } from 'react-dom';
 import { VerifyClient } from './VerifyClient';
 import { SESSION_COOKIE_NAME, readSession } from '@/lib/server-auth';
 import { resolveCertificateVerification } from '@/lib/verify-service';
@@ -23,10 +23,13 @@ export default async function VerifyPage({
   const [{ id }, cookieStore] = await Promise.all([params, cookies()]);
   const token = cookieStore.get(SESSION_COOKIE_NAME)?.value;
   const session = token ? readSession(token) : null;
-  const { payload: initialResult } = await resolveCertificateVerification({
+  const { payload: initialResult, previewImageUrl } = await resolveCertificateVerification({
     rawId: id,
     session,
   });
+  if (previewImageUrl) {
+    preload(previewImageUrl, { as: 'image' });
+  }
 
   const issuedBy = process.env.ISSUED_BY || process.env.NEXT_PUBLIC_ISSUED_BY || 'WeCertify';
 

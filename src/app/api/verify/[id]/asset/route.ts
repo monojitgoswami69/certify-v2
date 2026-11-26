@@ -4,41 +4,22 @@ import { and, eq, sql } from 'drizzle-orm';
 import { db } from '../../../../../lib/db';
 import { certificates, events } from '../../../../../db/schema';
 import type { IssuedEventDesign } from '../../../../../lib/event-design';
+import {
+  getCachedLockedDesign,
+  isLockedDesignCacheEmpty,
+  setCachedLockedDesign,
+} from '../../../../../lib/locked-design-cache';
+import { buildSignedTemplateAssetUrl, templateImageDigestHex } from '../../../../../lib/server-auth';
 import { hashToken, isValidCertificateId } from '../../../../../lib/verification';
 import { checkRateLimit, getClientIp } from '../../../../../lib/rate-limit';
 import { env } from '../../../../../lib/env';
 import { log, requestIdOf } from '../../../../../lib/logger';
 import { verificationMaintenanceResponse } from '../../../../../lib/verification-maintenance';
 
-const MAX_CACHED_DESIGNS = 16;
-const globalForDesignCache = globalThis as unknown as {
-  certifyLockedDesignCache?: Map<string, IssuedEventDesign>;
-};
-const lockedDesignCache =
-  globalForDesignCache.certifyLockedDesignCache ?? new Map<string, IssuedEventDesign>();
-globalForDesignCache.certifyLockedDesignCache = lockedDesignCache;
-
-function getCachedLockedDesign(eventId: string): IssuedEventDesign | undefined {
-  const cached = lockedDesignCache.get(eventId);
-  if (!cached) return undefined;
-  lockedDesignCache.delete(eventId);
-  lockedDesignCache.set(eventId, cached);
-  return cached;
-}
-
-function setCachedLockedDesign(eventId: string, design: IssuedEventDesign) {
-  if (lockedDesignCache.size >= MAX_CACHED_DESIGNS) {
-    const oldest = lockedDesignCache.keys().next().value;
-    if (oldest !== undefined) lockedDesignCache.delete(oldest);
-  }
-  lockedDesignCache.set(eventId, design);
-}
-
 /**
  * Public render-spec endpoint backing the verify page's certificate preview
- * and re-download. Returns only what a verifier's browser needs to redraw the
- * certificate face: the template graphic, its layout, and the CSV fields the
- * layout actually prints (never the rest of the registrant's row).
+ * and re-download. Returns only lightweight layout/render fields plus a
+ * signed CDN-cacheable URL for the template image.
  *
  * Live status check on every request: revoked or static certificates get the
  * same neutral 404 as unknown ids, so the asset cannot outlive a revocation
@@ -73,9 +54,9 @@ export async function GET(
 
   try {
     // On a cold server instance (empty design cache), fetch `events.issuedDesign`
-    // in the primary join so first-visit mobile loads pay 1 remote DB round trip
+    // in the primary join so first-visit requests pay 1 remote DB round trip
     // instead of 2; once populated, skip fetching the JSONB blob on cache hits.
-    const cacheEmpty = lockedDesignCache.size === 0;
+    const cacheEmpty = isLockedDesignCacheEmpty();
     const [cert] = await db
       .select({
         id: certificates.id,
@@ -121,13 +102,17 @@ export async function GET(
     const includeFull = new URL(request.url).searchParams.get('full') === '1';
     const { imageData, previewImageData, previewWidth, previewHeight, width, height, layoutConfig } = design;
     const usePreview = !includeFull && Boolean(previewImageData);
+    const selectedDataUrl = usePreview ? previewImageData! : imageData;
+    const kind = usePreview ? 'preview' : 'full';
+    const imageUrl = buildSignedTemplateAssetUrl(cert.eventId, kind, templateImageDigestHex(selectedDataUrl));
+
     return NextResponse.json(
       {
         status: 'ok',
         certificateId: cert.id,
         recipientName: cert.recipientName,
         template: {
-          imageData: usePreview ? previewImageData! : imageData,
+          imageUrl,
           width,
           height,
           ...(usePreview && previewWidth && previewHeight
@@ -140,7 +125,6 @@ export async function GET(
       },
       { headers: { 'Cache-Control': 'no-store' } }
     );
-
   } catch (error) {
     log.error('verify-asset', 'Failed to load certificate render spec', { requestId: requestIdOf(request), certId: normalizedId }, error);
     return NextResponse.json(

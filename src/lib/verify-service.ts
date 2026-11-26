@@ -3,7 +3,7 @@ import { db } from './db';
 import { certificates, events, users } from '../db/schema';
 import { hashToken, isValidCertificateId } from './verification';
 import { getAuthenticatedUserFromSession } from './accounts';
-import type { VerifiedSession } from './server-auth';
+import { buildSignedTemplateAssetUrl, type TemplateAssetKind, type VerifiedSession } from './server-auth';
 import { env } from './env';
 import { log } from './logger';
 
@@ -34,6 +34,8 @@ export interface ResolvedVerification {
   payload: VerifyResult;
   httpStatus: number;
   headers?: Record<string, string>;
+  /** Signed immutable CDN image URL for SSR `<link rel="preload" as="image">`. */
+  previewImageUrl?: string;
 }
 
 /**
@@ -81,6 +83,8 @@ export async function resolveCertificateVerification({
         eventTrackScans: events.trackScans,
         eventValidThrough: events.validThrough,
         eventIssuedBy: sql<string | null>`${events.issuedDesign}->>'issuedBy'`,
+        previewKind: sql<TemplateAssetKind | null>`CASE WHEN ${events.issuedDesign} IS NULL THEN NULL WHEN ${events.issuedDesign}->>'previewImageData' IS NOT NULL THEN 'preview' ELSE 'full' END`,
+        previewDigest: sql<string | null>`md5(COALESCE(${events.issuedDesign}->>'previewImageData', ${events.issuedDesign}->>'imageData'))`,
         issuerName: users.issuedByName,
         issuerAccountName: users.name,
       })
@@ -155,6 +159,10 @@ export async function resolveCertificateVerification({
 
     const expired =
       cert.eventValidThrough !== null && cert.eventValidThrough.getTime() < Date.now();
+    const previewImageUrl =
+      cert.eventId && cert.previewKind && cert.previewDigest
+        ? buildSignedTemplateAssetUrl(cert.eventId, cert.previewKind, cert.previewDigest)
+        : undefined;
 
     return {
       payload: {
@@ -173,6 +181,7 @@ export async function resolveCertificateVerification({
         'Cache-Control': 'private, no-store',
         'Vary': 'Authorization, Cookie',
       },
+      previewImageUrl,
     };
   } catch (error) {
     log.error('verify', 'Verification temporarily unavailable', { requestId, certId: normalizedId }, error);

@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { NextResponse } from 'next/server';
 import { env, isProduction } from './env';
@@ -176,4 +177,46 @@ export function forbiddenCsrfResponse(): NextResponse {
 
 export function unauthorizedResponse(message = 'Unauthorized'): NextResponse {
   return NextResponse.json({ detail: message }, { status: 401 });
+}
+
+export type TemplateAssetKind = 'preview' | 'full';
+
+/** Computes a 32-char lowercase hex content-version digest matching Postgres `md5()`. */
+export function templateImageDigestHex(dataUrl: string): string {
+  return crypto.createHash('md5').update(dataUrl).digest('hex');
+}
+
+export function signTemplateAssetParams(
+  eventId: string,
+  kind: TemplateAssetKind,
+  versionHex: string
+): string {
+  return crypto
+    .createHmac('sha256', getJwtSecret())
+    .update(`verify-template:v1:${eventId.toLowerCase()}:${kind}:${versionHex.toLowerCase()}`)
+    .digest('hex');
+}
+
+export function verifyTemplateAssetParams(
+  eventId: string,
+  kind: TemplateAssetKind,
+  versionHex: string,
+  sig: string
+): boolean {
+  if (!/^[0-9a-f]{32}$/i.test(versionHex) || !/^[0-9a-f]{64}$/i.test(sig)) {
+    return false;
+  }
+  const expected = signTemplateAssetParams(eventId, kind, versionHex);
+  return crypto.timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(sig, 'hex'));
+}
+
+export function buildSignedTemplateAssetUrl(
+  eventId: string,
+  kind: TemplateAssetKind,
+  versionHex: string
+): string {
+  const normalizedEventId = eventId.toLowerCase();
+  const normalizedVersion = versionHex.toLowerCase();
+  const sig = signTemplateAssetParams(normalizedEventId, kind, normalizedVersion);
+  return `/api/verify/template/${encodeURIComponent(normalizedEventId)}?kind=${kind}&v=${normalizedVersion}&sig=${sig}`;
 }
