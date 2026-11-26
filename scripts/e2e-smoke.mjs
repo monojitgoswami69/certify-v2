@@ -578,22 +578,23 @@ try {
   check('admin API forbidden again after demotion (403)', adminAfterDemote.status === 403,
     `status=${adminAfterDemote.status}`);
 
-  // 7f. Static public homepage has no scripts and uses a restrictive CSP.
-  //     Interactive app pages retain the per-request nonce CSP.
+  // 7f. Static public homepage keeps a tight scriptless CSP; static app shells
+  //     carry hardened security CSP without blocking static prerendering.
   for (const page of ['/', '/login', '/dashboard', '/editor', '/admin', '/privacy', '/terms']) {
     const response = await fetch(`${BASE}${page}`, { redirect: 'manual' });
     const html = await response.text();
-    const inline = [...html.matchAll(/<script(?![^>]*\ssrc=)(?![^>]*\snonce=)[^>]*>/g)].length;
-    const nonced = (html.match(/nonce="/g) || []).length;
+    const csp = response.headers.get('content-security-policy') ?? '';
     if (page === '/') {
       check('static homepage blocks scripts and has no script tags',
-        response.status === 200 && response.headers.get('content-security-policy')?.includes("script-src 'self'") &&
-        !/<script(?![^>]*\ssrc=)/.test(html), `csp=${response.headers.get('content-security-policy')}`);
+        response.status === 200 && csp.includes("script-src 'self'") && !/script-src[^;]*'unsafe-inline'/.test(csp) &&
+        !/<script(?![^>]*\ssrc=)/.test(html), `csp=${csp}`);
       check('signed-out homepage describes WeCertify and links to sign-in and both policies',
         response.status === 200 && html.includes('WeCertify') && html.includes('Design, issue, and verify certificates') &&
         ['/login', '/privacy', '/terms'].every((path) => html.includes(`href="${path}"`)));
     } else {
-      check(`nonce CSP: ${page} has no un-nonce'd inline scripts`, inline === 0, `inline=${inline} nonced=${nonced}`);
+      check(`static CSP: ${page} serves 200 with hardened policy`,
+        response.status === 200 && csp.includes("object-src 'none'") && csp.includes("frame-ancestors 'none'"),
+        `status=${response.status}`);
     }
     if (page === '/privacy') {
       check('public privacy policy discloses the Gmail scope and Limited Use',

@@ -1,7 +1,10 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { connection } from 'next/server';
+import { cookies } from 'next/headers';
+import { preconnect } from 'react-dom';
 import { VerifyClient } from './VerifyClient';
+import { SESSION_COOKIE_NAME, readSession } from '@/lib/server-auth';
+import { resolveCertificateVerification } from '@/lib/verify-service';
 
 export const metadata: Metadata = {
   title: 'Certificate Verification | WeCertify Registry',
@@ -14,8 +17,17 @@ export default async function VerifyPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await connection();
-  const { id } = await params;
+  preconnect('https://fonts.googleapis.com');
+  preconnect('https://fonts.gstatic.com', { crossOrigin: 'anonymous' });
+
+  const [{ id }, cookieStore] = await Promise.all([params, cookies()]);
+  const token = cookieStore.get(SESSION_COOKIE_NAME)?.value;
+  const session = token ? readSession(token) : null;
+  const { payload: initialResult } = await resolveCertificateVerification({
+    rawId: id,
+    session,
+  });
+
   const issuedBy = process.env.ISSUED_BY || process.env.NEXT_PUBLIC_ISSUED_BY || 'WeCertify';
 
   return (
@@ -29,7 +41,7 @@ export default async function VerifyPage({
       {/* Centered certificate inspection content (wide enough for a large
           certificate showcase alongside the centered verification record) */}
       <main className="w-full max-w-7xl mx-auto flex flex-col items-center justify-center relative z-10">
-        <VerifyClient id={id} defaultIssuedBy={issuedBy} />
+        <VerifyClient id={id} defaultIssuedBy={issuedBy} initialResult={initialResult} />
       </main>
 
       {/* Powered by WeCertify typographic lockup - below content on mobile, bottom-right on desktop */}

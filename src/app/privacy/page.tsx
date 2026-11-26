@@ -8,10 +8,7 @@ export const metadata: Metadata = {
   robots: { index: true, follow: true },
 };
 
-import { connection } from 'next/server';
-
-export default async function PrivacyPolicyPage() {
-  await connection();
+export default function PrivacyPolicyPage() {
   return (
     <div className="min-h-screen bg-[#FBFAF5] text-stone-900 selection:bg-stone-200 selection:text-stone-900">
       {/* Top minimal bar */}

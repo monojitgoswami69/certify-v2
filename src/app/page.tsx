@@ -1,17 +1,13 @@
 import type { Metadata } from 'next';
 import Image from 'next/image';
 import Link from 'next/link';
-import { connection } from 'next/server';
 import SignedInRedirect from './RootClient';
 
 export const metadata: Metadata = {
   alternates: { canonical: '/' },
 };
 
-// Rendered per request (not prerendered) so the nonce-based CSP
-// (src/proxy.ts) applies to this page's inline bootstrap scripts.
-export default async function RootPage() {
-  await connection();
+export default function RootPage() {
   return (
     <div className="min-h-screen bg-app-background text-slate-900">
       <SignedInRedirect />

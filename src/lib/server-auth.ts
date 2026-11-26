@@ -111,7 +111,7 @@ export function readSession(token: string): VerifiedSession | null {
 // guard below make cross-site request forgery impossible.
 // ---------------------------------------------------------------------------
 
-const SESSION_COOKIE_NAME = 'certify_session';
+export const SESSION_COOKIE_NAME = 'certify_session';
 const SESSION_COOKIE_MAX_AGE = 7 * 24 * 60 * 60; // matches the "remember me" token life
 
 function cookieAttributes(rememberMe: boolean): string {

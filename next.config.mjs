@@ -1,9 +1,26 @@
 const isDev = process.env.NODE_ENV === 'development';
 
-// The Content-Security-Policy lives in src/proxy.ts (per-request nonce so
-// script-src needs no 'unsafe-inline'). This list carries the remaining
-// security headers for every route, including /api.
+// Static Content Security Policy served alongside CDN-cached HTML so pages do
+// not require per-request SSR nonces just to hydrate Next.js bootstrap scripts.
+// The static homepage (`/`) overrides this with an even tighter scriptless policy.
+const appContentSecurityPolicy = [
+  "default-src 'self'",
+  `script-src 'self' 'unsafe-inline' https://accounts.google.com${isDev ? " 'unsafe-eval'" : ''}`,
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com",
+  "font-src 'self' data: https://fonts.gstatic.com",
+  "img-src 'self' data: blob: https:",
+  "connect-src 'self' data: blob: https://fonts.googleapis.com https://fonts.gstatic.com https://accounts.google.com https://oauth2.googleapis.com https://www.googleapis.com",
+  'frame-src https://accounts.google.com',
+  "worker-src 'self' blob:",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+  ...(isDev ? [] : ['upgrade-insecure-requests']),
+].join('; ');
+
 const securityHeaders = [
+  { key: 'Content-Security-Policy', value: appContentSecurityPolicy },
   { key: 'X-Content-Type-Options', value: 'nosniff' },
   { key: 'X-Frame-Options', value: 'DENY' },
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },

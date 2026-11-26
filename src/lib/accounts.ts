@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { db } from './db';
 import { users, type UserRow } from '../db/schema';
-import { getSessionFromRequest, isAdminEmail } from './server-auth';
+import { getSessionFromRequest, isAdminEmail, type VerifiedSession } from './server-auth';
 import { env } from './env';
 import { getPlatformPermissions } from './platform-access';
 import type { PlatformPermissions } from './access-role';
@@ -63,18 +63,26 @@ export async function getUserById(userId: string): Promise<UserRow | null> {
 }
 
 /**
- * Loads the signed-in account from the database. Returns null for a missing,
- * forged, or stale token (for example after the account was deleted, or after
- * a logout that bumped `sessions_valid_after` past the token's issue time).
+ * Resolves a verified session claim against live account and platform permissions.
  */
-export async function getAuthenticatedUser(request: Request): Promise<PublicUser | null> {
-  const session = getSessionFromRequest(request);
+export async function getAuthenticatedUserFromSession(
+  session: VerifiedSession | null
+): Promise<PublicUser | null> {
   if (!session || !env.DATABASE_URL) return null;
   const row = await getUserById(session.userId);
   if (!row) return null;
   if (row.sessionsValidAfter && (session.issuedAtMs ?? 0) <= row.sessionsValidAfter.getTime()) return null;
   const permissions = await getPlatformPermissions(row.email);
   return permissions ? toPublicUser(row, permissions) : null;
+}
+
+/**
+ * Loads the signed-in account from the database. Returns null for a missing,
+ * forged, or stale token (for example after the account was deleted, or after
+ * a logout that bumped `sessions_valid_after` past the token's issue time).
+ */
+export async function getAuthenticatedUser(request: Request): Promise<PublicUser | null> {
+  return getAuthenticatedUserFromSession(getSessionFromRequest(request));
 }
 
 /**

@@ -72,6 +72,10 @@ export async function GET(
   }
 
   try {
+    // On a cold server instance (empty design cache), fetch `events.issuedDesign`
+    // in the primary join so first-visit mobile loads pay 1 remote DB round trip
+    // instead of 2; once populated, skip fetching the JSONB blob on cache hits.
+    const cacheEmpty = lockedDesignCache.size === 0;
     const [cert] = await db
       .select({
         id: certificates.id,
@@ -80,6 +84,7 @@ export async function GET(
         fields: certificates.renderFields,
         eventId: certificates.eventId,
         hasEventDesign: sql<boolean>`${events.issuedDesign} IS NOT NULL`,
+        ...(cacheEmpty ? { inlineDesign: events.issuedDesign } : {}),
       })
       .from(certificates)
       .leftJoin(events, and(eq(events.id, certificates.eventId), eq(events.userId, certificates.userId)))
@@ -90,8 +95,14 @@ export async function GET(
       return NextResponse.json({ status: 'not_found' }, { status: 404, headers: { 'Cache-Control': 'no-store' } });
     }
 
-    let design = getCachedLockedDesign(cert.eventId);
-    if (!design) {
+    let design: IssuedEventDesign | undefined =
+      'inlineDesign' in cert && cert.inlineDesign
+        ? (cert.inlineDesign as IssuedEventDesign)
+        : getCachedLockedDesign(cert.eventId);
+
+    if (design && 'inlineDesign' in cert && cert.inlineDesign) {
+      setCachedLockedDesign(cert.eventId, design);
+    } else if (!design) {
       const [eventRow] = await db
         .select({ design: events.issuedDesign })
         .from(events)

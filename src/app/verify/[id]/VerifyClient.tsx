@@ -39,13 +39,25 @@ type VerifyResponse =
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface InFlightVerifyBatch {
-  verifyPromise: Promise<VerifyResponse>;
+  verifyPromise: Promise<VerifyResponse> | null;
   assetPromise: Promise<CertificateAssetSpec | null> | null;
 }
 
 const inFlightVerifyBatches = new Map<string, InFlightVerifyBatch>();
 
-function loadVerifyBatch(id: string, token: string | null, forceRefresh: boolean): InFlightVerifyBatch {
+function fetchAssetSpec(encodedId: string): Promise<CertificateAssetSpec | null> | null {
+  return UUID_RE.test(decodeURIComponent(encodedId).trim())
+    ? fetch(`/api/verify/${encodedId}/asset`)
+        .then((res) => (res.ok ? (res.json() as Promise<CertificateAssetSpec>) : null))
+        .catch(() => null)
+    : null;
+}
+
+function loadVerifyBatch(
+  id: string,
+  token: string | null,
+  forceRefresh: boolean
+): InFlightVerifyBatch {
   const key = `${id}|${token ? 'auth' : 'anon'}`;
   if (!forceRefresh) {
     const existing = inFlightVerifyBatches.get(key);
@@ -61,11 +73,7 @@ function loadVerifyBatch(id: string, token: string | null, forceRefresh: boolean
     .then(async (res) => (await res.json().catch(() => ({ status: 'error' }))) as VerifyResponse)
     .catch(() => ({ status: 'error' }) as VerifyResponse);
 
-  const assetPromise: Promise<CertificateAssetSpec | null> | null = UUID_RE.test(id.trim())
-    ? fetch(`/api/verify/${encodedId}/asset`)
-        .then((res) => (res.ok ? (res.json() as Promise<CertificateAssetSpec>) : null))
-        .catch(() => null)
-    : null;
+  const assetPromise = fetchAssetSpec(encodedId);
 
   const entry: InFlightVerifyBatch = { verifyPromise, assetPromise };
   inFlightVerifyBatches.set(key, entry);
@@ -83,11 +91,13 @@ function loadVerifyBatch(id: string, token: string | null, forceRefresh: boolean
 export function VerifyClient({
   id,
   defaultIssuedBy,
+  initialResult,
 }: {
   id: string;
   defaultIssuedBy?: string;
+  initialResult?: VerifyResponse;
 }) {
-  const [state, setState] = useState<'loading' | VerifyResponse>('loading');
+  const [state, setState] = useState<'loading' | VerifyResponse>(initialResult ?? 'loading');
   const [confettiComplete, setConfettiComplete] = useState(false);
   const [previewAvailable, setPreviewAvailable] = useState(true);
   const [prefetchedAsset, setPrefetchedAsset] = useState<Promise<CertificateAssetSpec | null> | null>(null);
@@ -105,7 +115,7 @@ export function VerifyClient({
     const { verifyPromise, assetPromise } = loadVerifyBatch(id, getAuthToken(), forceRefresh);
     setPrefetchedAsset(assetPromise);
 
-    verifyPromise.then((data) => {
+    verifyPromise?.then((data) => {
       if (!isStale()) setState(data);
     });
 
@@ -115,11 +125,16 @@ export function VerifyClient({
   };
 
   useEffect(() => {
+    const token = getAuthToken();
+    if (initialResult && initialResult.status !== 'error' && !token) {
+      return;
+    }
+
     const cancel = fetchVerification();
     return () => {
       if (cancel) cancel();
     };
-  }, [id]);
+  }, [id, initialResult]);
 
   const formatDate = (iso: string) => {
     try {
