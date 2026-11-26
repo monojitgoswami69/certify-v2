@@ -15,6 +15,7 @@ import { resolveFieldValue } from './utils';
 import { drawStyledQr, ensureSvgDataUriDimensions } from './qr-renderer';
 import { getFontFamilyCSS } from './font-loader';
 import { clearTextMeasurements, drawCertificateText } from './certificate-text';
+import { computeExportScale, EXPORT_JPEG_QUALITY, PDF_MAX_PNG_BYTES } from './export-scale';
 
 export type OutputFormat = 'png' | 'jpg' | 'pdf';
 
@@ -89,12 +90,13 @@ interface BoxRenderInfo {
 let cachedTemplateBitmap: ImageBitmap | null = null;
 let cachedTemplateWidth = 0;
 let cachedTemplateHeight = 0;
+let cachedExportScale = 1;
 let cachedBoxRenderInfo: BoxRenderInfo[] = [];
 let cachedQrZones: QrPlacement[] = [];
 let cachedImageElements: Array<{ el: ImageElement; bitmap: ImageBitmap | null }> = [];
 let cachedLogoBitmaps = new Map<string, ImageBitmap>();
 let cachedFormats: OutputFormat[] = [];
-let cachedJpegQuality = 0.92;
+let cachedJpegQuality = EXPORT_JPEG_QUALITY;
 let cachedPdfOrientation: 'landscape' | 'portrait' = 'landscape';
 
 let reusableCanvases: OffscreenCanvas[] | null = null;
@@ -124,8 +126,16 @@ function drawVerificationQr(
 // Parallel In-Worker PDF Assembly
 // =============================================================================
 
-async function buildPdfFromJpeg(jpegBlob: Blob): Promise<Blob> {
-  const arrayBuffer = await jpegBlob.arrayBuffer();
+async function buildPdfFromImage(
+  pngBlob: Blob | null,
+  jpegBlob: Blob | null
+): Promise<Blob> {
+  const usePng = Boolean(pngBlob && pngBlob.size <= PDF_MAX_PNG_BYTES);
+  const imageBlob = usePng ? pngBlob! : jpegBlob;
+  if (!imageBlob) {
+    throw new Error('Missing raster image for PDF generation');
+  }
+  const arrayBuffer = await imageBlob.arrayBuffer();
   const pdf = new jsPDF({
     orientation: cachedPdfOrientation,
     unit: 'px',
@@ -134,7 +144,7 @@ async function buildPdfFromJpeg(jpegBlob: Blob): Promise<Blob> {
 
   pdf.addImage(
     new Uint8Array(arrayBuffer),
-    'JPEG',
+    usePng ? 'PNG' : 'JPEG',
     0,
     0,
     cachedTemplateWidth,
@@ -172,8 +182,8 @@ async function flushPending(pending: PendingEncode): Promise<void> {
     if (jpegBlob && cachedFormats.includes('jpg')) {
       blobs.jpg = jpegBlob;
     }
-    if (jpegBlob && cachedFormats.includes('pdf')) {
-      blobs.pdf = await buildPdfFromJpeg(jpegBlob);
+    if (cachedFormats.includes('pdf') && (pngBlob || jpegBlob)) {
+      blobs.pdf = await buildPdfFromImage(pngBlob, jpegBlob);
     }
 
     self.postMessage({
@@ -222,7 +232,7 @@ async function generateBatch(items: BatchItem[]): Promise<void> {
   }
 
   const needJpeg = cachedFormats.includes('jpg') || cachedFormats.includes('pdf');
-  const needPng = cachedFormats.includes('png');
+  const needPng = cachedFormats.includes('png') || cachedFormats.includes('pdf');
 
   let activeBufferIdx = 0;
   let pending: PendingEncode | null = null;
@@ -237,33 +247,44 @@ async function generateBatch(items: BatchItem[]): Promise<void> {
       const ctx = reusableContexts[activeBufferIdx];
       activeBufferIdx = (activeBufferIdx + 1) % reusableCanvases.length;
 
-      // 1. DRAW: Background Template
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(cachedTemplateBitmap, 0, 0);
-
-      // 1b. DRAW: Decorative image elements (logos, signatures)
-      for (const { el, bitmap } of cachedImageElements) {
-        if (!bitmap) continue;
-        ctx.save();
-        ctx.globalAlpha = Math.max(0, Math.min(1, el.opacity ?? 1));
-        ctx.drawImage(bitmap, el.x, el.y, el.w, el.h);
-        ctx.restore();
-      }
-
-      // 2. DRAW: QR Verification Zones
-      if (item.verificationUrl && cachedQrZones.length > 0) {
-        for (const zone of cachedQrZones) {
-          drawVerificationQr(ctx, zone, item.verificationUrl);
+      ctx.save();
+      try {
+        if (cachedExportScale !== 1) {
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          ctx.scale(cachedExportScale, cachedExportScale);
         }
-      }
 
-      // 3. DRAW: Text Boxes
-      for (const info of cachedBoxRenderInfo) {
-        const text =
-          info.box.kind === 'static'
-            ? info.box.staticText ?? ''
-            : resolveFieldValue(info.box.field, item.row);
-        drawCertificateText(ctx, text, info.box, info.fontBase);
+        // 1. DRAW: Background Template
+        ctx.drawImage(cachedTemplateBitmap, 0, 0, cachedTemplateWidth, cachedTemplateHeight);
+
+        // 1b. DRAW: Decorative image elements (logos, signatures)
+        for (const { el, bitmap } of cachedImageElements) {
+          if (!bitmap) continue;
+          ctx.save();
+          ctx.globalAlpha = Math.max(0, Math.min(1, el.opacity ?? 1));
+          ctx.drawImage(bitmap, el.x, el.y, el.w, el.h);
+          ctx.restore();
+        }
+
+        // 2. DRAW: QR Verification Zones
+        if (item.verificationUrl && cachedQrZones.length > 0) {
+          for (const zone of cachedQrZones) {
+            drawVerificationQr(ctx, zone, item.verificationUrl);
+          }
+        }
+
+        // 3. DRAW: Text Boxes
+        for (const info of cachedBoxRenderInfo) {
+          const text =
+            info.box.kind === 'static'
+              ? info.box.staticText ?? ''
+              : resolveFieldValue(info.box.field, item.row);
+          drawCertificateText(ctx, text, info.box, info.fontBase);
+        }
+      } finally {
+        ctx.restore();
       }
 
       // 4. ENCODE: Non-blocking OffscreenCanvas toBlob
@@ -368,8 +389,9 @@ self.onmessage = async (event: MessageEvent<InitMessage | GenerateBatchMessage>)
       ]);
       cachedTemplateWidth = message.templateWidth;
       cachedTemplateHeight = message.templateHeight;
+      cachedExportScale = computeExportScale(cachedTemplateWidth, cachedTemplateHeight);
       cachedFormats = message.formats;
-      cachedJpegQuality = message.jpegQuality ?? 0.92;
+      cachedJpegQuality = message.jpegQuality ?? EXPORT_JPEG_QUALITY;
       cachedPdfOrientation = message.templateWidth > message.templateHeight ? 'landscape' : 'portrait';
       cachedQrZones = message.qrZones || [];
 
@@ -406,8 +428,10 @@ self.onmessage = async (event: MessageEvent<InitMessage | GenerateBatchMessage>)
         .filter((box) => box.field || box.kind === 'static')
         .map((box) => ({ box, fontBase: getFontFamilyCSS(box.fontFamily) }));
 
+      const canvasWidth = cachedTemplateWidth * cachedExportScale;
+      const canvasHeight = cachedTemplateHeight * cachedExportScale;
       const createBuffer = () => {
-        const c = new OffscreenCanvas(cachedTemplateWidth, cachedTemplateHeight);
+        const c = new OffscreenCanvas(canvasWidth, canvasHeight);
         let cx = c.getContext('2d', {
           desynchronized: true,
         });
@@ -421,7 +445,7 @@ self.onmessage = async (event: MessageEvent<InitMessage | GenerateBatchMessage>)
         return { c, cx };
       };
 
-      const bufferCount = cachedTemplateWidth * cachedTemplateHeight >= 8_000_000 ? 1 : 2;
+      const bufferCount = canvasWidth * canvasHeight >= 8_000_000 ? 1 : 2;
       const buffers = Array.from({ length: bufferCount }, createBuffer);
       reusableCanvases = buffers.map(({ c }) => c);
       reusableContexts = buffers.map(({ cx }) => cx);

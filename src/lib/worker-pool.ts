@@ -6,6 +6,7 @@
 import type { TextBox, CsvRow, ImageElement } from '../types';
 import type { QrPlacement, OutputFormat, BatchResultItem } from './certificate-worker';
 import type { WorkerFontData } from './font-loader';
+import { computeExportScale, EXPORT_JPEG_QUALITY } from './export-scale';
 
 export type { OutputFormat, BatchResultItem, WorkerFontData };
 
@@ -32,8 +33,11 @@ export class CertificateWorkerPool {
     const memory = typeof navigator !== 'undefined'
       ? (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 4
       : 4;
-    // Each worker decodes the template and typically keeps two RGBA buffers.
-    const bytesPerWorker = Math.max(1, width * height) * 4 * 3;
+    const exportScale = computeExportScale(width, height);
+    const scaledPixels = Math.max(1, width * exportScale * height * exportScale);
+    const bufferCount = scaledPixels >= 8_000_000 ? 1 : 2;
+    // Each worker decodes the source template once at native size and keeps 1 or 2 supersampled RGBA canvases.
+    const bytesPerWorker = Math.max(1, width * height) * 4 + scaledPixels * 4 * bufferCount;
     const budget = (memory <= 4 ? 96 : 192) * 1024 ** 2;
     return Math.max(1, Math.min(cores - 1, 8, Math.floor(budget / bytesPerWorker)));
   }
@@ -151,7 +155,7 @@ export class CertificateWorkerPool {
           qrZones,
           images,
           formats,
-          jpegQuality: 0.92,
+          jpegQuality: EXPORT_JPEG_QUALITY,
           fonts: clonedFonts,
         },
         transferables

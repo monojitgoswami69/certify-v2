@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TextBox } from '../types';
-import { drawCertificateToCanvas, renderCertificatePreviewBlob } from './certificate-engine';
+import {
+  drawCertificateToCanvas,
+  generateCertificate,
+  renderCertificatePreviewBlob,
+} from './certificate-engine';
+import { computeExportScale, EXPORT_JPEG_QUALITY, PDF_MAX_PNG_BYTES } from './export-scale';
 
 const originalDocument = globalThis.document;
 
@@ -157,5 +162,81 @@ describe('certificate-engine preview scaling', () => {
     expect(result.width).toBe(1400);
     expect(result.height).toBe(700);
     expect(result.blob.type).toBe('image/png');
+  });
+
+  it('supersamples low-resolution templates for crisp export and keeps high-res templates at 1x', () => {
+    expect(computeExportScale(842, 595)).toBe(3);
+    expect(computeExportScale(1920, 1080)).toBe(2);
+    expect(computeExportScale(2000, 1414)).toBe(2);
+    expect(computeExportScale(3508, 2480)).toBe(1);
+  });
+
+  it('exports supersampled 3x JPG/PDF for 842x595 templates and embeds lossless PNG in PDF when compact', async () => {
+    const { canvas, ctx, toBlob } = createMockCanvas();
+    // Minimal 1x1 valid PNG bytes so jsPDF addImage parses dimensions cleanly
+    const tinyPngBytes = Uint8Array.from(
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+        'base64'
+      )
+    );
+    toBlob.mockImplementation((cb: (blob: Blob | null) => void, mime: string) => {
+      cb(new Blob([mime === 'image/png' ? tinyPngBytes : 'jpg-bytes'], { type: mime }));
+    });
+    globalThis.document = {
+      createElement: vi.fn(() => canvas),
+    } as unknown as Document;
+
+    const a4Template = { naturalWidth: 842, naturalHeight: 595, width: 842, height: 595 } as HTMLImageElement;
+    const out = await generateCertificate({
+      templateImage: a4Template,
+      boxes: [SAMPLE_BOX],
+      row: { Name: 'Ada Lovelace' },
+      filename: 'ada',
+      includeJpg: true,
+      includePdf: true,
+    });
+
+    // Backing buffer is 3x (2526x1785), while logical PDF page size remains 842x595.
+    expect(canvas.width).toBe(842 * 3);
+    expect(canvas.height).toBe(595 * 3);
+    expect(ctx.scale).toHaveBeenCalledWith(3, 3);
+    expect(toBlob).toHaveBeenCalledWith(expect.any(Function), 'image/jpeg', EXPORT_JPEG_QUALITY);
+    expect(out.jpgBlob).toBeDefined();
+    expect(out.pdfBlob).toBeDefined();
+    const pdfText = await out.pdfBlob!.text();
+    expect(pdfText).toContain('/MediaBox [0 0 1122.');
+    expect(pdfText).toContain('/FlateDecode');
+    expect(pdfText).not.toContain('/DCTDecode');
+  });
+
+  it('falls back to high-quality JPEG inside PDF when PNG exceeds PDF_MAX_PNG_BYTES', async () => {
+    const { canvas, toBlob } = createMockCanvas();
+    const oversizedPng = new Uint8Array(PDF_MAX_PNG_BYTES + 10);
+    // Minimal JPEG SOF0 header bytes for jsPDF JPEG parser
+    const tinyJpegBytes = Uint8Array.from([
+      0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01,
+      0x00, 0x01, 0x00, 0x00, 0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x11,
+      0x00, 0xff, 0xd9,
+    ]);
+    toBlob.mockImplementation((cb: (blob: Blob | null) => void, mime: string) => {
+      cb(new Blob([mime === 'image/png' ? oversizedPng : tinyJpegBytes], { type: mime }));
+    });
+    globalThis.document = {
+      createElement: vi.fn(() => canvas),
+    } as unknown as Document;
+
+    const largeTemplate = { naturalWidth: 2400, naturalHeight: 1600, width: 2400, height: 1600 } as HTMLImageElement;
+    const out = await generateCertificate({
+      templateImage: largeTemplate,
+      boxes: [SAMPLE_BOX],
+      row: { Name: 'Grace Hopper' },
+      filename: 'grace',
+      includePdf: true,
+    });
+
+    expect(toBlob).toHaveBeenCalledWith(expect.any(Function), 'image/jpeg', EXPORT_JPEG_QUALITY);
+    const pdfText = await out.pdfBlob!.text();
+    expect(pdfText).toContain('/DCTDecode');
   });
 });

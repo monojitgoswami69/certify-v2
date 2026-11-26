@@ -12,6 +12,7 @@ import { drawStyledQr, ensureSvgDataUriDimensions } from './qr-renderer';
 import { drawCertificateText } from './certificate-text';
 
 import { SAMPLE_QR_URL } from './verification-links';
+import { computeExportScale, EXPORT_JPEG_QUALITY, PDF_MAX_PNG_BYTES } from './export-scale';
 
 export interface QrPlacement {
   x: number;
@@ -277,49 +278,66 @@ export async function generateCertificate(
     includeBase64,
   } = params;
 
-  const canvas = await drawCertificateToCanvas(params);
+  const naturalW = params.templateImage.naturalWidth || params.templateImage.width;
+  const naturalH = params.templateImage.naturalHeight || params.templateImage.height;
+  const exportScale = computeExportScale(naturalW, naturalH);
+  const canvas = await drawCertificateToCanvas({
+    ...params,
+    logicalWidth: naturalW,
+    logicalHeight: naturalH,
+    targetWidth: naturalW * exportScale,
+    targetHeight: naturalH * exportScale,
+  });
 
   const result: GeneratedCertificate = { filename };
 
-  // Generate JPG if requested
+  // Generate JPG if requested (high quality preserves thin QR edges)
   if (includeJpg) {
-    const jpgBlob = await canvasToBlob(canvas, 'image/jpeg', 0.92);
+    const jpgBlob = await canvasToBlob(canvas, 'image/jpeg', EXPORT_JPEG_QUALITY);
     result.jpgBlob = jpgBlob;
     if (includeBase64) {
       result.jpgBase64 = await blobToBase64(jpgBlob);
     }
   }
 
-  // Generate PNG if requested
-  if (includePng) {
+  // Generate PNG if requested or needed for lossless PDF embedding
+  let pdfPngBlob: Blob | undefined;
+  if (includePng || includePdf) {
     const pngBlob = await canvasToBlob(canvas, 'image/png');
-    result.pngBlob = pngBlob;
-    if (includeBase64) {
-      result.pngBase64 = await blobToBase64(pngBlob);
+    pdfPngBlob = pngBlob;
+    if (includePng) {
+      result.pngBlob = pngBlob;
+      if (includeBase64) {
+        result.pngBase64 = await blobToBase64(pngBlob);
+      }
     }
   }
 
   // Generate PDF only when explicitly requested (lazy-loads jsPDF)
   if (includePdf) {
     const { jsPDF } = await import('jspdf');
-    const isLandscape = canvas.width > canvas.height;
+    const isLandscape = naturalW > naturalH;
     const pdf = new jsPDF({
       orientation: isLandscape ? 'landscape' : 'portrait',
       unit: 'px',
-      format: [canvas.width, canvas.height],
+      format: [naturalW, naturalH],
     });
 
-    // Use JPEG for lightweight & fast PDF rendering
-    const pdfImgBlob = result.jpgBlob || (await canvasToBlob(canvas, 'image/jpeg', 0.92));
+    // Prefer lossless PNG inside PDFs so small QR modules and typography stay
+    // razor sharp; fall back to high-quality JPEG only for >6 MB photo backgrounds.
+    const usePng = Boolean(pdfPngBlob && pdfPngBlob.size <= PDF_MAX_PNG_BYTES);
+    const pdfImgBlob = usePng
+      ? pdfPngBlob!
+      : result.jpgBlob || (await canvasToBlob(canvas, 'image/jpeg', EXPORT_JPEG_QUALITY));
     const arrayBuffer = await pdfImgBlob.arrayBuffer();
 
     pdf.addImage(
       new Uint8Array(arrayBuffer),
-      'JPEG',
+      usePng ? 'PNG' : 'JPEG',
       0,
       0,
-      canvas.width,
-      canvas.height,
+      naturalW,
+      naturalH,
       undefined,
       'FAST'
     );
