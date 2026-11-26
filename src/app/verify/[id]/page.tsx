@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { connection } from 'next/server';
 import { VerifyClient } from './VerifyClient';
 
 export const metadata: Metadata = {
@@ -13,25 +14,26 @@ export default async function VerifyPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  await connection();
   const { id } = await params;
   const issuedBy = process.env.ISSUED_BY || process.env.NEXT_PUBLIC_ISSUED_BY || 'WeCertify';
 
   return (
-    <div className="min-h-screen bg-[#FBFAF5] relative flex items-center justify-center text-slate-900 selection:bg-emerald-100 selection:text-emerald-900 px-4 sm:px-6 py-12 overflow-x-hidden">
+    <div className="min-h-screen bg-[#FBFAF5] relative flex flex-col items-center justify-center text-slate-900 selection:bg-emerald-100 selection:text-emerald-900 px-4 sm:px-6 py-10 sm:py-12 overflow-x-hidden">
       {/* Subtle ambient illumination beam */}
       <div
         className="absolute top-0 inset-x-0 h-[420px] bg-[radial-gradient(ellipse_70%_55%_at_50%_0%,rgba(16,185,129,0.065),transparent)] pointer-events-none"
         aria-hidden="true"
       />
 
-      {/* Centered certificate inspection content (wide enough for the
-          two-column valid layout; other states self-constrain) */}
-      <main className="w-full max-w-5xl mx-auto flex flex-col items-center justify-center relative z-10">
+      {/* Centered certificate inspection content (wide enough for a large
+          certificate showcase alongside the centered verification record) */}
+      <main className="w-full max-w-7xl mx-auto flex flex-col items-center justify-center relative z-10">
         <VerifyClient id={id} defaultIssuedBy={issuedBy} />
       </main>
 
-      {/* Powered by WeCertify typographic lockup - always at bottom-right */}
-      <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-8 z-30 select-none print:hidden">
+      {/* Powered by WeCertify typographic lockup - below content on mobile, bottom-right on desktop */}
+      <div className="mt-10 sm:mt-0 sm:fixed sm:bottom-6 sm:right-8 z-30 select-none print:hidden">
         <Link
           href="/"
           className="inline-flex items-baseline gap-1.5 text-stone-500 hover:text-stone-900 transition-colors group"

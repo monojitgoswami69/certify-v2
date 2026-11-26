@@ -11,8 +11,14 @@ export interface EventLayout {
 
 export interface IssuedEventDesign {
   imageData: string;
+  /** Optional compressed WebP preview (<= 1400px longest edge) generated at issuance. */
+  previewImageData?: string;
+  previewWidth?: number;
+  previewHeight?: number;
   /** Server-selected origin for reproducing this issued design’s QR codes. */
   verificationOrigin?: string;
+  /** Account issuer label captured when this event was issued. */
+  issuedBy?: string;
   width: number;
   height: number;
   layoutConfig: EventLayout;

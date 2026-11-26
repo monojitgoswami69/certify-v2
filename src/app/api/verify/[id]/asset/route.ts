@@ -1,13 +1,38 @@
 import { legacyVerificationOrigin } from '../../../../../lib/verification-links';
 import { NextResponse } from 'next/server';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { db } from '../../../../../lib/db';
 import { certificates, events } from '../../../../../db/schema';
+import type { IssuedEventDesign } from '../../../../../lib/event-design';
 import { hashToken, isValidCertificateId } from '../../../../../lib/verification';
 import { checkRateLimit, getClientIp } from '../../../../../lib/rate-limit';
 import { env } from '../../../../../lib/env';
 import { log, requestIdOf } from '../../../../../lib/logger';
 import { verificationMaintenanceResponse } from '../../../../../lib/verification-maintenance';
+
+const MAX_CACHED_DESIGNS = 16;
+const globalForDesignCache = globalThis as unknown as {
+  certifyLockedDesignCache?: Map<string, IssuedEventDesign>;
+};
+const lockedDesignCache =
+  globalForDesignCache.certifyLockedDesignCache ?? new Map<string, IssuedEventDesign>();
+globalForDesignCache.certifyLockedDesignCache = lockedDesignCache;
+
+function getCachedLockedDesign(eventId: string): IssuedEventDesign | undefined {
+  const cached = lockedDesignCache.get(eventId);
+  if (!cached) return undefined;
+  lockedDesignCache.delete(eventId);
+  lockedDesignCache.set(eventId, cached);
+  return cached;
+}
+
+function setCachedLockedDesign(eventId: string, design: IssuedEventDesign) {
+  if (lockedDesignCache.size >= MAX_CACHED_DESIGNS) {
+    const oldest = lockedDesignCache.keys().next().value;
+    if (oldest !== undefined) lockedDesignCache.delete(oldest);
+  }
+  lockedDesignCache.set(eventId, design);
+}
 
 /**
  * Public render-spec endpoint backing the verify page's certificate preview
@@ -53,27 +78,54 @@ export async function GET(
         recipientName: certificates.recipientName,
         status: certificates.status,
         fields: certificates.renderFields,
-        design: events.issuedDesign,
+        eventId: certificates.eventId,
+        hasEventDesign: sql<boolean>`${events.issuedDesign} IS NOT NULL`,
       })
       .from(certificates)
       .leftJoin(events, and(eq(events.id, certificates.eventId), eq(events.userId, certificates.userId)))
       .where(eq(certificates.tokenHash, hashToken(normalizedId)))
       .limit(1);
 
-    if (!cert || cert.status !== 'issued' || !cert.design || cert.fields === null) {
+    if (!cert || cert.status !== 'issued' || cert.fields === null || !cert.eventId || !cert.hasEventDesign) {
       return NextResponse.json({ status: 'not_found' }, { status: 404, headers: { 'Cache-Control': 'no-store' } });
     }
 
-    const { imageData, width, height, layoutConfig } = cert.design;
+    let design = getCachedLockedDesign(cert.eventId);
+    if (!design) {
+      const [eventRow] = await db
+        .select({ design: events.issuedDesign })
+        .from(events)
+        .where(eq(events.id, cert.eventId))
+        .limit(1);
+      design = eventRow?.design ?? undefined;
+      if (design) {
+        setCachedLockedDesign(cert.eventId, design);
+      }
+    }
+
+    if (!design) {
+      return NextResponse.json({ status: 'not_found' }, { status: 404, headers: { 'Cache-Control': 'no-store' } });
+    }
+
+    const includeFull = new URL(request.url).searchParams.get('full') === '1';
+    const { imageData, previewImageData, previewWidth, previewHeight, width, height, layoutConfig } = design;
+    const usePreview = !includeFull && Boolean(previewImageData);
     return NextResponse.json(
       {
         status: 'ok',
         certificateId: cert.id,
         recipientName: cert.recipientName,
-        template: { imageData, width, height },
+        template: {
+          imageData: usePreview ? previewImageData! : imageData,
+          width,
+          height,
+          ...(usePreview && previewWidth && previewHeight
+            ? { previewWidth, previewHeight, isPreview: true }
+            : { isPreview: false }),
+        },
         layoutConfig,
         fields: cert.fields,
-        verificationOrigin: cert.design.verificationOrigin ?? legacyVerificationOrigin(request),
+        verificationOrigin: design.verificationOrigin ?? legacyVerificationOrigin(request),
       },
       { headers: { 'Cache-Control': 'no-store' } }
     );

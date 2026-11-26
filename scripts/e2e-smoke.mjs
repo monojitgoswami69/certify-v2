@@ -300,6 +300,36 @@ try {
   const deleted = await fetch(`${BASE}/api/dashboard?eventId=${copyId}`, { method: 'DELETE', headers: cookieAuth });
   check('issued events cannot be deleted through the dashboard endpoint', deleted.status === 409);
 
+  // Preview + full-resolution asset switching & idempotent retry without preview fields
+  const previewBuf = new Uint8Array(30);
+  previewBuf.set([0x52, 0x49, 0x46, 0x46], 0);
+  previewBuf.set([0x57, 0x45, 0x42, 0x50], 8);
+  previewBuf.set([0x56, 0x50, 0x38, 0x58], 12);
+  const tinyWebp = `data:image/webp;base64,${Buffer.from(previewBuf).toString('base64')}`;
+  const previewEventId = randomUUID();
+  const withPreview = await register({
+    eventId: previewEventId,
+    eventName: EVENT + ' Preview',
+    design: { ...DESIGN, previewImageData: tinyWebp, previewWidth: 1, previewHeight: 1 },
+    certificates: [batch1.certificates[0]],
+  });
+  check('registration accepts optional WebP preview image (200)', withPreview.status === 200, `status=${withPreview.status}`);
+  const defaultAsset = await (await fetch(`${BASE}/api/verify/${withPreview.data.ids?.[0]}/asset`)).json();
+  const fullAsset = await (await fetch(`${BASE}/api/verify/${withPreview.data.ids?.[0]}/asset?full=1`)).json();
+  check('asset returns preview by default and full resolution on ?full=1',
+    defaultAsset.template?.isPreview === true
+      && defaultAsset.template?.imageData === tinyWebp
+      && fullAsset.template?.isPreview === false
+      && fullAsset.template?.imageData === TINY_PNG);
+  const retryWithoutPreview = await register({
+    eventId: previewEventId,
+    eventName: EVENT + ' Preview',
+    design: DESIGN,
+    certificates: [batch1.certificates[1]],
+  });
+  check('retrying registration without preview fields still matches locked design', retryWithoutPreview.status === 200,
+    `status=${retryWithoutPreview.status}`);
+
   const legacyId = randomUUID();
   const legacyCertId = randomUUID();
   const legacyTitle = 'Historical smoke event';

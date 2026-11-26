@@ -9,7 +9,7 @@ import {
   Clock,
 } from 'lucide-react';
 import { ConfettiCanvas } from '@/components/verify/ConfettiCanvas';
-import { CertificatePreview } from '@/components/verify/CertificatePreview';
+import { CertificatePreview, type CertificateAssetSpec } from '@/components/verify/CertificatePreview';
 import { getAuthToken } from '@/lib/api-client';
 
 type VerifyResponse =
@@ -36,6 +36,50 @@ type VerifyResponse =
   | { status: 'rate_limited'; detail?: string }
   | { status: 'error'; detail?: string };
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+interface InFlightVerifyBatch {
+  verifyPromise: Promise<VerifyResponse>;
+  assetPromise: Promise<CertificateAssetSpec | null> | null;
+}
+
+const inFlightVerifyBatches = new Map<string, InFlightVerifyBatch>();
+
+function loadVerifyBatch(id: string, token: string | null, forceRefresh: boolean): InFlightVerifyBatch {
+  const key = `${id}|${token ? 'auth' : 'anon'}`;
+  if (!forceRefresh) {
+    const existing = inFlightVerifyBatches.get(key);
+    if (existing) return existing;
+  }
+
+  const encodedId = encodeURIComponent(id);
+  const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+
+  // Start status + render spec fetches together for valid IDs, deduplicated
+  // across React StrictMode remounts so dev never fires duplicate DB queries.
+  const verifyPromise = fetch(`/api/verify/${encodedId}`, { headers })
+    .then(async (res) => (await res.json().catch(() => ({ status: 'error' }))) as VerifyResponse)
+    .catch(() => ({ status: 'error' }) as VerifyResponse);
+
+  const assetPromise: Promise<CertificateAssetSpec | null> | null = UUID_RE.test(id.trim())
+    ? fetch(`/api/verify/${encodedId}/asset`)
+        .then((res) => (res.ok ? (res.json() as Promise<CertificateAssetSpec>) : null))
+        .catch(() => null)
+    : null;
+
+  const entry: InFlightVerifyBatch = { verifyPromise, assetPromise };
+  inFlightVerifyBatches.set(key, entry);
+  void verifyPromise.finally(() => {
+    setTimeout(() => {
+      if (inFlightVerifyBatches.get(key) === entry) {
+        inFlightVerifyBatches.delete(key);
+      }
+    }, 250);
+  });
+
+  return entry;
+}
+
 export function VerifyClient({
   id,
   defaultIssuedBy,
@@ -45,27 +89,25 @@ export function VerifyClient({
 }) {
   const [state, setState] = useState<'loading' | VerifyResponse>('loading');
   const [confettiComplete, setConfettiComplete] = useState(false);
+  const [previewAvailable, setPreviewAvailable] = useState(true);
+  const [prefetchedAsset, setPrefetchedAsset] = useState<Promise<CertificateAssetSpec | null> | null>(null);
 
   const requestSeqRef = useRef(0);
 
-  const fetchVerification = () => {
+  const fetchVerification = (forceRefresh = false) => {
     setState('loading');
     setConfettiComplete(false);
+    setPreviewAvailable(true);
     const requestSeq = ++requestSeqRef.current;
     let cancelled = false;
     const isStale = () => cancelled || requestSeq !== requestSeqRef.current;
 
-    const token = getAuthToken();
-    const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+    const { verifyPromise, assetPromise } = loadVerifyBatch(id, getAuthToken(), forceRefresh);
+    setPrefetchedAsset(assetPromise);
 
-    fetch(`/api/verify/${encodeURIComponent(id)}`, { headers })
-      .then(async (res) => {
-        const data = (await res.json().catch(() => ({ status: 'error' }))) as VerifyResponse;
-        if (!isStale()) setState(data);
-      })
-      .catch(() => {
-        if (!isStale()) setState({ status: 'error' });
-      });
+    verifyPromise.then((data) => {
+      if (!isStale()) setState(data);
+    });
 
     return () => {
       cancelled = true;
@@ -212,166 +254,181 @@ export function VerifyClient({
   // -------------------------------------------------------------
   if (state.status === 'valid') {
     return (
-      <div className="w-full flex flex-col items-center text-center">
+      <div className="w-full">
         {/* Celebratory Professional Confetti (Portaled to Full Viewport) */}
         {!state.expired && !confettiComplete && (
           <ConfettiCanvas trigger={true} onComplete={() => setConfettiComplete(true)} />
         )}
 
-        {/* Redesigned High-Definition Verification Seal */}
-        {state.expired ? (
-          <Clock aria-hidden="true" className="mb-3 h-16 w-16 text-amber-600" />
-        ) : (
-        <div className="relative flex items-center justify-center verify-pop-badge mb-3">
-          {/* Ambient breathing aura glow behind seal */}
-          <div className="absolute w-32 h-32 rounded-full bg-emerald-400/25 blur-2xl pointer-events-none verify-aura-breath" />
-
-          {/* Micro-sparkles celebrating verification */}
-          <div className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-400 rotate-45 rounded-[1px] verify-sparkle-1 pointer-events-none" />
-          <div className="absolute -bottom-1 -left-1 w-2 h-2 bg-amber-400 rotate-45 rounded-[1px] verify-sparkle-2 pointer-events-none" />
-
-          <svg className="w-22 h-22 relative z-10 drop-shadow-xs" viewBox="0 0 76 76" fill="none">
-            {/* Ambient inner gradient fill disc */}
-            <defs>
-              <linearGradient id="sealDiscGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor="#ECFDF5" />
-                <stop offset="100%" stopColor="#D1FAE5" />
-              </linearGradient>
-            </defs>
-            <circle cx="38" cy="38" r="34" fill="url(#sealDiscGrad)" />
-            {/* Animated outer stroke ring */}
-            <circle
-              cx="38"
-              cy="38"
-              r="34"
-              pathLength={100}
-              stroke="#10B981"
-              strokeWidth="3.5"
-              strokeLinecap="round"
-              transform="rotate(-90 38 38)"
-              className="verify-circle-draw"
-            />
-            {/* Animated checkmark vector */}
-            <path
-              d="M24 38.5 L33.5 48 L52 28"
-              pathLength={100}
-              stroke="#047857"
-              strokeWidth="4.2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="verify-check-draw"
-            />
-          </svg>
-        </div>
-
-        )}
-
-        {/* Verification Headline */}
-        <div className="max-w-md mx-auto mt-2 animate-fade-in" style={{ animationDelay: '150ms' }}>
-          <h1 className="page-title text-stone-900">
-            {state.expired ? 'Expired Certificate' : 'Valid Certificate'}
-          </h1>
-          {state.expired && state.expiresAt && (
-            <div
-              className="mt-3 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-amber-300 bg-amber-50"
-              role="status"
-            >
-              <Clock className="w-4 h-4 text-amber-600 shrink-0" />
-              <p className="text-xs sm:text-sm font-semibold text-amber-800 text-left">
-                This credential expired on {formatDate(state.expiresAt)} and is no longer current.
-              </p>
-            </div>
-          )}
-          {typeof state.verificationCount === 'number' && (
-            <p className="mt-2 text-xs font-semibold text-stone-500">
-              Viewed {state.verificationCount.toLocaleString()} time
-              {state.verificationCount === 1 ? '' : 's'}
-            </p>
-          )}
-        </div>
-
         {/* ----------------------------------------------------------- */}
-        {/* Editorial two-column layout: certificate sheet (left) and   */}
-        {/* the verification record (right). Hairline rules only.       */}
+        {/* Editorial two-column layout: large certificate showcase on  */}
+        {/* the left (~60%), centered validation seal + record + share  */}
+        {/* stack vertically aligned on the right (~40%).               */}
         {/* ----------------------------------------------------------- */}
-        <div className="w-full mt-8 sm:mt-10 grid gap-10 lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)] lg:gap-14 items-start text-center lg:text-left">
-          <CertificatePreview certificateId={id} recipientName={state.recipientName} />
-
-          <div className="w-full border-y border-stone-300/80 divide-y divide-stone-200/80 text-center sm:text-left">
-          {/* Certificate Holder */}
-          <div
-            className="py-3.5 sm:py-4 flex flex-col items-center sm:flex-row sm:items-center justify-between gap-1 sm:gap-4 verify-row-animate text-center sm:text-left"
-            style={{ animationDelay: '240ms' }}
-          >
-            <span className="text-sm font-medium text-stone-700 shrink-0 sm:w-44 text-center sm:text-left">
-              Certificate Holder
-            </span>
-            <span className="text-sm font-semibold text-stone-900 break-words text-center sm:text-right">
-              {state.recipientName}
-            </span>
-          </div>
-
-          {/* Event */}
-          {state.eventName && (
-            <div
-              className="py-3.5 sm:py-4 flex flex-col items-center sm:flex-row sm:items-center justify-between gap-1 sm:gap-4 verify-row-animate text-center sm:text-left"
-              style={{ animationDelay: '320ms' }}
-            >
-              <span className="text-sm font-medium text-stone-700 shrink-0 sm:w-44 text-center sm:text-left">
-                Event
-              </span>
-              <span className="text-sm font-semibold text-stone-900 break-words text-center sm:text-right">
-                {state.eventName}
-              </span>
-            </div>
+        <div
+          className={
+            previewAvailable
+              ? 'w-full grid grid-cols-1 gap-10 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:gap-12 xl:gap-16 items-center'
+              : 'w-full max-w-lg mx-auto'
+          }
+        >
+          {previewAvailable && (
+            <CertificatePreview
+              certificateId={id}
+              recipientName={state.recipientName}
+              prefetchedAsset={prefetchedAsset}
+              onAvailabilityChange={setPreviewAvailable}
+            />
           )}
 
-          {/* Issued By (account-level issuer name) */}
-          {(state.issuedBy || defaultIssuedBy) && (
-            <div
-              className="py-3.5 sm:py-4 flex flex-col items-center sm:flex-row sm:items-center justify-between gap-1 sm:gap-4 verify-row-animate text-center sm:text-left"
-              style={{ animationDelay: '360ms' }}
-            >
-              <span className="text-sm font-medium text-stone-700 shrink-0 sm:w-44 text-center sm:text-left">
-                Issued By
-              </span>
-              <span className="text-sm font-semibold text-stone-900 break-words text-center sm:text-right">
-                {state.issuedBy || defaultIssuedBy}
-              </span>
-            </div>
-          )}
+          <div className="w-full max-w-md mx-auto flex flex-col items-center text-center">
+            {/* Redesigned High-Definition Verification Seal */}
+            {state.expired ? (
+              <Clock aria-hidden="true" className="mb-3 h-16 w-16 text-amber-600" />
+            ) : (
+              <div className="relative flex items-center justify-center verify-pop-badge mb-3">
+                {/* Ambient breathing aura glow behind seal */}
+                <div className="absolute w-32 h-32 rounded-full bg-emerald-400/25 blur-2xl pointer-events-none verify-aura-breath" />
 
-          {/* Registered Email */}
-          {state.recipientEmail && (
-            <div
-              className="py-3.5 sm:py-4 flex flex-col items-center sm:flex-row sm:items-center justify-between gap-1 sm:gap-4 verify-row-animate text-center sm:text-left"
-              style={{ animationDelay: '400ms' }}
-            >
-              <span className="text-sm font-medium text-stone-700 shrink-0 sm:w-44 text-center sm:text-left">
-                Registered Email
-              </span>
-              <span className="text-sm font-semibold text-stone-900 break-all text-center sm:text-right">
-                {state.recipientEmail}
-              </span>
-            </div>
-          )}
+                {/* Micro-sparkles celebrating verification */}
+                <div className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-400 rotate-45 rounded-[1px] verify-sparkle-1 pointer-events-none" />
+                <div className="absolute -bottom-1 -left-1 w-2 h-2 bg-amber-400 rotate-45 rounded-[1px] verify-sparkle-2 pointer-events-none" />
 
-          {/* Issue Date */}
-          <div
-            className="py-3.5 sm:py-4 flex flex-col items-center sm:flex-row sm:items-center justify-between gap-1 sm:gap-4 verify-row-animate text-center sm:text-left"
-            style={{ animationDelay: '480ms' }}
-          >
-            <span className="text-sm font-medium text-stone-700 shrink-0 sm:w-44 text-center sm:text-left">
-              Issue Date
-            </span>
-            <span className="text-sm font-semibold text-stone-900 text-center sm:text-right">
-              {formatDate(state.issuedAt)}
-            </span>
-          </div>
+                <svg className="w-20 h-20 relative z-10 drop-shadow-xs" viewBox="0 0 76 76" fill="none">
+                  {/* Ambient inner gradient fill disc */}
+                  <defs>
+                    <linearGradient id="sealDiscGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                      <stop offset="0%" stopColor="#ECFDF5" />
+                      <stop offset="100%" stopColor="#D1FAE5" />
+                    </linearGradient>
+                  </defs>
+                  <circle cx="38" cy="38" r="34" fill="url(#sealDiscGrad)" />
+                  {/* Animated outer stroke ring */}
+                  <circle
+                    cx="38"
+                    cy="38"
+                    r="34"
+                    pathLength={100}
+                    stroke="#10B981"
+                    strokeWidth="3.5"
+                    strokeLinecap="round"
+                    transform="rotate(-90 38 38)"
+                    className="verify-circle-draw"
+                  />
+                  {/* Animated checkmark vector */}
+                  <path
+                    d="M24 38.5 L33.5 48 L52 28"
+                    pathLength={100}
+                    stroke="#047857"
+                    strokeWidth="4.2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="verify-check-draw"
+                  />
+                </svg>
+              </div>
+            )}
+
+            {/* Verification Headline */}
+            <div className="w-full mt-1 animate-fade-in" style={{ animationDelay: '150ms' }}>
+              <h1 className="page-title text-stone-900">
+                {state.expired ? 'Expired Certificate' : 'Valid Certificate'}
+              </h1>
+              {state.expired && state.expiresAt && (
+                <div
+                  className="mt-3 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-amber-300 bg-amber-50"
+                  role="status"
+                >
+                  <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+                  <p className="text-xs sm:text-sm font-semibold text-amber-800 text-left">
+                    This credential expired on {formatDate(state.expiresAt)} and is no longer current.
+                  </p>
+                </div>
+              )}
+              {typeof state.verificationCount === 'number' && (
+                <p className="mt-2 text-xs font-semibold text-stone-500">
+                  Viewed {state.verificationCount.toLocaleString()} time
+                  {state.verificationCount === 1 ? '' : 's'}
+                </p>
+              )}
+            </div>
+
+            <div className="w-full mt-7 border-y border-stone-300/80 divide-y divide-stone-200/80 text-center sm:text-left">
+              {/* Certificate Holder */}
+              <div
+                className="py-3.5 sm:py-4 flex flex-col items-center sm:flex-row sm:items-center justify-between gap-1 sm:gap-4 verify-row-animate text-center sm:text-left"
+                style={{ animationDelay: '240ms' }}
+              >
+                <span className="text-sm font-medium text-stone-700 shrink-0 sm:w-40 text-center sm:text-left">
+                  Certificate Holder
+                </span>
+                <span className="text-sm font-semibold text-stone-900 break-words text-center sm:text-right">
+                  {state.recipientName}
+                </span>
+              </div>
+
+              {/* Event */}
+              {state.eventName && (
+                <div
+                  className="py-3.5 sm:py-4 flex flex-col items-center sm:flex-row sm:items-center justify-between gap-1 sm:gap-4 verify-row-animate text-center sm:text-left"
+                  style={{ animationDelay: '320ms' }}
+                >
+                  <span className="text-sm font-medium text-stone-700 shrink-0 sm:w-40 text-center sm:text-left">
+                    Event
+                  </span>
+                  <span className="text-sm font-semibold text-stone-900 break-words text-center sm:text-right">
+                    {state.eventName}
+                  </span>
+                </div>
+              )}
+
+              {/* Issued By (account-level issuer name) */}
+              {(state.issuedBy || defaultIssuedBy) && (
+                <div
+                  className="py-3.5 sm:py-4 flex flex-col items-center sm:flex-row sm:items-center justify-between gap-1 sm:gap-4 verify-row-animate text-center sm:text-left"
+                  style={{ animationDelay: '360ms' }}
+                >
+                  <span className="text-sm font-medium text-stone-700 shrink-0 sm:w-40 text-center sm:text-left">
+                    Issued By
+                  </span>
+                  <span className="text-sm font-semibold text-stone-900 break-words text-center sm:text-right">
+                    {state.issuedBy || defaultIssuedBy}
+                  </span>
+                </div>
+              )}
+
+              {/* Registered Email */}
+              {state.recipientEmail && (
+                <div
+                  className="py-3.5 sm:py-4 flex flex-col items-center sm:flex-row sm:items-center justify-between gap-1 sm:gap-4 verify-row-animate text-center sm:text-left"
+                  style={{ animationDelay: '400ms' }}
+                >
+                  <span className="text-sm font-medium text-stone-700 shrink-0 sm:w-40 text-center sm:text-left">
+                    Registered Email
+                  </span>
+                  <span className="text-sm font-semibold text-stone-900 break-all text-center sm:text-right">
+                    {state.recipientEmail}
+                  </span>
+                </div>
+              )}
+
+              {/* Issue Date */}
+              <div
+                className="py-3.5 sm:py-4 flex flex-col items-center sm:flex-row sm:items-center justify-between gap-1 sm:gap-4 verify-row-animate text-center sm:text-left"
+                style={{ animationDelay: '480ms' }}
+              >
+                <span className="text-sm font-medium text-stone-700 shrink-0 sm:w-40 text-center sm:text-left">
+                  Issue Date
+                </span>
+                <span className="text-sm font-semibold text-stone-900 text-center sm:text-right">
+                  {formatDate(state.issuedAt)}
+                </span>
+              </div>
+            </div>
+
+            <ShareRow eventName={state.eventName ?? ''} issuedBy={state.issuedBy || defaultIssuedBy || ''} />
           </div>
         </div>
-
-        <ShareRow eventName={state.eventName ?? ''} issuedBy={state.issuedBy || defaultIssuedBy || ''} />
       </div>
     );
   }
@@ -503,7 +560,7 @@ export function VerifyClient({
       <div className="mt-7">
         <button
           type="button"
-          onClick={fetchVerification}
+          onClick={() => fetchVerification(true)}
           className="inline-flex items-center gap-2 px-4.5 py-2.5 bg-stone-900 hover:bg-stone-800 text-white rounded-lg text-sm font-semibold transition-all shadow-2xs hover:shadow-xs active:scale-[0.98]"
         >
           <RotateCcw className="w-3.5 h-3.5" />

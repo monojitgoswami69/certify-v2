@@ -53,13 +53,27 @@ function storeRosterRow(row: Record<string, string> | null): Record<string, stri
     .map(([key, value]) => [key.slice(0, 200), value.slice(0, 2000)]));
 }
 
+function canonicalDesignForMatch(design: IssuedEventDesign): Omit<
+  IssuedEventDesign,
+  'verificationOrigin' | 'issuedBy' | 'previewImageData' | 'previewWidth' | 'previewHeight'
+> {
+  return {
+    imageData: design.imageData,
+    width: design.width,
+    height: design.height,
+    layoutConfig: design.layoutConfig,
+  };
+}
+
 function findOwnedEvent(userId: string, eventId: string, design: IssuedEventDesign | null) {
   return db.select({
     name: events.name,
     label: events.label,
     layout: sql<EventLayout | null>`${events.issuedDesign}->'layoutConfig'`,
     verificationOrigin: sql<string | null>`${events.issuedDesign}->>'verificationOrigin'`,
-    matchesDesign: design ? sql<boolean>`(${events.issuedDesign} - 'verificationOrigin') = ${JSON.stringify(design)}::jsonb` : sql<boolean>`true`,
+    matchesDesign: design
+      ? sql<boolean>`(${events.issuedDesign} - 'verificationOrigin' - 'issuedBy' - 'previewImageData' - 'previewWidth' - 'previewHeight') = ${JSON.stringify(canonicalDesignForMatch(design))}::jsonb`
+      : sql<boolean>`true`,
   }).from(events).where(and(eq(events.id, eventId), eq(events.userId, userId))).limit(1);
 }
 
@@ -130,7 +144,8 @@ export async function registerCertificates(user: PublicUser, command: RegisterBa
 
   let firstFingerprint: string | null = null;
   if (!event && design) {
-    const issuedDesign = { ...design, verificationOrigin };
+    const issuedBy = user.issuedByName?.trim() || user.name;
+    const issuedDesign: IssuedEventDesign = { ...design, verificationOrigin, issuedBy };
     const first = items[0];
     const id = generateCertificateId();
     // The event and its first certificate commit together. A concurrent

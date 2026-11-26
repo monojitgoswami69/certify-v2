@@ -42,7 +42,7 @@ export async function registerReviewedBatch(reviewed: ReturnType<typeof useAppSt
   try {
     const design = draft.issuanceStarted ? undefined : await prepareIssuedDesign({
       templateImage, templateFile, boxes, qrZones, images, defaultFont, defaultFontSize, defaultFontColor,
-    });
+    }, { includePreview: true });
     const ids = await ensureCertificateIds({
       records, existingIds: draft.registeredCertIds,
       getDisplayName: (row) => selectRecipientName(row, boxes),
