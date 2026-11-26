@@ -13,7 +13,7 @@ import {
   MAX_TEMPLATE_DATA_URL_LENGTH,
   parseImageDataUrl,
 } from '../../../lib/image-validation';
-import { isAllowedR2TemplateUrl } from '../../../lib/r2-storage';
+import { isAllowedR2TemplateUrl, verifyR2Artwork } from '../../../lib/r2-storage';
 import { validateEventLayout } from '../../../lib/event-design-validation';
 import { snapshotTemplateVersion } from '../../../lib/template-versions';
 import { log, requestIdOf } from '../../../lib/logger';
@@ -97,6 +97,7 @@ export async function POST(request: Request) {
 
     let effectiveWidth = declaredWidth;
     let effectiveHeight = declaredHeight;
+    let serverImageHash: string;
 
     if (!isAllowedR2TemplateUrl(imageData, 'full')) {
       if (typeof imageData !== 'string' || imageData.length > MAX_TEMPLATE_DATA_URL_LENGTH) {
@@ -132,8 +133,13 @@ export async function POST(request: Request) {
 
       effectiveWidth = declaredWidth ?? parsedImage.dimensions?.width ?? null;
       effectiveHeight = declaredHeight ?? parsedImage.dimensions?.height ?? null;
+      serverImageHash = createHash('sha256').update(parsedImage.bytes).digest('hex');
     } else if (declaredWidth === null || declaredHeight === null) {
       return NextResponse.json({ detail: 'Template width and height are required' }, { status: 400 });
+    } else {
+      const hash = await verifyR2Artwork(imageData, user.userId, 'full', declaredWidth, declaredHeight);
+      if (!hash) return NextResponse.json({ detail: 'Uploaded artwork is missing, invalid, or does not belong to your account.' }, { status: 400 });
+      serverImageHash = hash;
     }
 
     let validatedLayout = { boxes: [], qrZones: [] } as ReturnType<typeof validateEventLayout>;
@@ -144,9 +150,6 @@ export async function POST(request: Request) {
       }
     }
 
-    // Server-side hash of the payload image. When it matches the stored row's
-    // hash, the multi-MB image column is left untouched (layout-only save).
-    const serverImageHash = createHash('sha256').update(imageData).digest('hex');
     // Single-statement upsert on the unique (userId, name) index: concurrent
     // saves can never race into an unhandled unique violation.
     const save = db

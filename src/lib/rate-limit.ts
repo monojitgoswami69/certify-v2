@@ -1,9 +1,8 @@
 /**
  * Minimal in-memory fixed-window rate limiter, keyed by IP.
  *
- * Deliberately simple: this app deploys as a single long-running Next.js
- * server, so a Map is accurate enough. If you ever scale to multiple
- * instances, swap this for a shared store (e.g. a Neon table or Upstash).
+ * Each running instance has its own window. Use a shared store for quotas
+ * that must hold across instances, as the mail submission quota does.
  */
 
 import { env } from './env';
@@ -76,7 +75,7 @@ function trustedProxyCount(): number {
   return env.TRUSTED_PROXY_COUNT;
 }
 
-export function getClientIp(request: Request): string {
+export function getClientIp(request: Pick<Request, 'headers'>): string {
   const proxyCount = trustedProxyCount();
   const fwd = request.headers.get('x-forwarded-for');
   if (fwd && proxyCount > 0) {

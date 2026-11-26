@@ -4,8 +4,14 @@ import { certificates, events, users } from '../db/schema';
 import { hashToken, isValidCertificateId } from './verification';
 import { getAuthenticatedUserFromSession } from './accounts';
 import { buildSignedTemplateAssetUrl, type TemplateAssetKind, type VerifiedSession } from './server-auth';
-import { env } from './env';
+import { env, isDevelopment } from './env';
 import { log } from './logger';
+import { checkRateLimit, getClientIp } from './rate-limit';
+import { isAllowedR2TemplateUrl } from './r2-storage';
+
+export function checkVerificationRateLimit(headers: Headers) {
+  return checkRateLimit(`verify:${getClientIp({ headers })}`, isDevelopment() ? 300 : 60, 60_000);
+}
 
 export type VerifyResult =
   | {
@@ -46,10 +52,12 @@ export async function resolveCertificateVerification({
   rawId,
   session,
   requestId,
+  includePreview = false,
 }: {
   rawId: unknown;
   session: VerifiedSession | null;
   requestId?: string;
+  includePreview?: boolean;
 }): Promise<ResolvedVerification> {
   if (!rawId || typeof rawId !== 'string') {
     return { payload: { status: 'not_found' }, httpStatus: 200 };
@@ -83,15 +91,17 @@ export async function resolveCertificateVerification({
         eventTrackScans: events.trackScans,
         eventValidThrough: events.validThrough,
         eventIssuedBy: sql<string | null>`${events.issuedDesign}->>'issuedBy'`,
-        directPreviewUrl: sql<string | null>`CASE WHEN ${events.issuedDesign}->>'previewImageData' LIKE 'https://%' THEN ${events.issuedDesign}->>'previewImageData' WHEN ${events.issuedDesign}->>'previewImageData' IS NULL AND ${events.issuedDesign}->>'imageData' LIKE 'https://%' THEN ${events.issuedDesign}->>'imageData' ELSE NULL END`,
-        previewKind: sql<TemplateAssetKind | null>`CASE WHEN ${events.issuedDesign} IS NULL THEN NULL WHEN ${events.issuedDesign}->>'previewImageData' IS NOT NULL THEN 'preview' ELSE 'full' END`,
-        previewDigest: sql<string | null>`CASE WHEN COALESCE(${events.issuedDesign}->>'previewImageData', ${events.issuedDesign}->>'imageData') LIKE 'https://%' THEN NULL ELSE md5(COALESCE(${events.issuedDesign}->>'previewImageData', ${events.issuedDesign}->>'imageData')) END`,
+        ...(includePreview ? {
+          directPreviewUrl: sql<string | null>`CASE WHEN ${events.issuedDesign}->>'previewImageData' LIKE 'https://%' THEN ${events.issuedDesign}->>'previewImageData' WHEN ${events.issuedDesign}->>'previewImageData' IS NULL AND ${events.issuedDesign}->>'imageData' LIKE 'https://%' THEN ${events.issuedDesign}->>'imageData' ELSE NULL END`,
+          previewKind: sql<TemplateAssetKind | null>`CASE WHEN ${events.issuedDesign} IS NULL THEN NULL WHEN ${events.issuedDesign}->>'previewImageData' IS NOT NULL THEN 'preview' ELSE 'full' END`,
+          previewDigest: sql<string | null>`CASE WHEN COALESCE(${events.issuedDesign}->>'previewImageData', ${events.issuedDesign}->>'imageData') LIKE 'https://%' THEN NULL ELSE md5(COALESCE(${events.issuedDesign}->>'previewImageData', ${events.issuedDesign}->>'imageData')) END`,
+        } : {}),
         issuerName: users.issuedByName,
         issuerAccountName: users.name,
       })
       .from(certificates)
       .leftJoin(users, eq(users.id, certificates.userId))
-      .leftJoin(events, eq(events.id, certificates.eventId))
+      .leftJoin(events, and(eq(events.id, certificates.eventId), eq(events.userId, certificates.userId)))
       .where(eq(certificates.tokenHash, tokenHash))
       .limit(1);
 
@@ -155,7 +165,7 @@ export async function resolveCertificateVerification({
 
     const expired =
       cert.eventValidThrough !== null && cert.eventValidThrough.getTime() < Date.now();
-    const previewImageUrl = cert.directPreviewUrl
+    const previewImageUrl = cert.directPreviewUrl && isAllowedR2TemplateUrl(cert.directPreviewUrl)
       ? cert.directPreviewUrl
       : cert.eventId && cert.previewKind && cert.previewDigest
         ? buildSignedTemplateAssetUrl(cert.eventId, cert.previewKind, cert.previewDigest)
@@ -181,7 +191,7 @@ export async function resolveCertificateVerification({
       previewImageUrl,
     };
   } catch (error) {
-    log.error('verify', 'Verification temporarily unavailable', { requestId, certId: normalizedId }, error);
+    log.error('verify', 'Verification temporarily unavailable', { requestId }, error);
     return {
       payload: { status: 'error', detail: 'Verification temporarily unavailable' },
       httpStatus: 500,

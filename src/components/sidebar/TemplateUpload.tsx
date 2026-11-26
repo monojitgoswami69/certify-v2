@@ -1,8 +1,8 @@
 'use client';
 
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { Upload } from 'lucide-react';
-import { MAX_IMAGE_EDGE, MAX_IMAGE_PIXELS, MAX_TEMPLATE_BYTES } from '../../lib/image-validation';
+import { extractImageDimensions, hasImageMagicBytes, isWithinImagePixelBudget, MAX_IMAGE_EDGE, MAX_IMAGE_PIXELS, MAX_TEMPLATE_BYTES, type SupportedImageType } from '../../lib/image-validation';
 import { useAppStore } from '../../store/useAppStore';
 
 function createSampleTemplate(): Promise<{ file: File; img: HTMLImageElement; info: string }> {
@@ -83,10 +83,12 @@ const ALLOWED_TEMPLATE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
 
 export function TemplateUpload() {
   const { setTemplate, setError } = useAppStore();
+  const selection = useRef(0);
 
   const handleFile = useCallback(
-    (file: File) => {
+    async (file: File) => {
       if (!file) return;
+      const request = ++selection.current;
       const isAllowedType = file.type
         ? ALLOWED_TEMPLATE_TYPES.includes(file.type)
         : /\.(png|jpe?g|webp)$/i.test(file.name);
@@ -99,10 +101,30 @@ export function TemplateUpload() {
         return;
       }
 
-      const objectUrl = URL.createObjectURL(file);
+      let normalizedFile: File;
+      try {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        if (request !== selection.current) return;
+        const formats: SupportedImageType[] = ['png', 'jpeg', 'webp'];
+        const format = formats.find((type) => hasImageMagicBytes(bytes, type));
+        const dimensions = format ? extractImageDimensions(bytes, format) : null;
+        if (!format || !dimensions) throw new Error('Could not read this image. It may be corrupted.');
+        if (!isWithinImagePixelBudget(dimensions.width, dimensions.height)) {
+          throw new Error(`Template dimensions (${dimensions.width}×${dimensions.height}) exceed the safe limit of ${MAX_IMAGE_EDGE.toLocaleString()}px per side or 48MP.`);
+        }
+        const mime = `image/${format}`;
+        normalizedFile = file.type === mime ? file : new File([file], file.name, { type: mime });
+      } catch (error) {
+        if (request === selection.current) {
+          setError(error instanceof Error ? error.message : 'Could not read this image.');
+        }
+        return;
+      }
+      const objectUrl = URL.createObjectURL(normalizedFile);
       const img = new Image();
       img.onload = () => {
         URL.revokeObjectURL(objectUrl);
+        if (request !== selection.current) return;
         const w = img.naturalWidth || img.width;
         const h = img.naturalHeight || img.height;
         if (w <= 0 || h <= 0 || w > MAX_IMAGE_EDGE || h > MAX_IMAGE_EDGE || w * h > MAX_IMAGE_PIXELS) {
@@ -113,11 +135,11 @@ export function TemplateUpload() {
         }
         const info = `${file.name} (${w}×${h})`;
         setError(null);
-        setTemplate(file, img, info);
+        setTemplate(normalizedFile, img, info);
       };
       img.onerror = () => {
         URL.revokeObjectURL(objectUrl);
-        setError('Could not read this image. It may be corrupted.');
+        if (request === selection.current) setError('Could not read this image. It may be corrupted.');
       };
       img.src = objectUrl;
     },
@@ -128,7 +150,7 @@ export function TemplateUpload() {
     (e: React.DragEvent) => {
       e.preventDefault();
       const file = e.dataTransfer.files[0];
-      if (file) handleFile(file);
+      if (file) void handleFile(file);
     },
     [handleFile]
   );
@@ -136,15 +158,16 @@ export function TemplateUpload() {
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
-      if (file) handleFile(file);
+      if (file) void handleFile(file);
       e.target.value = '';
     },
     [handleFile]
   );
 
   const handleUseSample = useCallback(async () => {
+    const request = ++selection.current;
     const { file, img, info } = await createSampleTemplate();
-    setTemplate(file, img, info);
+    if (request === selection.current) setTemplate(file, img, info);
   }, [setTemplate]);
 
   // Expose as an internal function on window for programmatic testing

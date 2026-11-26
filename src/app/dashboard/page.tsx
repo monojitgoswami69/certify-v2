@@ -1,5 +1,7 @@
+import { connection } from 'next/server';
 import DashboardClient from './DashboardClient';
 
-export default function DashboardPage() {
+export default async function DashboardPage() {
+  await connection();
   return <DashboardClient />;
 }

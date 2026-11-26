@@ -144,7 +144,7 @@ export function parseImageDataUrl(
   return { mime, bytes, dimensions };
 }
 
-function hasImageMagicBytes(bytes: Uint8Array, mime: SupportedImageType): boolean {
+export function hasImageMagicBytes(bytes: Uint8Array, mime: SupportedImageType): boolean {
   if (mime === 'png') {
     // 89 50 4E 47 0D 0A 1A 0A
     return (

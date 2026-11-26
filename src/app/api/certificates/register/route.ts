@@ -5,6 +5,7 @@ import { env } from '../../../../lib/env';
 import { checkRateLimit } from '../../../../lib/rate-limit';
 import { legacyVerificationOrigin, selectVerificationOrigin } from '../../../../lib/verification-links';
 import { log, requestIdOf } from '../../../../lib/logger';
+import { boundedBody, BodyTooLarge } from '../../../../lib/bounded-body';
 import {
   registerCertificates,
   RegistrationError,
@@ -36,8 +37,12 @@ export async function POST(request: Request) {
 
   let body: RegisterBatchCommand;
   try {
-    body = (await request.json()) as RegisterBatchCommand;
-  } catch {
+    body = await boundedBody(request, 4_400_000).json();
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw new SyntaxError();
+  } catch (error) {
+    if (error instanceof BodyTooLarge) {
+      return NextResponse.json({ detail: 'Certificate registration exceeds the request size limit' }, { status: 413 });
+    }
     return NextResponse.json({ detail: 'Invalid request body' }, { status: 400 });
   }
 

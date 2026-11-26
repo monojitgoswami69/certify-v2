@@ -20,26 +20,6 @@ export async function GET(
   }
 
   try {
-    // Hash-keyed ETag: a re-open of an unchanged template answers 304 instead
-    // of re-shipping the multi-MB base64 image.
-    const [meta] = await db
-      .select({ id: templates.id, imageHash: templates.imageHash })
-      .from(templates)
-      .where(and(eq(templates.id, id), eq(templates.userId, user.userId)))
-      .limit(1);
-
-    if (!meta) {
-      return NextResponse.json({ detail: 'Template not found' }, { status: 404 });
-    }
-
-    const etag = meta.imageHash ? `"${meta.imageHash}"` : `"${meta.id}"`;
-    if (request.headers.get('if-none-match') === etag) {
-      return new NextResponse(null, {
-        status: 304,
-        headers: { ETag: etag },
-      });
-    }
-
     const [template] = await db
       .select()
       .from(templates)
@@ -52,7 +32,7 @@ export async function GET(
 
     return NextResponse.json(
       { template },
-      { headers: { ETag: etag } }
+      { headers: { 'Cache-Control': 'private, no-store' } }
     );
   } catch (error) {
     log.error('templates', 'Failed to retrieve template', { requestId: requestIdOf(request), userId: user.userId }, error);

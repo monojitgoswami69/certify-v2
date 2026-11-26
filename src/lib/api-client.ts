@@ -1,7 +1,7 @@
 import type { IssuedEventDesign } from './event-design';
 import type { EmailSettings, PersistedMailStatus } from '../types';
 import { ISSUANCE_ACCESS_CHANGED_EVENT, ISSUANCE_REQUIRED_HEADER } from './access-role';
-import { INLINE_MAIL_BODY_THRESHOLD_BYTES, packMailAttachments, type MailAttachmentSlot } from './mail-staging';
+import { encryptStagedMail, INLINE_MAIL_BODY_THRESHOLD_BYTES, packMailAttachments, type MailAttachmentSlot } from './mail-staging';
 
 /**
  * Authenticated browser requests using the session cookie.
@@ -127,7 +127,6 @@ export interface SendEmailV2Params {
   emailBodyPlain: string;
   emailBodyHtml: string;
   filename: string;
-  jpgBlob?: Blob;
   pngBlob?: Blob;
   pdfBlob?: Blob;
 }
@@ -159,19 +158,15 @@ export interface SendEmailResult {
  */
 export async function sendEmailV2(params: SendEmailV2Params): Promise<SendEmailResult> {
   const attachmentItems: Array<{ slot: MailAttachmentSlot; blob: Blob }> = [];
-  if (params.jpgBlob && params.jpgBlob.size > 0) attachmentItems.push({ slot: 'jpg', blob: params.jpgBlob });
   if (params.pngBlob && params.pngBlob.size > 0) attachmentItems.push({ slot: 'png', blob: params.pngBlob });
   if (params.pdfBlob && params.pdfBlob.size > 0) attachmentItems.push({ slot: 'pdf', blob: params.pdfBlob });
 
   const totalAttachmentBytes = attachmentItems.reduce((sum, item) => sum + item.blob.size, 0);
-  const textBytes =
-    params.emailSubject.length +
-    params.emailBodyPlain.length +
-    params.emailBodyHtml.length;
+  const textBytes = new Blob([params.emailSubject, params.emailBodyPlain, params.emailBodyHtml]).size;
 
   let response: Response;
   if (totalAttachmentBytes + textBytes > INLINE_MAIL_BODY_THRESHOLD_BYTES && attachmentItems.length > 0) {
-    const packed = await packMailAttachments(attachmentItems);
+    const { blob: packed, key: encryptionKey } = await encryptStagedMail(await packMailAttachments(attachmentItems));
     const presignRes = await apiFetch(`${API_BASE}/uploads/presign`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -179,10 +174,16 @@ export async function sendEmailV2(params: SendEmailV2Params): Promise<SendEmailR
         contentType: 'application/octet-stream',
         byteSize: packed.size,
         kind: 'mail-staging',
+        certificateId: params.certificateId,
+        recipientEmail: params.recipientEmail,
+        resendVersion: params.resendVersion,
       }),
     });
     if (!presignRes.ok) {
       const errBody = await presignRes.json().catch(() => null);
+      if (errBody?.status === 'delivery_blocked') {
+        throw new EmailDeliveryBlockedError(errBody.detail, errBody.deliveryStatus);
+      }
       throw new Error(errBody?.detail || 'Failed to prepare oversized email attachments.');
     }
     const presign = (await presignRes.json()) as {
@@ -199,6 +200,7 @@ export async function sendEmailV2(params: SendEmailV2Params): Promise<SendEmailR
       method: 'PUT',
       headers: { 'Content-Type': 'application/octet-stream' },
       body: packed,
+      signal: AbortSignal.timeout(120_000),
     });
     if (!putRes.ok) {
       throw new Error(`Attachment upload failed (${putRes.status}). Please retry.`);
@@ -217,6 +219,7 @@ export async function sendEmailV2(params: SendEmailV2Params): Promise<SendEmailR
           email_body_html: params.emailBodyHtml,
           filename: params.filename,
           staged_key: presign.key,
+          staged_encryption_key: encryptionKey,
         }),
       });
     } catch {
@@ -231,7 +234,6 @@ export async function sendEmailV2(params: SendEmailV2Params): Promise<SendEmailR
     form.append('email_body_plain', params.emailBodyPlain);
     form.append('email_body_html', params.emailBodyHtml);
     form.append('filename', params.filename);
-    if (params.jpgBlob) form.append('jpg', params.jpgBlob, `${params.filename}.jpg`);
     if (params.pngBlob) form.append('png', params.pngBlob, `${params.filename}.png`);
     if (params.pdfBlob) form.append('pdf', params.pdfBlob, `${params.filename}.pdf`);
 

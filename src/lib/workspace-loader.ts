@@ -12,6 +12,15 @@ export async function decodeDesignImage(design: Pick<IssuedEventDesign, 'imageDa
   return image;
 }
 
+export async function decodeArtworkBlob(blob: Blob): Promise<HTMLImageElement> {
+  const url = URL.createObjectURL(blob);
+  try {
+    return await decodeDesignImage({ imageData: url });
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 interface LoadWorkspaceParams {
   copyEventId?: string | null;
   templateId?: string | null;
@@ -38,7 +47,8 @@ export async function loadWorkspace({ copyEventId, templateId, shouldApply }: Lo
     return;
   }
 
-  const [blob, image] = await Promise.all([imageSourceToBlob(template.imageData), decodeDesignImage(template)]);
+  const blob = await imageSourceToBlob(template.imageData);
+  const image = await decodeArtworkBlob(blob);
   if (shouldApply && !shouldApply()) return;
 
   const store = useAppStore.getState();

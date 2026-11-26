@@ -6,6 +6,7 @@ import type { EventLayout, IssuedEventDesign } from './event-design';
 import { freezeRenderFields } from './render-fields';
 import { eventCertificatesWhere } from './event-records';
 import { readIssuedDesign } from './event-design-validation';
+import { isAllowedR2TemplateUrl, verifyR2Artwork } from './r2-storage';
 import { log } from './logger';
 import { computeIdentityFingerprint, computeLegacyEmailFingerprint, normalizeName, pickEmailFromRowData } from './record-fingerprint';
 import { generateCertificateId, hashToken, isValidCertificateId } from './verification';
@@ -144,6 +145,16 @@ export async function registerCertificates(user: PublicUser, command: RegisterBa
 
   let firstFingerprint: string | null = null;
   if (!event && design) {
+    const preview = design.previewImageData;
+    const [mainValid, previewValid] = await Promise.all([
+      !isAllowedR2TemplateUrl(design.imageData, 'full') ||
+        verifyR2Artwork(design.imageData, user.userId, 'full', design.width, design.height),
+      !preview || !isAllowedR2TemplateUrl(preview, 'preview') ||
+        verifyR2Artwork(preview, user.userId, 'preview', design.previewWidth!, design.previewHeight!),
+    ]);
+    if (!mainValid || !previewValid) {
+      throw new RegistrationError('Uploaded artwork is missing, invalid, or does not belong to your account.');
+    }
     const issuedBy = user.issuedByName?.trim() || user.name;
     const issuedDesign: IssuedEventDesign = { ...design, verificationOrigin, issuedBy };
     const first = items[0];

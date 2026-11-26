@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CertificateWorkerPool, type WorkerTask } from './worker-pool';
 
 const originalWorker = globalThis.Worker;
 
 afterEach(() => {
   globalThis.Worker = originalWorker;
+  vi.restoreAllMocks();
 });
 
 function createTasks(count: number): WorkerTask[] {
@@ -17,6 +18,27 @@ function createTasks(count: number): WorkerTask[] {
 }
 
 describe('CertificateWorkerPool', () => {
+  it('terminates workers already started when a later Worker constructor throws', async () => {
+    const terminated: number[] = [];
+    let spawned = 0;
+    class ConditionalWorker {
+      constructor() {
+        if (++spawned === 2) throw new Error('Worker construction failed');
+      }
+      addEventListener() {}
+      removeEventListener() {}
+      postMessage() {}
+      terminate() { terminated.push(1); }
+    }
+
+    globalThis.Worker = ConditionalWorker as unknown as typeof Worker;
+    vi.spyOn(CertificateWorkerPool, 'getOptimalWorkerCount').mockReturnValue(2);
+    const pool = new CertificateWorkerPool();
+    await expect(pool.initialize(new Blob(['x']), 800, 600, [], [], ['png'], undefined, 2))
+      .rejects.toThrow('Worker construction failed');
+    expect(terminated).toEqual([1]);
+  });
+
   it('terminates already-spawned workers if any worker fails initialization', async () => {
     let instanceIndex = 0;
     const terminated: number[] = [];

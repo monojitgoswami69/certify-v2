@@ -162,7 +162,7 @@ async function buildPdfFromImage(
 
 interface PendingEncode {
   item: BatchItem;
-  jpegPromise: Promise<Blob> | null;
+  jpegPromise: Promise<Blob | null> | null;
   pngPromise: Promise<Blob> | null;
 }
 
@@ -231,7 +231,8 @@ async function generateBatch(items: BatchItem[]): Promise<void> {
     return;
   }
 
-  const needJpeg = cachedFormats.includes('jpg') || cachedFormats.includes('pdf');
+  const needJpeg = cachedFormats.includes('jpg');
+  const needPdf = cachedFormats.includes('pdf');
   const needPng = cachedFormats.includes('png') || cachedFormats.includes('pdf');
 
   let activeBufferIdx = 0;
@@ -253,7 +254,7 @@ async function generateBatch(items: BatchItem[]): Promise<void> {
         if (cachedExportScale !== 1) {
           ctx.imageSmoothingEnabled = true;
           ctx.imageSmoothingQuality = 'high';
-          ctx.scale(cachedExportScale, cachedExportScale);
+          ctx.scale(canvas.width / cachedTemplateWidth, canvas.height / cachedTemplateHeight);
         }
 
         // 1. DRAW: Background Template
@@ -288,12 +289,18 @@ async function generateBatch(items: BatchItem[]): Promise<void> {
       }
 
       // 4. ENCODE: Non-blocking OffscreenCanvas toBlob
-      const jpegPromise = needJpeg
-        ? canvas.convertToBlob({ type: 'image/jpeg', quality: cachedJpegQuality })
-        : null;
       const pngPromise = needPng
         ? canvas.convertToBlob({ type: 'image/png' })
         : null;
+      const encodeJpeg = () => canvas.convertToBlob({ type: 'image/jpeg', quality: cachedJpegQuality });
+      const jpegPromise = needJpeg
+        ? encodeJpeg()
+        : needPdf && pngPromise
+          ? pngPromise.then((png) => png.size > PDF_MAX_PNG_BYTES ? encodeJpeg() : null)
+          : null;
+      // Report rejections when this record is flushed in order.
+      void pngPromise?.catch(() => {});
+      void jpegPromise?.catch(() => {});
 
       // 5. FLUSH PREVIOUS RECORD while current is encoding
       if (pending) {
@@ -428,8 +435,8 @@ self.onmessage = async (event: MessageEvent<InitMessage | GenerateBatchMessage>)
         .filter((box) => box.field || box.kind === 'static')
         .map((box) => ({ box, fontBase: getFontFamilyCSS(box.fontFamily) }));
 
-      const canvasWidth = cachedTemplateWidth * cachedExportScale;
-      const canvasHeight = cachedTemplateHeight * cachedExportScale;
+      const canvasWidth = Math.max(1, Math.floor(cachedTemplateWidth * cachedExportScale));
+      const canvasHeight = Math.max(1, Math.floor(cachedTemplateHeight * cachedExportScale));
       const createBuffer = () => {
         const c = new OffscreenCanvas(canvasWidth, canvasHeight);
         let cx = c.getContext('2d', {

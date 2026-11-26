@@ -23,8 +23,8 @@ import { ResizeHandle } from '../../components/ui/ResizeHandle';
 import { useAppStore } from '../../store/useAppStore';
 import { useHistoryStore } from '../../store/useHistoryStore';
 import { IssuerWorkspace } from '../../components/account/IssuerWorkspace';
-import { loadWorkspace } from '../../lib/workspace-loader';
-import { getCachedEncodedImage } from '../../lib/template-autosave';
+import { decodeArtworkBlob, loadWorkspace } from '../../lib/workspace-loader';
+import { hashTemplateFile } from '../../lib/template-autosave';
 import {
   fetchWorkspaceDraft,
   saveWorkspaceDraft,
@@ -127,25 +127,33 @@ function WorkspaceContent() {
   useEffect(() => {
     const draft = missingArtworkDraftRef.current;
     if (!draft?.templateRef || !templateImage || !templateFile) return;
-    missingArtworkDraftRef.current = null;
-    const { fileName, width, height } = draft.templateRef;
-    if (templateFile.name !== fileName || templateImage.naturalWidth !== width || templateImage.naturalHeight !== height) {
-      setDraftNotice('The draft layout was designed for the original image and was not applied to this replacement.');
-      return;
-    }
-    setBoxes(draft.boxes);
-    setQrZones(draft.qrZones);
-    setImages(draft.images);
-    setDraftNotice(null);
+    let current = true;
+    const { fileName, width, height, imageHash } = draft.templateRef;
+    void (async () => {
+      const fileMatches = imageHash
+        ? await hashTemplateFile(templateFile).catch(() => null) === imageHash
+        : templateFile.name === fileName;
+      if (!current) return;
+      if (!fileMatches || templateImage.naturalWidth !== width || templateImage.naturalHeight !== height) {
+        setDraftNotice('The recovered layout requires the original artwork.');
+        return;
+      }
+      missingArtworkDraftRef.current = null;
+      setBoxes(draft.boxes);
+      setQrZones(draft.qrZones);
+      setImages(draft.images);
+      setDraftNotice(null);
+    })();
+    return () => { current = false; };
   }, [templateFile, templateImage, setBoxes, setQrZones, setImages]);
 
   useEffect(() => {
-    if (hydratedFromEvent || !templateImage || draftRecovery || recoveringDraft || issuanceStarted || isBatchRegistering) return;
+    if (hydratedFromEvent || !templateImage || draftRecovery || recoveringDraft || missingArtworkDraftRef.current || issuanceStarted || isBatchRegistering) return;
     if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
     let current = true;
     draftSaveTimerRef.current = setTimeout(async () => {
-      const encoded = templateFile
-        ? await getCachedEncodedImage(templateImage, templateFile).catch(() => null)
+      const imageHash = templateFile
+        ? await hashTemplateFile(templateFile).catch(() => null)
         : null;
       if (!current) return;
       void saveWorkspaceDraft({
@@ -167,7 +175,7 @@ function WorkspaceContent() {
               fileName: templateFile.name,
               width: templateImage.naturalWidth,
               height: templateImage.naturalHeight,
-              ...(encoded?.hash ? { imageHash: encoded.hash } : {}),
+              ...(imageHash ? { imageHash } : {}),
             }
           : null,
       }).then(() => {
@@ -231,11 +239,11 @@ function WorkspaceContent() {
         if (!full.ok) throw new Error('Could not load saved artwork');
         const { template } = await full.json();
         const blob = await imageSourceToBlob(template.imageData);
+        if (draft.templateRef.imageHash && await hashTemplateFile(blob) !== draft.templateRef.imageHash) {
+          throw new Error('The saved artwork does not match this draft');
+        }
         const file = new File([blob], draft.templateRef.fileName, { type: blob.type || 'image/png' });
-        const image = new Image();
-        image.crossOrigin = 'anonymous';
-        image.src = template.imageData;
-        await image.decode();
+        const image = await decodeArtworkBlob(blob);
         setTemplate(file, image, `${template.name} (recovered)`);
       } catch {
         missingArtworkDraftRef.current = draft;
@@ -255,9 +263,11 @@ function WorkspaceContent() {
         const file = new File([blob], draft.csvFileName || 'recovered-roster.csv', { type: 'text/csv' });
         setCsvData(file, draft.csvHeaders, draft.csvRows, draft.csvReview);
       }
-      setBoxes(draft.boxes || []);
-      setQrZones(draft.qrZones || []);
-      setImages(draft.images || []);
+      if (!missingArtworkDraftRef.current) {
+        setBoxes(draft.boxes || []);
+        setQrZones(draft.qrZones || []);
+        setImages(draft.images || []);
+      }
       if (draft.emailSettings) {
         const { attachJpg, attachPng, ...rest } = draft.emailSettings;
         setEmailSettings({

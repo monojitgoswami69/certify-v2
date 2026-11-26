@@ -28,7 +28,7 @@ function send(options: { recipient?: string; version?: string; certificateId?: s
   if (options.version) form.set('resend_version', options.version);
   form.set('sender_email', 'forged@example.test');
   form.set('email_subject', 'Certificate');
-  form.set('pdf', new Blob(['test attachment']), 'certificate.pdf');
+  form.set('pdf', new Blob(['%PDF-1.4 test attachment']), 'certificate.pdf');
   return POST(new Request('http://localhost:3000/api/send-email-v2', {
     method: 'POST',
     headers: { 'X-Certify-Request': '1' },
@@ -161,7 +161,7 @@ describe('certificate email sender and quota', () => {
   });
 
   it('loads oversized attachments via user-owned R2 staged_key and always deletes the staged blob', async () => {
-    const { packMailAttachments } = await import('../../../lib/mail-staging');
+    const { encryptStagedMail, packMailAttachments } = await import('../../../lib/mail-staging');
     const { createPresignedMailStagingUpload } = await import('../../../lib/r2-storage');
     process.env.R2_ACCOUNT_ID = 'acc123';
     process.env.R2_BUCKET = 'wecertify';
@@ -170,10 +170,11 @@ describe('certificate email sender and quota', () => {
     process.env.R2_SECRET_ACCESS_KEY = 'secret123';
 
     const packed = await packMailAttachments([
-      { slot: 'png', blob: new Blob([Uint8Array.from([137, 80, 78, 71])], { type: 'image/png' }) },
-      { slot: 'pdf', blob: new Blob([Uint8Array.from([37, 80, 68, 70])], { type: 'application/pdf' }) },
+      { slot: 'png', blob: new Blob([Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10])], { type: 'image/png' }) },
+      { slot: 'pdf', blob: new Blob([Uint8Array.from([37, 80, 68, 70, 45])], { type: 'application/pdf' }) },
     ]);
-    const packedBytes = new Uint8Array(await packed.arrayBuffer());
+    const { blob, key } = await encryptStagedMail(packed);
+    const packedBytes = new Uint8Array(await blob.arrayBuffer());
     const staged = createPresignedMailStagingUpload({ userId: 'test-user', contentLength: packedBytes.byteLength });
 
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
@@ -200,6 +201,7 @@ describe('certificate email sender and quota', () => {
         email_body_plain: 'Attached',
         filename: 'Alice_Cert',
         staged_key: staged.key,
+        staged_encryption_key: key,
       }),
     }));
     expect(res.status).toBe(200);
@@ -209,6 +211,22 @@ describe('certificate email sender and quota', () => {
     expect(String(fetchMock.mock.calls[1][1]?.body)).toContain('Alice_Cert.png');
     expect(String(fetchMock.mock.calls[1][1]?.body)).toContain('Alice_Cert.pdf');
     expect(fetchMock.mock.calls[2][1]?.method).toBe('DELETE');
+
+    fetchMock.mockClear();
+    packedBytes[packedBytes.length - 1] ^= 1;
+    const tamperedRes = await POST(new Request('http://localhost:3000/api/send-email-v2', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Certify-Request': '1' },
+      body: JSON.stringify({
+        certificate_id: certificateId,
+        recipient_email: recipient,
+        staged_key: staged.key,
+        staged_encryption_key: key,
+      }),
+    }));
+    expect(tamperedRes.status).toBe(400);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1][1]?.method).toBe('DELETE');
 
     // Cross-user staged_key must be rejected cleanly with 400 before any R2 calls
     fetchMock.mockClear();

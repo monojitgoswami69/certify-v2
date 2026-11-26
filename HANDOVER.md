@@ -7,7 +7,7 @@ Use the access, Gmail, and canvas notes below when testing a release.
 - **NEVER `git push` without the user's explicit approval in that conversation.** Remote is `personal` (`git push personal main`). Local commits are fine and encouraged.
 - Before proposing a push, run the gauntlet: `npm run lint`, `npm test`, `npm run build`, and `node scripts/e2e-smoke.mjs <port>` against a locally booted production server (`PORT=3005 npm run start`).
 - This is a modified Next.js 16 — read `node_modules/next/dist/docs/` before Next-specific work. Classic `dynamic='force-dynamic'` is GONE; use `await connection()` from `next/server` in server page components. Middleware is `src/proxy.ts`.
-- **Every new server-rendered page MUST use the `connection()` wrapper pattern** (see `src/app/*/page.tsx` + `*Client.tsx` split) — a bare client-component page prerenders statically and the nonce CSP blocks its inline scripts → silent white-screen. This bit /login and /admin; the e2e suite now sweeps all 7 pages for it.
+- Pages matched by the nonce policy in `src/proxy.ts` must render per request. Use `connection()` when a matched route has no other dynamic server work. The homepage and legal pages can be served statically.
 - UI rules in AGENTS.md: no cards/pills; editorial layouts with hairline rules.
 
 ## 1. Earlier release fixes
@@ -30,11 +30,11 @@ Email batches run in the browser and closing the tab stops the remaining queue. 
 - **Auth**: HttpOnly `certify_session` cookie (7d / browser-session) + legacy Bearer fallback (invalid bearer falls through to cookie — do not regress); **every mutating route requires `X-Certify-Request: 1`** (CSRF guard in `src/lib/server-auth.ts`). Logout bumps `users.sessions_valid_after`. `src/lib/env.ts` is the zod env contract — no raw `process.env` server-side.
 - **Platform access**: `platform_access` table (user/admin/super_admin); sign-in gate in `src/app/api/auth/google/route.ts`; admin guard in `src/app/api/admin/_guard.ts`; analytics are AGGREGATES ONLY (no recipient PII).
 - **Registration**: `src/lib/registration-service.ts` — unique `(user_id, record_fingerprint)` + `ON CONFLICT DO NOTHING`; identity = event+email+name deterministic; legacy fingerprints adopted on reuse; ambiguous email-less duplicate names → 400. Events are real rows (`events`); every batch writes a `registration_batches` audit row.
-- **CSP**: per-request nonce in `src/proxy.ts` (no `unsafe-inline` scripts); pages are `connection()`-wrapped server components + `*Client.tsx`.
+- **CSP**: sign-in, Studio, dashboard, admin, and verification use a per-request script nonce. The static homepage allows its first-party redirect script. The static legal pages allow Next.js inline scripts.
 - **Render paths**: `canvas-renderer.ts` (editor), `certificate-engine.ts` (main thread), `certificate-worker.ts` (pool), `CertificatePreview.tsx` (verify page). TextBox uses **w/h** (a width/height seed bug was fixed — don't regress). Static text = `kind:'static'` + `staticText`; decorative bitmaps = `layoutConfig.images`.
 - **Rate limits**: trusted-XFF-tail IP limiter (`TRUSTED_PROXY_COUNT`, default 1) + per-user buckets on register/templates/save/send.
 - **Logging**: `src/lib/logger.ts` JSON lines with `x-request-id` from proxy.
-- e2e (`scripts/e2e-smoke.mjs <port>`) mints its own JWT from `.env` values — never prints secrets. Covers: registration race/idempotency, cookie+CSRF matrix, asset endpoint, event settings (trackScans/expiry), admin (403→200→grant/revoke→403), nonce sweep for all 7 pages.
+- The end-to-end suite uses the local server’s test credentials and writes throwaway test records. Point both the server and suite at a disposable database and an isolated R2 bucket or fixture.
 - A production server may be left running on port 3005 — kill via `lsof -nP -iTCP:3005 -sTCP:LISTEN -t` before rebuilding.
 
 ## Moving production to wecertify.tech
@@ -47,6 +47,9 @@ Email batches run in the browser and closing the tab stops the remaining queue. 
 The public domain used to issue a new batch is saved with its immutable design and reused for exports, resends, and public downloads. Preview deployments fall back to the configured public origin. Older production batches use the previous domain when regenerating a QR code. The domain change requires no database migration.
 
 ## Gmail sender and access policy
+
+- The R2 bucket’s CORS rule must allow the app origins to send both `Content-Type` and `If-None-Match` on uploads. The signed condition makes template objects create-only.
+- Staged email attachments are encrypted in the browser. The send route deletes the stored ciphertext after processing. Set a 24-hour R2 lifecycle expiry for `mail-staging/v2/` to clean up abandoned uploads. Certificate artwork lives under `designs/` and must be retained.
 
 - Set `ADMIN_EMAIL` to the sole super admin address and grant other accounts from **Admin → Access**. Existing access entries are retained, including entries grandfathered by the original 0005 migration. Review those entries before onboarding real users. The current 0005 migration no longer restores revoked accounts when rerun.
 - Set `GMAIL_TOKEN_ENCRYPTION_KEY` to a unique 32-byte key encoded as 64 hex characters and share it across application instances through the secret manager. Keep `NEXT_PUBLIC_APP_URL` set to the exact public HTTPS origin, and register that origin in the Google OAuth client. The production Google project needs Gmail API access and a consent screen that permits the intended users to grant `gmail.send`.

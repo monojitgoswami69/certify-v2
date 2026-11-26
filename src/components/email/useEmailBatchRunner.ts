@@ -364,7 +364,7 @@ export function useEmailBatchRunner() {
               throw new Error('No registered certificate ID for this row. Re-register the batch.');
             }
 
-            let cert: { filename: string; jpgBlob?: Blob; pngBlob?: Blob; pdfBlob?: Blob };
+            let cert: { filename: string; pngBlob?: Blob; pdfBlob?: Blob };
             if (renderer) {
               const rendered = await renderer.render({
                 id: rowIndex,
@@ -378,7 +378,6 @@ export function useEmailBatchRunner() {
               }
               cert = {
                 filename: rendered.filename,
-                jpgBlob: rendered.blobs.jpg,
                 pngBlob: rendered.blobs.png,
                 pdfBlob: rendered.blobs.pdf,
               };
@@ -412,7 +411,6 @@ export function useEmailBatchRunner() {
               emailBodyPlain: bodyPlain,
               emailBodyHtml: bodyHtml,
               filename: cert.filename,
-              jpgBlob: cert.jpgBlob,
               pngBlob: cert.pngBlob,
               pdfBlob: cert.pdfBlob,
             });

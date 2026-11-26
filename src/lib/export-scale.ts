@@ -20,10 +20,11 @@ export function computeExportScale(width: number, height: number): number {
   const safeW = Math.max(1, width);
   const safeH = Math.max(1, height);
   const longest = Math.max(safeW, safeH);
+  const area = safeW * safeH;
+  if (area > MAX_EXPORT_PIXELS) return Math.sqrt(MAX_EXPORT_PIXELS / area);
   if (longest >= MIN_EXPORT_LONG_EDGE) return 1;
 
   const desired = Math.min(MAX_EXPORT_SCALE, Math.ceil(MIN_EXPORT_LONG_EDGE / longest));
-  const area = safeW * safeH;
   let scale = desired;
   while (scale > 1 && area * scale * scale > MAX_EXPORT_PIXELS) {
     scale -= 1;

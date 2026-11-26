@@ -87,82 +87,83 @@ export class CertificateWorkerPool {
     const workerCount = Math.max(1, Math.min(maxWorkers ?? optimal, optimal));
     const initPromises: Promise<void>[] = [];
 
-    for (let i = 0; i < workerCount; i++) {
-      const worker = new Worker(
-        new URL('./certificate-worker.ts', import.meta.url),
-        { type: 'module' }
-      );
-
-      const initPromise = new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          cleanup();
-          reject(new Error(`Worker ${i} initialization timed out`));
-        }, 20000);
-
-        const cleanup = () => {
-          clearTimeout(timeout);
-          worker.removeEventListener('message', onReady);
-          worker.removeEventListener('error', onError);
-        };
-
-        const cancel = () => {
-          cleanup();
-          resolve();
-        };
-
-        const onReady = (event: MessageEvent) => {
-          if (event.data.type === 'ready') {
-            cleanup();
-            if (event.data.result?.error) {
-              reject(new Error(event.data.result.error));
-            } else {
-              resolve();
-            }
-          }
-        };
-
-        const onError = (event: ErrorEvent) => {
-          cleanup();
-          reject(new Error(`Worker ${i} error: ${event.message}`));
-        };
-
-        worker.addEventListener('message', onReady);
-        worker.addEventListener('error', onError);
-
-        this.pendingResolves.push(cancel);
-      });
-
-      this.workers.push(worker);
-      initPromises.push(initPromise);
-
-      const clonedFonts = fonts
-        ? fonts.map((f) => ({
-            family: f.family,
-            buffer: f.buffer.slice(0),
-            weight: f.weight,
-            style: f.style,
-          }))
-        : undefined;
-      const transferables = clonedFonts ? clonedFonts.map((f) => f.buffer) : [];
-
-      worker.postMessage(
-        {
-          type: 'init',
-          templateBlob: templateFile,
-          templateWidth,
-          templateHeight,
-          boxes,
-          qrZones,
-          images,
-          formats,
-          jpegQuality: EXPORT_JPEG_QUALITY,
-          fonts: clonedFonts,
-        },
-        transferables
-      );
-    }
-
     try {
+      for (let i = 0; i < workerCount; i++) {
+        const worker = new Worker(
+          new URL('./certificate-worker.ts', import.meta.url),
+          { type: 'module' }
+        );
+
+        const initPromise = new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            cleanup();
+            reject(new Error(`Worker ${i} initialization timed out`));
+          }, 20000);
+
+          const cleanup = () => {
+            clearTimeout(timeout);
+            worker.removeEventListener('message', onReady);
+            worker.removeEventListener('error', onError);
+          };
+
+          const cancel = () => {
+            cleanup();
+            resolve();
+          };
+
+          const onReady = (event: MessageEvent) => {
+            if (event.data.type === 'ready') {
+              cleanup();
+              if (event.data.result?.error) {
+                reject(new Error(event.data.result.error));
+              } else {
+                resolve();
+              }
+            }
+          };
+
+          const onError = (event: ErrorEvent) => {
+            cleanup();
+            reject(new Error(`Worker ${i} error: ${event.message}`));
+          };
+
+          worker.addEventListener('message', onReady);
+          worker.addEventListener('error', onError);
+
+          this.pendingResolves.push(cancel);
+        });
+
+        this.workers.push(worker);
+        initPromises.push(initPromise);
+        void initPromise.catch(() => {});
+
+        const clonedFonts = fonts
+          ? fonts.map((f) => ({
+              family: f.family,
+              buffer: f.buffer.slice(0),
+              weight: f.weight,
+              style: f.style,
+            }))
+          : undefined;
+        const transferables = clonedFonts ? clonedFonts.map((f) => f.buffer) : [];
+
+        worker.postMessage(
+          {
+            type: 'init',
+            templateBlob: templateFile,
+            templateWidth,
+            templateHeight,
+            boxes,
+            qrZones,
+            images,
+            formats,
+            jpegQuality: EXPORT_JPEG_QUALITY,
+            fonts: clonedFonts,
+          },
+          transferables
+        );
+      }
+
       await Promise.all(initPromises);
       this.pendingResolves = [];
       return workerCount;
@@ -296,16 +297,20 @@ export class CertificateWorkerPool {
         worker.addEventListener('messageerror', messageErrorHandler);
         restartTimer();
 
-        worker.postMessage({
-          type: 'generateBatch',
-          items: batch.map((t) => ({
-            id: t.id,
-            rowIndex: t.rowIndex,
-            row: t.row,
-            filename: t.filename,
-            verificationUrl: t.verificationUrl,
-          })),
-        });
+        try {
+          worker.postMessage({
+            type: 'generateBatch',
+            items: batch.map((t) => ({
+              id: t.id,
+              rowIndex: t.rowIndex,
+              row: t.row,
+              filename: t.filename,
+              verificationUrl: t.verificationUrl,
+            })),
+          });
+        } catch (error) {
+          finishMicroBatch(error instanceof Error ? error.message : 'Could not send work to the worker', true);
+        }
       });
 
     const workerLoops = healthyWorkers.map(async (worker) => {

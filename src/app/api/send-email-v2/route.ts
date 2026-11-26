@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { mutationAllowed, forbiddenCsrfResponse } from '../../../lib/server-auth';
 import nodemailer, { type SendMailOptions, type Transporter } from 'nodemailer';
 import { Readable } from 'stream';
+import { createDecipheriv } from 'node:crypto';
+import { boundedBody, BodyTooLarge } from '../../../lib/bounded-body';
 import { requireIssuer, issuanceRequiredResponse } from '../../../lib/issuer-auth';
 import { getFreshAccessToken, gmailConfigured } from '../../../lib/google-token-store';
 import { reserveMailSlot } from '../../../lib/mail-quota';
@@ -10,8 +12,9 @@ import { canClaimMail, claimMail, finishMail, getMailTarget } from '../../../lib
 import { isValidCertificateId } from '../../../lib/verification';
 import type { PersistedMailStatus } from '../../../types';
 import { singleRecipientEmail } from '../../../lib/mail-preferences';
-import { MAX_STAGED_MAIL_BYTES, unpackMailAttachments } from '../../../lib/mail-staging';
+import { MAX_MAIL_ATTACHMENT_BYTES, MAX_STAGED_MAIL_BYTES, STAGED_MAIL_IV_BYTES, STAGED_MAIL_TAG_BYTES, unpackMailAttachments } from '../../../lib/mail-staging';
 import { createSignedR2ObjectUrl, isAllowedMailStagingKey } from '../../../lib/r2-storage';
+import { hasImageMagicBytes } from '../../../lib/image-validation';
 
 // =========================================================================
 // Shared MIME builder (streamTransport never opens a socket, so a single
@@ -30,12 +33,12 @@ function getMimeTransporter(): Transporter {
   return mimeTransporter;
 }
 
-async function buildRawMimeMessage(mailOptions: SendMailOptions): Promise<Uint8Array> {
+async function buildRawMimeMessage(mailOptions: SendMailOptions): Promise<Buffer<ArrayBuffer>> {
   const info = await getMimeTransporter().sendMail(mailOptions);
   const msg = info.message;
 
   if (Buffer.isBuffer(msg)) {
-    return new Uint8Array(msg);
+    return Buffer.from(msg);
   }
 
   const stream = msg as Readable;
@@ -43,27 +46,29 @@ async function buildRawMimeMessage(mailOptions: SendMailOptions): Promise<Uint8A
 
   return new Promise((resolve, reject) => {
     stream.on('data', (chunk: Buffer) => chunks.push(chunk));
-    stream.on('end', () => resolve(new Uint8Array(Buffer.concat(chunks))));
+    stream.on('end', () => resolve(Buffer.concat(chunks)));
     stream.on('error', reject);
   });
 }
 
-const MAX_ATTACHMENT_BYTES = 24 * 1024 * 1024;
-const MAX_REQUEST_BYTES = 34 * 1024 * 1024;
+const MAX_REQUEST_BYTES = 4_500_000;
+const MAX_GMAIL_MESSAGE_BYTES = 35 * 1024 * 1024;
 
-class RequestTooLarge extends Error {}
-
-function boundedBody(request: Request): Response {
-  if (Number(request.headers.get('content-length')) > MAX_REQUEST_BYTES) throw new RequestTooLarge();
-  let bytes = 0;
-  const stream = request.body?.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
-    transform(chunk, controller) {
-      bytes += chunk.byteLength;
-      if (bytes > MAX_REQUEST_BYTES) throw new RequestTooLarge();
-      controller.enqueue(chunk);
-    },
-  }));
-  return new Response(stream, { headers: request.headers });
+function decryptStagedMail(data: Buffer, hexKey: string): Buffer {
+  if (data.length <= STAGED_MAIL_IV_BYTES + STAGED_MAIL_TAG_BYTES) {
+    throw new SyntaxError('Truncated staged mail');
+  }
+  try {
+    const iv = data.subarray(0, STAGED_MAIL_IV_BYTES);
+    const decipher = createDecipheriv('aes-256-gcm', Buffer.from(hexKey, 'hex'), iv);
+    decipher.setAuthTag(data.subarray(-STAGED_MAIL_TAG_BYTES));
+    return Buffer.concat([
+      decipher.update(data.subarray(STAGED_MAIL_IV_BYTES, -STAGED_MAIL_TAG_BYTES)),
+      decipher.final(),
+    ]);
+  } catch {
+    throw new SyntaxError('Invalid staged mail encryption');
+  }
 }
 
 function retryLater(detail: string, seconds: number, source: 'account' | 'gmail') {
@@ -108,7 +113,7 @@ interface MailAttachment {
 
 async function readAttachment(file: FormDataEntryValue | null, filename: string): Promise<MailAttachment | null> {
   if (!file || typeof file === 'string' || file.size === 0) return null;
-  if (file.size > MAX_ATTACHMENT_BYTES) throw new RequestTooLarge();
+  if (file.size > MAX_MAIL_ATTACHMENT_BYTES) throw new BodyTooLarge();
   const buffer = Buffer.from(await file.arrayBuffer());
   return { filename, content: buffer };
 }
@@ -123,6 +128,7 @@ export async function POST(request: Request) {
   }
 
   let stagedKey: string | null = null;
+  let stagedEncryptionKey = '';
 
   try {
     let certificateId: string;
@@ -133,7 +139,7 @@ export async function POST(request: Request) {
     let emailBodyHtml: string;
     let filename: string;
     let attachments: MailAttachment[];
-    const payload = boundedBody(request);
+    const payload = boundedBody(request, MAX_REQUEST_BYTES);
 
     const contentType = request.headers.get('content-type') || '';
 
@@ -149,11 +155,9 @@ export async function POST(request: Request) {
       filename = sanitizeAttachmentBaseName(String(form.get('filename') || 'certificate'));
 
       attachments = [];
-      const jpg = await readAttachment(
-        form.get('jpg') ?? form.get('jpeg'),
-        `${filename}.jpg`
-      );
-      if (jpg) attachments.push(jpg);
+      if (form.has('jpg') || form.has('jpeg')) {
+        return NextResponse.json({ detail: 'Email attachments must use PNG or PDF.' }, { status: 400 });
+      }
       const png = await readAttachment(form.get('png'), `${filename}.png`);
       if (png) attachments.push(png);
       const pdf = await readAttachment(form.get('pdf'), `${filename}.pdf`);
@@ -175,12 +179,13 @@ export async function POST(request: Request) {
           return NextResponse.json({ detail: 'Invalid staged email attachment reference' }, { status: 400 });
         }
         stagedKey = body.staged_key;
+        if (typeof body.staged_encryption_key !== 'string' || !/^[0-9a-f]{64}$/.test(body.staged_encryption_key)) {
+          return NextResponse.json({ detail: 'Invalid staged email encryption key. Refresh Studio and try again.' }, { status: 400 });
+        }
+        stagedEncryptionKey = body.staged_encryption_key;
       } else {
         if (body.jpg_base64 || body.jpeg_base64) {
-          attachments.push({
-            filename: `${filename}.jpg`,
-            content: Buffer.from(String(body.jpg_base64 || body.jpeg_base64).replace(/^data:image\/\w+;base64,/, ''), 'base64'),
-          });
+          return NextResponse.json({ detail: 'Email attachments must use PNG or PDF.' }, { status: 400 });
         }
         if (body.png_base64) {
           attachments.push({
@@ -220,6 +225,7 @@ export async function POST(request: Request) {
 
     if (stagedKey) {
       const stagedRes = await fetch(createSignedR2ObjectUrl('GET', stagedKey), {
+        redirect: 'error',
         signal: AbortSignal.timeout(30_000),
       });
       if (!stagedRes.ok) {
@@ -228,11 +234,8 @@ export async function POST(request: Request) {
           { status: 400 }
         );
       }
-      const lenHeader = Number(stagedRes.headers.get('content-length') || '0');
-      if (lenHeader > MAX_STAGED_MAIL_BYTES) throw new RequestTooLarge();
-      const raw = new Uint8Array(await stagedRes.arrayBuffer());
-      if (raw.byteLength > MAX_STAGED_MAIL_BYTES) throw new RequestTooLarge();
-      const unpacked = unpackMailAttachments(raw);
+      const raw = Buffer.from(await boundedBody(stagedRes, MAX_STAGED_MAIL_BYTES).arrayBuffer());
+      const unpacked = unpackMailAttachments(decryptStagedMail(raw, stagedEncryptionKey));
       for (const item of unpacked) {
         attachments.push({ filename: `${filename}.${item.slot}`, content: item.data });
       }
@@ -241,10 +244,15 @@ export async function POST(request: Request) {
       }
     }
 
+    if (attachments.some(({ filename: name, content }) =>
+      name.endsWith('.png') ? !hasImageMagicBytes(content, 'png') : content.subarray(0, 5).toString('ascii') !== '%PDF-'
+    )) {
+      return NextResponse.json({ detail: 'An attachment does not match its PNG or PDF format.' }, { status: 400 });
+    }
     const totalAttachmentBytes = attachments.reduce((sum, a) => sum + a.content.length, 0);
-    if (totalAttachmentBytes > MAX_ATTACHMENT_BYTES) {
+    if (totalAttachmentBytes > MAX_MAIL_ATTACHMENT_BYTES) {
       return NextResponse.json(
-        { detail: 'Attachments exceed the 24 MB Gmail message limit' },
+        { detail: 'Attachments exceed the 24 MB attachment limit.' },
         { status: 413 }
       );
     }
@@ -261,6 +269,9 @@ export async function POST(request: Request) {
       html: emailBodyHtml.trim() || undefined,
       attachments,
     });
+    if (rawMime.byteLength > MAX_GMAIL_MESSAGE_BYTES) {
+      return NextResponse.json({ detail: 'The encoded email exceeds Gmail’s message size limit.' }, { status: 413 });
+    }
 
     const claimStartedAt = performance.now();
     const attempt = await claimMail(user.userId, certificateId, recipientEmail, resend);
@@ -294,7 +305,7 @@ export async function POST(request: Request) {
         {
           method: 'POST',
           headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'message/rfc822' },
-          body: Buffer.from(rawMime),
+          body: rawMime,
           signal: AbortSignal.timeout(30_000),
         }
       );
@@ -342,8 +353,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ detail: 'Gmail could not accept the email.' }, { status: 502 });
   } catch (error) {
     const isTooLarge =
-      error instanceof RequestTooLarge ||
-      (error instanceof Error && error.cause instanceof RequestTooLarge);
+      error instanceof BodyTooLarge ||
+      (error instanceof Error && error.cause instanceof BodyTooLarge);
     if (isTooLarge) {
       return NextResponse.json({ detail: 'Email upload exceeds the size limit' }, { status: 413 });
     }
@@ -354,9 +365,18 @@ export async function POST(request: Request) {
     return NextResponse.json({ detail: 'The email could not be prepared for Gmail.' }, { status: 500 });
   } finally {
     if (stagedKey) {
-      await fetch(createSignedR2ObjectUrl('DELETE', stagedKey), { method: 'DELETE' }).catch((err) => {
-        log.warn('email', 'Failed to delete staged R2 attachment', { requestId: requestIdOf(request), userId: user.userId }, err);
-      });
+      try {
+        const response = await fetch(createSignedR2ObjectUrl('DELETE', stagedKey), {
+          method: 'DELETE',
+          redirect: 'error',
+          signal: AbortSignal.timeout(2_000),
+        });
+        if (!response.ok && response.status !== 404) {
+          log.warn('email', 'R2 rejected staged attachment deletion', { requestId: requestIdOf(request), status: response.status });
+        }
+      } catch (error) {
+        log.warn('email', 'Failed to delete staged R2 attachment', { requestId: requestIdOf(request), userId: user.userId }, error);
+      }
     }
   }
 }

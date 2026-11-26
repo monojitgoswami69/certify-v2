@@ -1,10 +1,10 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { preconnect, preload } from 'react-dom';
 import { VerifyClient } from './VerifyClient';
 import { SESSION_COOKIE_NAME, readSession } from '@/lib/server-auth';
-import { resolveCertificateVerification } from '@/lib/verify-service';
+import { checkVerificationRateLimit, resolveCertificateVerification } from '@/lib/verify-service';
 
 export const metadata: Metadata = {
   title: 'Certificate Verification | WeCertify Registry',
@@ -20,13 +20,13 @@ export default async function VerifyPage({
   preconnect('https://fonts.googleapis.com');
   preconnect('https://fonts.gstatic.com', { crossOrigin: 'anonymous' });
 
-  const [{ id }, cookieStore] = await Promise.all([params, cookies()]);
+  const [{ id }, cookieStore, requestHeaders] = await Promise.all([params, cookies(), headers()]);
   const token = cookieStore.get(SESSION_COOKIE_NAME)?.value;
   const session = token ? readSession(token) : null;
-  const { payload: initialResult, previewImageUrl } = await resolveCertificateVerification({
-    rawId: id,
-    session,
-  });
+  const rate = checkVerificationRateLimit(requestHeaders);
+  const { payload: initialResult, previewImageUrl } = rate.allowed
+    ? await resolveCertificateVerification({ rawId: id, session, includePreview: true })
+    : { payload: { status: 'rate_limited', detail: 'Too many verification requests. Try again shortly.' } as const };
   if (previewImageUrl) {
     if (previewImageUrl.startsWith('https://')) {
       preconnect(new URL(previewImageUrl).origin, { crossOrigin: 'anonymous' });
@@ -49,7 +49,7 @@ export default async function VerifyPage({
       {/* Centered certificate inspection content (wide enough for a large
           certificate showcase alongside the centered verification record) */}
       <main className="w-full max-w-7xl mx-auto flex flex-col items-center justify-center relative z-10">
-        <VerifyClient id={id} defaultIssuedBy={issuedBy} initialResult={initialResult} />
+        <VerifyClient key={id} id={id} defaultIssuedBy={issuedBy} initialResult={initialResult} />
       </main>
 
       {/* Powered by WeCertify typographic lockup - below content on mobile, bottom-right on desktop */}

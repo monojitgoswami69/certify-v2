@@ -625,6 +625,10 @@ try {
     body: JSON.stringify({ contentType: 'image/png', byteSize: 16 * 1024 * 1024, kind: 'full' }),
   });
   check('presign endpoint rejects templates over 15 MB (413)', presignTooBig.status === 413);
+  const presignNull = await fetch(`${BASE}/api/uploads/presign`, {
+    method: 'POST', headers: cookieAuth, body: 'null',
+  });
+  check('presign rejects null payloads (400)', presignNull.status === 400);
   const pngBytes = Buffer.from(TINY_PNG.split(',')[1], 'base64');
   const presignOk = await fetch(`${BASE}/api/uploads/presign`, {
     method: 'POST',
@@ -636,16 +640,23 @@ try {
   if (presignData.enabled) {
     const r2PutOversize = await fetch(presignData.uploadUrl, {
       method: 'PUT',
-      headers: { 'Content-Type': 'image/png' },
+      headers: { ...presignData.uploadHeaders, 'Content-Type': 'image/png' },
       body: Buffer.concat([pngBytes, Buffer.alloc(64)]),
     });
     check('direct-to-R2 rejects payloads exceeding signed byte size (403)',
       r2PutOversize.status === 403, `status=${r2PutOversize.status}`);
     const r2Put = await fetch(presignData.uploadUrl, {
       method: 'PUT',
-      headers: { 'Content-Type': 'image/png' },
+      headers: { ...presignData.uploadHeaders, 'Content-Type': 'image/png' },
       body: pngBytes,
     });
+    const overwrite = await fetch(presignData.uploadUrl, {
+      method: 'PUT',
+      headers: { ...presignData.uploadHeaders, 'Content-Type': 'image/png' },
+      body: pngBytes,
+    });
+    check('the signed template upload cannot overwrite an existing object',
+      overwrite.status === 412, `status=${overwrite.status}`);
     const r2Get = await fetch(presignData.publicUrl, {
       headers: { Origin: 'https://wecertify.tech' },
     });
@@ -655,11 +666,29 @@ try {
       Boolean(r2Get.headers.get('access-control-allow-origin')),
       `put=${r2Put.status} get=${r2Get.status} acao=${r2Get.headers.get('access-control-allow-origin')}`);
 
+    const remoteDesign = { ...DESIGN, imageData: presignData.publicUrl };
+    const badR2Dimensions = await register({
+      eventId: randomUUID(), design: { ...remoteDesign, width: 2 },
+      certificates: [{ recipientName: 'Incorrect dimensions' }],
+    });
+    check('issuance rejects false dimensions on stored R2 artwork', badR2Dimensions.status === 400);
+    const r2Event = await register({
+      eventId: randomUUID(), design: remoteDesign, certificates: [{ recipientName: 'R2 artwork check' }],
+    });
+    const r2Asset = r2Event.data.ids?.[0]
+      ? await (await fetch(`${BASE}/api/verify/${r2Event.data.ids[0]}/asset?full=1`)).json()
+      : null;
+    check('a verified R2 original is stored and returned from its CDN URL',
+      r2Event.status === 200 && r2Asset?.template?.imageUrl === presignData.publicUrl);
+
     const stagedPayload = Buffer.alloc(128, 7);
     const mailPresignRes = await fetch(`${BASE}/api/uploads/presign`, {
       method: 'POST',
       headers: cookieAuth,
-      body: JSON.stringify({ contentType: 'application/octet-stream', byteSize: stagedPayload.length, kind: 'mail-staging' }),
+      body: JSON.stringify({
+        contentType: 'application/octet-stream', byteSize: stagedPayload.length, kind: 'mail-staging',
+        certificateId: bobId, recipientEmail: 'bob@example.com',
+      }),
     });
     const mailPresign = await mailPresignRes.json().catch(() => ({}));
     const mailPutRes = await fetch(mailPresign.uploadUrl, {
@@ -673,19 +702,24 @@ try {
       `presign=${mailPresignRes.status} put=${mailPutRes.status}`);
   }
 
-  // 7f. Static public homepage keeps a tight scriptless CSP; static app shells
-  //     carry hardened security CSP without blocking static prerendering.
+  // 7f. Check both the static homepage and request-bound script policies.
   for (const page of ['/', '/login', '/dashboard', '/editor', '/admin', '/privacy', '/terms']) {
     const response = await fetch(`${BASE}${page}`, { redirect: 'manual' });
     const html = await response.text();
     const csp = response.headers.get('content-security-policy') ?? '';
     if (page === '/') {
-      check('static homepage blocks scripts and has no script tags',
+      check('static homepage allows only its external first-party script',
         response.status === 200 && csp.includes("script-src 'self'") && !/script-src[^;]*'unsafe-inline'/.test(csp) &&
         !/<script(?![^>]*\ssrc=)/.test(html), `csp=${csp}`);
       check('signed-out homepage describes WeCertify and links to sign-in and both policies',
         response.status === 200 && html.includes('WeCertify') && html.includes('Design, issue, and verify certificates') &&
         ['/login', '/privacy', '/terms'].every((path) => html.includes(`href="${path}"`)));
+    } else if (['/login', '/dashboard', '/editor', '/admin'].includes(page)) {
+      const nonce = /'nonce-([^']+)'/.exec(csp)?.[1];
+      const inlineScripts = [...html.matchAll(/<script(?![^>]*\ssrc=)[^>]*>/g)];
+      check(`nonce CSP: ${page} authorizes only its own inline scripts`,
+        response.status === 200 && Boolean(nonce) && !/script-src[^;]*'unsafe-inline'/.test(csp) &&
+        inlineScripts.length > 0 && inlineScripts.every(([tag]) => tag.includes(`nonce="${nonce}"`)));
     } else {
       check(`static CSP: ${page} serves 200 with hardened policy`,
         response.status === 200 && csp.includes("object-src 'none'") && csp.includes("frame-ancestors 'none'"),

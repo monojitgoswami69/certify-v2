@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { and, eq, sql } from 'drizzle-orm';
 import { db } from '../../../../../lib/db';
 import { certificates, events } from '../../../../../db/schema';
+import { isAllowedR2TemplateUrl } from '../../../../../lib/r2-storage';
 import type { IssuedEventDesign } from '../../../../../lib/event-design';
 import {
   getCachedLockedDesign,
@@ -104,7 +105,11 @@ export async function GET(
     const usePreview = !includeFull && Boolean(previewImageData);
     const selectedDataUrl = usePreview ? previewImageData! : imageData;
     const kind = usePreview ? 'preview' : 'full';
-    const imageUrl = selectedDataUrl.startsWith('https://')
+    const remote = selectedDataUrl.startsWith('https://');
+    if (remote && !isAllowedR2TemplateUrl(selectedDataUrl, kind)) {
+      return NextResponse.json({ status: 'not_found' }, { status: 404, headers: { 'Cache-Control': 'no-store' } });
+    }
+    const imageUrl = remote
       ? selectedDataUrl
       : buildSignedTemplateAssetUrl(cert.eventId, kind, templateImageDigestHex(selectedDataUrl));
 
@@ -128,7 +133,7 @@ export async function GET(
       { headers: { 'Cache-Control': 'no-store' } }
     );
   } catch (error) {
-    log.error('verify-asset', 'Failed to load certificate render spec', { requestId: requestIdOf(request), certId: normalizedId }, error);
+    log.error('verify-asset', 'Failed to load certificate render spec', { requestId: requestIdOf(request) }, error);
     return NextResponse.json(
       { status: 'error', detail: 'Verification temporarily unavailable' },
       { status: 500 }

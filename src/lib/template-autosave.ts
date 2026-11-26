@@ -33,18 +33,33 @@ interface EncodedPreview {
 }
 
 const MAX_INLINE_BYTES = 3 * 1024 * 1024;
+// Vercel counts the whole JSON body, including the base64 preview and roster.
+const MAX_INLINE_PREVIEW_DATA_LENGTH = 2 * 1024 * 1024;
 
 // Re-encoding a full-resolution template costs hundreds of ms and megabytes;
 // autosave runs on every register/generate/email pass with the same image, so
 // cache the encoding keyed by the source object's identity.
 const encodedImageCache = new WeakMap<object, Promise<EncodedImage>>();
 const encodedPreviewCache = new WeakMap<object, Promise<EncodedPreview | null>>();
+const fileHashCache = new WeakMap<Blob, Promise<string>>();
 
 async function sha256HexFromBuffer(buffer: ArrayBuffer): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', buffer);
   return Array.from(new Uint8Array(digest))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
+}
+
+export function hashTemplateFile(file: Blob): Promise<string> {
+  let hash = fileHashCache.get(file);
+  if (!hash) {
+    hash = file.arrayBuffer().then(sha256HexFromBuffer).catch((error) => {
+      fileHashCache.delete(file);
+      throw error;
+    });
+    fileHashCache.set(file, hash);
+  }
+  return hash;
 }
 
 function blobToDataUrl(blob: Blob): Promise<string> {
@@ -78,13 +93,16 @@ async function uploadBlobToR2(
     enabled?: boolean;
     uploadUrl?: string;
     publicUrl?: string;
+    uploadHeaders?: Record<string, string>;
   };
-  if (!presign.enabled || !presign.uploadUrl || !presign.publicUrl) return null;
+  if (!presign.enabled) return null;
+  if (!presign.uploadUrl || !presign.publicUrl) throw new Error('Template upload response is incomplete.');
 
   const putRes = await fetch(presign.uploadUrl, {
     method: 'PUT',
-    headers: { 'Content-Type': contentType },
+    headers: { ...presign.uploadHeaders, 'Content-Type': contentType },
     body: blob,
+    signal: AbortSignal.timeout(120_000),
   });
   if (!putRes.ok) {
     throw new Error(`Template upload to storage failed (${putRes.status})`);
@@ -117,7 +135,7 @@ async function encodeTemplateImage(
     if (!blob) throw new Error('Failed to encode template image');
   }
 
-  const hash = await sha256HexFromBuffer(await blob.arrayBuffer());
+  const hash = await hashTemplateFile(blob);
   const r2Url = await uploadBlobToR2(blob, contentType, 'full');
   if (r2Url) {
     return { dataUrl: r2Url, hash, width, height, byteSize: blob.size };
@@ -175,6 +193,7 @@ async function encodePreviewWebp(
     // Strict size-reduction guard: skip preview storage if the raw upload is already compact.
     if (previewBlob.size >= fullByteSize * PREVIEW_MIN_SAVINGS_RATIO) return null;
     const r2Url = await uploadBlobToR2(previewBlob, 'image/webp', 'preview').catch(() => null);
+    if (!r2Url && Math.ceil(previewBlob.size / 3) * 4 + 23 > MAX_INLINE_PREVIEW_DATA_LENGTH) return null;
     const dataUrl = r2Url ?? (await blobToDataUrl(previewBlob));
     return { dataUrl, width: targetWidth, height: targetHeight };
   } catch {
@@ -209,7 +228,7 @@ export async function prepareIssuedDesign(
   if (!templateImage) throw new Error('Upload a template before issuing certificates.');
 
   const { dataUrl, hash, width, height, byteSize } = await getCachedEncodedImage(templateImage, templateFile);
-  const preview = options?.includePreview
+  const preview = options?.includePreview && dataUrl.startsWith('https://')
     ? await getCachedEncodedPreview(templateImage, templateFile, width, height, byteSize)
     : null;
   return {

@@ -285,8 +285,8 @@ export async function generateCertificate(
     ...params,
     logicalWidth: naturalW,
     logicalHeight: naturalH,
-    targetWidth: naturalW * exportScale,
-    targetHeight: naturalH * exportScale,
+    targetWidth: Math.max(1, Math.floor(naturalW * exportScale)),
+    targetHeight: Math.max(1, Math.floor(naturalH * exportScale)),
   });
 
   const result: GeneratedCertificate = { filename };

@@ -6,6 +6,7 @@ import { mutationAllowed, forbiddenCsrfResponse } from '../../../lib/server-auth
 import { requireIssuer } from '../../../lib/issuer-auth';
 import { env } from '../../../lib/env';
 import { log, requestIdOf } from '../../../lib/logger';
+import { boundedBody, BodyTooLarge } from '../../../lib/bounded-body';
 
 import { isDraftState } from '../../../lib/draft-autosave';
 
@@ -46,11 +47,7 @@ export async function PUT(request: Request) {
   }
 
   try {
-    const raw = await request.text();
-    if (Buffer.byteLength(raw) > MAX_DRAFT_BYTES) {
-      return NextResponse.json({ detail: 'Draft too large to autosave' }, { status: 413 });
-    }
-    const body = JSON.parse(raw);
+    const body = await boundedBody(request, MAX_DRAFT_BYTES).json();
     if (!isDraftState(body?.state)) {
       return NextResponse.json({ detail: 'Invalid workspace draft' }, { status: 400 });
     }
@@ -67,6 +64,9 @@ export async function PUT(request: Request) {
       });
     return NextResponse.json({ success: true });
   } catch (error) {
+    if (error instanceof BodyTooLarge) {
+      return NextResponse.json({ detail: 'Draft too large to autosave' }, { status: 413 });
+    }
     if (error instanceof SyntaxError) {
       return NextResponse.json({ detail: 'Invalid workspace draft' }, { status: 400 });
     }
