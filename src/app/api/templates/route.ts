@@ -7,13 +7,17 @@ import { templates } from '../../../db/schema';
 import { requireIssuer } from '../../../lib/issuer-auth';
 import { env } from '../../../lib/env';
 import { checkRateLimit } from '../../../lib/rate-limit';
-import { isWithinImagePixelBudget, parseImageDataUrl } from '../../../lib/image-validation';
+import {
+  isWithinImagePixelBudget,
+  MAX_TEMPLATE_BYTES,
+  MAX_TEMPLATE_DATA_URL_LENGTH,
+  parseImageDataUrl,
+} from '../../../lib/image-validation';
 import { validateEventLayout } from '../../../lib/event-design-validation';
 import { snapshotTemplateVersion } from '../../../lib/template-versions';
 import { log, requestIdOf } from '../../../lib/logger';
 
-const MAX_IMAGE_DATA_LENGTH = 20 * 1024 * 1024;
-/** Template saves carry multi-MB images; cap per-account save frequency. */
+/** Template saves carry up to 3 MB images; cap per-account save frequency. */
 const SAVE_RATE_LIMIT = 30; // saves per minute
 
 export async function GET(request: Request) {
@@ -84,20 +88,26 @@ export async function POST(request: Request) {
       );
     }
 
-    if (typeof imageData !== 'string' || imageData.length > MAX_IMAGE_DATA_LENGTH) {
+    if (typeof imageData !== 'string' || imageData.length > MAX_TEMPLATE_DATA_URL_LENGTH) {
       return NextResponse.json(
-        { detail: 'Template image is too large (max ~15 MB)' },
+        { detail: 'Template image is too large (max 3 MB)' },
         { status: 413 }
       );
     }
 
-    // Data-URL shape, decoded magic bytes, and pixel budget must all check out,
-    // so a mislabeled or OOM payload never reaches the templates table.
+    // Data-URL shape, decoded magic bytes, byte budget, and pixel budget must all check out,
+    // so a mislabeled, oversized, or OOM payload never reaches the templates table.
     const parsedImage = parseImageDataUrl(imageData);
     if (!parsedImage) {
       return NextResponse.json(
         { detail: 'Valid template image data (PNG, JPEG or WebP within dimension bounds) is required' },
         { status: 400 }
+      );
+    }
+    if (parsedImage.bytes.byteLength > MAX_TEMPLATE_BYTES) {
+      return NextResponse.json(
+        { detail: 'Template image is too large (max 3 MB)' },
+        { status: 413 }
       );
     }
 

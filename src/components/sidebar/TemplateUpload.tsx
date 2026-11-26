@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect } from 'react';
 import { Upload } from 'lucide-react';
+import { MAX_IMAGE_EDGE, MAX_IMAGE_PIXELS, MAX_TEMPLATE_BYTES } from '../../lib/image-validation';
 import { useAppStore } from '../../store/useAppStore';
 
 function createSampleTemplate(): Promise<{ file: File; img: HTMLImageElement; info: string }> {
@@ -79,9 +80,6 @@ function createSampleTemplate(): Promise<{ file: File; img: HTMLImageElement; in
 }
 
 const ALLOWED_TEMPLATE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
-const MAX_TEMPLATE_BYTES = 15 * 1024 * 1024;
-const MAX_TEMPLATE_EDGE = 12_000;
-const MAX_TEMPLATE_PIXELS = 48_000_000;
 
 export function TemplateUpload() {
   const { setTemplate, setError } = useAppStore();
@@ -97,7 +95,7 @@ export function TemplateUpload() {
         return;
       }
       if (file.size > MAX_TEMPLATE_BYTES) {
-        setError('Template image is too large (max 15 MB).');
+        setError('Template image is too large (max 3 MB).');
         return;
       }
 
@@ -107,9 +105,9 @@ export function TemplateUpload() {
         URL.revokeObjectURL(objectUrl);
         const w = img.naturalWidth || img.width;
         const h = img.naturalHeight || img.height;
-        if (w <= 0 || h <= 0 || w > MAX_TEMPLATE_EDGE || h > MAX_TEMPLATE_EDGE || w * h > MAX_TEMPLATE_PIXELS) {
+        if (w <= 0 || h <= 0 || w > MAX_IMAGE_EDGE || h > MAX_IMAGE_EDGE || w * h > MAX_IMAGE_PIXELS) {
           setError(
-            `Template dimensions (${w}×${h}) exceed the safe limit of ${MAX_TEMPLATE_EDGE.toLocaleString()}px per side or 48MP.`
+            `Template dimensions (${w}×${h}) exceed the safe limit of ${MAX_IMAGE_EDGE.toLocaleString()}px per side or 48MP.`
           );
           return;
         }
@@ -173,7 +171,7 @@ export function TemplateUpload() {
         <p className="text-sm text-slate-600">
           Drag & drop or <span className="text-primary-600 font-medium">browse</span>
         </p>
-        <p className="text-xs text-slate-400 mt-1">Supports JPG, PNG, WebP</p>
+        <p className="text-xs text-slate-400 mt-1">Supports JPG, PNG, WebP (max 3 MB)</p>
       </div>
     </label>
   );

@@ -3,6 +3,7 @@ import {
   extractImageDimensions,
   isWithinImagePixelBudget,
   MAX_IMAGE_EDGE,
+  MAX_TEMPLATE_BYTES,
   parseImageDataUrl,
 } from './image-validation';
 import { readIssuedDesign } from './event-design-validation';
@@ -199,6 +200,26 @@ describe('parseImageDataUrl & dimension limits', () => {
         previewHeight: 1000,
         width: 2000,
         height: 4000,
+        layoutConfig: { boxes: [] },
+      })
+    ).toBeNull();
+  });
+
+  it('rejects templates exceeding the strict 3 MB raw byte cap in readIssuedDesign', () => {
+    const oversizedBuf = new Uint8Array(MAX_TEMPLATE_BYTES + 16);
+    oversizedBuf.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+    const view = new DataView(oversizedBuf.buffer);
+    view.setUint32(8, 13, false);
+    oversizedBuf.set([0x49, 0x48, 0x44, 0x52], 12);
+    view.setUint32(16, 2000, false);
+    view.setUint32(20, 1414, false);
+    const oversizedUrl = `data:image/png;base64,${Buffer.from(oversizedBuf).toString('base64')}`;
+
+    expect(
+      readIssuedDesign({
+        imageData: oversizedUrl,
+        width: 2000,
+        height: 1414,
         layoutConfig: { boxes: [] },
       })
     ).toBeNull();

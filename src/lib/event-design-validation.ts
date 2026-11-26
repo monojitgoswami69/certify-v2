@@ -1,10 +1,14 @@
 import type { EventLayout, IssuedEventDesign } from './event-design';
-import { isWithinImagePixelBudget, parseImageDataUrl } from './image-validation';
+import {
+  isWithinImagePixelBudget,
+  MAX_TEMPLATE_BYTES,
+  MAX_TEMPLATE_DATA_URL_LENGTH,
+  parseImageDataUrl,
+} from './image-validation';
 
 const MAX_LAYOUT_JSON_LENGTH = 1024 * 1024;
 const MAX_LAYOUT_IMAGES = 30;
 const MAX_DECORATIVE_IMAGE_LENGTH = 3 * 1024 * 1024;
-const MAX_IMAGE_DATA_LENGTH = 20 * 1024 * 1024;
 const MAX_PREVIEW_IMAGE_EDGE = 1400;
 const MAX_PREVIEW_DATA_LENGTH = 2 * 1024 * 1024;
 
@@ -107,13 +111,17 @@ export function readIssuedDesign(input: unknown): IssuedEventDesign | null {
     typeof height !== 'number' ||
     !isWithinImagePixelBudget(width, height) ||
     typeof imageData !== 'string' ||
-    imageData.length > MAX_IMAGE_DATA_LENGTH
+    imageData.length > MAX_TEMPLATE_DATA_URL_LENGTH
   ) {
     return null;
   }
 
   const parsedImage = parseImageDataUrl(imageData);
-  if (!parsedImage || !matchesImageDimensions(parsedImage.dimensions, width, height)) {
+  if (
+    !parsedImage ||
+    parsedImage.bytes.byteLength > MAX_TEMPLATE_BYTES ||
+    !matchesImageDimensions(parsedImage.dimensions, width, height)
+  ) {
     return null;
   }
 

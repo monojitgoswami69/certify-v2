@@ -12,6 +12,10 @@ export type SupportedImageType = 'png' | 'jpeg' | 'webp';
 /** Bounded pixel budget: covers 8K+ print templates while preventing OOM bombs. */
 export const MAX_IMAGE_EDGE = 12_000;
 export const MAX_IMAGE_PIXELS = 48_000_000;
+/** Strict 3 MB raw template size ceiling shared across upload UI and API routes. */
+export const MAX_TEMPLATE_BYTES = 3 * 1024 * 1024;
+/** Base64 expansion (~4/3) plus data-URL header headroom for a 3 MB image. */
+export const MAX_TEMPLATE_DATA_URL_LENGTH = Math.ceil((MAX_TEMPLATE_BYTES * 4) / 3) + 128;
 
 const IMAGE_DATA_URL_RE = /^data:image\/(png|jpeg|jpg|webp);base64,([A-Za-z0-9+/=]+)$/;
 
