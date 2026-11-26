@@ -24,16 +24,31 @@ const nextConfig = {
     minimumCacheTTL: 31536000,
   },
   async rewrites() {
-    return [
-      { source: '/privacy-policy', destination: '/privacy' },
-      { source: '/terms-of-service', destination: '/terms' },
-    ];
+    return {
+      beforeFiles: [
+        { source: '/', destination: '/home.html' },
+      ],
+      afterFiles: [
+        { source: '/privacy-policy', destination: '/privacy' },
+        { source: '/terms-of-service', destination: '/terms' },
+      ],
+      fallback: [],
+    };
   },
   async headers() {
     return [
       {
         source: '/(.*)',
         headers: securityHeaders,
+      },
+      {
+        source: '/',
+        headers: [
+          {
+            key: 'Content-Security-Policy',
+            value: "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+          },
+        ],
       },
     ];
   },

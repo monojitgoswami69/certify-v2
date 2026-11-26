@@ -548,20 +548,22 @@ try {
   check('admin API forbidden again after demotion (403)', adminAfterDemote.status === 403,
     `status=${adminAfterDemote.status}`);
 
-  // 7f. Nonce regression sweep: every app page must be server-rendered per
-  //     request so the proxy's nonce CSP applies to its inline scripts. A page
-  //     that forgets connection() prerenders static HTML whose inline scripts
-  //     the CSP blocks (silent white-screen).
+  // 7f. Static public homepage has no scripts and uses a restrictive CSP.
+  //     Interactive app pages retain the per-request nonce CSP.
   for (const page of ['/', '/login', '/dashboard', '/editor', '/admin', '/privacy', '/terms']) {
     const response = await fetch(`${BASE}${page}`, { redirect: 'manual' });
     const html = await response.text();
     const inline = [...html.matchAll(/<script(?![^>]*\ssrc=)(?![^>]*\snonce=)[^>]*>/g)].length;
     const nonced = (html.match(/nonce="/g) || []).length;
-    check(`nonce CSP: ${page} has no un-nonce'd inline scripts`, inline === 0, `inline=${inline} nonced=${nonced}`);
     if (page === '/') {
+      check('static homepage blocks scripts and has no script tags',
+        response.status === 200 && response.headers.get('content-security-policy')?.includes("script-src 'self'") &&
+        !/<script(?![^>]*\ssrc=)/.test(html), `csp=${response.headers.get('content-security-policy')}`);
       check('signed-out homepage describes WeCertify and links to sign-in and both policies',
         response.status === 200 && html.includes('WeCertify') && html.includes('Design, issue, and verify certificates') &&
         ['/login', '/privacy', '/terms'].every((path) => html.includes(`href="${path}"`)));
+    } else {
+      check(`nonce CSP: ${page} has no un-nonce'd inline scripts`, inline === 0, `inline=${inline} nonced=${nonced}`);
     }
     if (page === '/privacy') {
       check('public privacy policy discloses the Gmail scope and Limited Use',
