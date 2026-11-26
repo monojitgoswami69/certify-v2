@@ -654,6 +654,23 @@ try {
       r2Put.ok && r2Get.status === 200 && r2GotBytes.equals(pngBytes) &&
       Boolean(r2Get.headers.get('access-control-allow-origin')),
       `put=${r2Put.status} get=${r2Get.status} acao=${r2Get.headers.get('access-control-allow-origin')}`);
+
+    const stagedPayload = Buffer.alloc(128, 7);
+    const mailPresignRes = await fetch(`${BASE}/api/uploads/presign`, {
+      method: 'POST',
+      headers: cookieAuth,
+      body: JSON.stringify({ contentType: 'application/octet-stream', byteSize: stagedPayload.length, kind: 'mail-staging' }),
+    });
+    const mailPresign = await mailPresignRes.json().catch(() => ({}));
+    const mailPutRes = await fetch(mailPresign.uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: stagedPayload,
+    });
+    check('mail-staging presign and direct-to-R2 PUT succeed',
+      mailPresignRes.status === 200 && mailPresign.enabled && mailPutRes.status === 200 &&
+      typeof mailPresign.key === 'string' && mailPresign.key.startsWith('mail-staging/'),
+      `presign=${mailPresignRes.status} put=${mailPutRes.status}`);
   }
 
   // 7f. Static public homepage keeps a tight scriptless CSP; static app shells

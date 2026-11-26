@@ -159,4 +159,71 @@ describe('certificate email sender and quota', () => {
     expect((await send({ version: previousVersion })).status).toBe(200);
     expect(claim).toHaveBeenCalledWith('test-user', certificateId, recipient, previousVersion);
   });
+
+  it('loads oversized attachments via user-owned R2 staged_key and always deletes the staged blob', async () => {
+    const { packMailAttachments } = await import('../../../lib/mail-staging');
+    const { createPresignedMailStagingUpload } = await import('../../../lib/r2-storage');
+    process.env.R2_ACCOUNT_ID = 'acc123';
+    process.env.R2_BUCKET = 'wecertify';
+    process.env.R2_PUBLIC_BASE_URL = 'https://assets.wecertify.tech';
+    process.env.R2_ACCESS_KEY_ID = 'key123';
+    process.env.R2_SECRET_ACCESS_KEY = 'secret123';
+
+    const packed = await packMailAttachments([
+      { slot: 'png', blob: new Blob([Uint8Array.from([137, 80, 78, 71])], { type: 'image/png' }) },
+      { slot: 'pdf', blob: new Blob([Uint8Array.from([37, 80, 68, 70])], { type: 'application/pdf' }) },
+    ]);
+    const packedBytes = new Uint8Array(await packed.arrayBuffer());
+    const staged = createPresignedMailStagingUpload({ userId: 'test-user', contentLength: packedBytes.byteLength });
+
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes('r2.cloudflarestorage.com') && (!init?.method || init.method === 'GET')) {
+        return new Response(packedBytes, { status: 200, headers: { 'Content-Length': String(packedBytes.byteLength) } });
+      }
+      if (url.includes('r2.cloudflarestorage.com') && init?.method === 'DELETE') {
+        return new Response(null, { status: 204 });
+      }
+      if (url.includes('gmail.googleapis.com')) {
+        return Response.json({ id: 'staged-msg-id' });
+      }
+      return new Response('unexpected', { status: 500 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await POST(new Request('http://localhost:3000/api/send-email-v2', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Certify-Request': '1' },
+      body: JSON.stringify({
+        certificate_id: certificateId,
+        recipient_email: recipient,
+        email_subject: 'Heavy Certificate',
+        email_body_plain: 'Attached',
+        filename: 'Alice_Cert',
+        staged_key: staged.key,
+      }),
+    }));
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[0][0]).toContain(`/${staged.key}`);
+    expect(String(fetchMock.mock.calls[1][0])).toContain('gmail.googleapis.com');
+    expect(String(fetchMock.mock.calls[1][1]?.body)).toContain('Alice_Cert.png');
+    expect(String(fetchMock.mock.calls[1][1]?.body)).toContain('Alice_Cert.pdf');
+    expect(fetchMock.mock.calls[2][1]?.method).toBe('DELETE');
+
+    // Cross-user staged_key must be rejected cleanly with 400 before any R2 calls
+    fetchMock.mockClear();
+    const otherUser = createPresignedMailStagingUpload({ userId: 'other-user', contentLength: 64 });
+    const badRes = await POST(new Request('http://localhost:3000/api/send-email-v2', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Certify-Request': '1' },
+      body: JSON.stringify({
+        certificate_id: certificateId,
+        recipient_email: recipient,
+        email_subject: 'Steal attempt',
+        staged_key: otherUser.key,
+      }),
+    }));
+    expect(badRes.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

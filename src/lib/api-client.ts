@@ -1,6 +1,7 @@
 import type { IssuedEventDesign } from './event-design';
 import type { EmailSettings, PersistedMailStatus } from '../types';
 import { ISSUANCE_ACCESS_CHANGED_EVENT, ISSUANCE_REQUIRED_HEADER } from './access-role';
+import { INLINE_MAIL_BODY_THRESHOLD_BYTES, packMailAttachments, type MailAttachmentSlot } from './mail-staging';
 
 /**
  * Authenticated browser requests using the session cookie.
@@ -151,29 +152,94 @@ export interface SendEmailResult {
 }
 
 /**
- * Sends a certificate email. Uses multipart/form-data with raw Blob
- * attachments to avoid ~33% base64 bandwidth inflation. A
- * `reconnect_required` response (HTTP 401) is returned softly instead of
- * throwing so the caller can trigger a reconnection flow.
+ * Sends a certificate email. Uses direct multipart/form-data when compact
+ * (<= 3.5 MB), or automatically stages oversized attachments (up to 24 MB)
+ * in ephemeral Cloudflare R2 storage so bulk lossless PNG+PDF sends never hit
+ * Vercel's 4.5 MB request payload ceiling.
  */
 export async function sendEmailV2(params: SendEmailV2Params): Promise<SendEmailResult> {
-  const form = new FormData();
-  form.append('certificate_id', params.certificateId);
-  if (params.resendVersion) form.append('resend_version', params.resendVersion);
-  form.append('recipient_email', params.recipientEmail);
-  form.append('email_subject', params.emailSubject);
-  form.append('email_body_plain', params.emailBodyPlain);
-  form.append('email_body_html', params.emailBodyHtml);
-  form.append('filename', params.filename);
-  if (params.jpgBlob) form.append('jpg', params.jpgBlob, `${params.filename}.jpg`);
-  if (params.pngBlob) form.append('png', params.pngBlob, `${params.filename}.png`);
-  if (params.pdfBlob) form.append('pdf', params.pdfBlob, `${params.filename}.pdf`);
+  const attachmentItems: Array<{ slot: MailAttachmentSlot; blob: Blob }> = [];
+  if (params.jpgBlob && params.jpgBlob.size > 0) attachmentItems.push({ slot: 'jpg', blob: params.jpgBlob });
+  if (params.pngBlob && params.pngBlob.size > 0) attachmentItems.push({ slot: 'png', blob: params.pngBlob });
+  if (params.pdfBlob && params.pdfBlob.size > 0) attachmentItems.push({ slot: 'pdf', blob: params.pdfBlob });
+
+  const totalAttachmentBytes = attachmentItems.reduce((sum, item) => sum + item.blob.size, 0);
+  const textBytes =
+    params.emailSubject.length +
+    params.emailBodyPlain.length +
+    params.emailBodyHtml.length;
 
   let response: Response;
-  try {
-    response = await apiFetch(`${API_BASE}/send-email-v2`, { method: 'POST', body: form });
-  } catch {
-    throw new EmailUnconfirmedError(true);
+  if (totalAttachmentBytes + textBytes > INLINE_MAIL_BODY_THRESHOLD_BYTES && attachmentItems.length > 0) {
+    const packed = await packMailAttachments(attachmentItems);
+    const presignRes = await apiFetch(`${API_BASE}/uploads/presign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contentType: 'application/octet-stream',
+        byteSize: packed.size,
+        kind: 'mail-staging',
+      }),
+    });
+    if (!presignRes.ok) {
+      const errBody = await presignRes.json().catch(() => null);
+      throw new Error(errBody?.detail || 'Failed to prepare oversized email attachments.');
+    }
+    const presign = (await presignRes.json()) as {
+      enabled?: boolean;
+      uploadUrl?: string;
+      key?: string;
+    };
+    if (!presign.enabled || !presign.uploadUrl || !presign.key) {
+      const mb = (packed.size / (1024 * 1024)).toFixed(1);
+      throw new Error(`Email attachments (${mb} MB) exceed the 4.5 MB server upload limit.`);
+    }
+
+    const putRes = await fetch(presign.uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: packed,
+    });
+    if (!putRes.ok) {
+      throw new Error(`Attachment upload failed (${putRes.status}). Please retry.`);
+    }
+
+    try {
+      response = await apiFetch(`${API_BASE}/send-email-v2`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          certificate_id: params.certificateId,
+          ...(params.resendVersion ? { resend_version: params.resendVersion } : {}),
+          recipient_email: params.recipientEmail,
+          email_subject: params.emailSubject,
+          email_body_plain: params.emailBodyPlain,
+          email_body_html: params.emailBodyHtml,
+          filename: params.filename,
+          staged_key: presign.key,
+        }),
+      });
+    } catch {
+      throw new EmailUnconfirmedError(true);
+    }
+  } else {
+    const form = new FormData();
+    form.append('certificate_id', params.certificateId);
+    if (params.resendVersion) form.append('resend_version', params.resendVersion);
+    form.append('recipient_email', params.recipientEmail);
+    form.append('email_subject', params.emailSubject);
+    form.append('email_body_plain', params.emailBodyPlain);
+    form.append('email_body_html', params.emailBodyHtml);
+    form.append('filename', params.filename);
+    if (params.jpgBlob) form.append('jpg', params.jpgBlob, `${params.filename}.jpg`);
+    if (params.pngBlob) form.append('png', params.pngBlob, `${params.filename}.png`);
+    if (params.pdfBlob) form.append('pdf', params.pdfBlob, `${params.filename}.pdf`);
+
+    try {
+      response = await apiFetch(`${API_BASE}/send-email-v2`, { method: 'POST', body: form });
+    } catch {
+      throw new EmailUnconfirmedError(true);
+    }
   }
 
   const data = await response.json().catch(() => null);
@@ -182,6 +248,9 @@ export async function sendEmailV2(params: SendEmailV2Params): Promise<SendEmailR
   }
 
   if (!response.ok) {
+    if (response.status === 413) {
+      throw new Error(data?.detail || 'Email attachments exceed the 4.5 MB server upload limit.');
+    }
     if (data?.status === 'delivery_blocked') throw new EmailDeliveryBlockedError(data.detail, data.deliveryStatus);
     if (response.headers.get(ISSUANCE_REQUIRED_HEADER) === '1') {
       throw new IssuanceAccessRequiredError(data?.detail || 'Certificate issuance access is required');

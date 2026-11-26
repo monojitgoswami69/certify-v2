@@ -10,6 +10,8 @@ import { canClaimMail, claimMail, finishMail, getMailTarget } from '../../../lib
 import { isValidCertificateId } from '../../../lib/verification';
 import type { PersistedMailStatus } from '../../../types';
 import { singleRecipientEmail } from '../../../lib/mail-preferences';
+import { MAX_STAGED_MAIL_BYTES, unpackMailAttachments } from '../../../lib/mail-staging';
+import { createSignedR2ObjectUrl, isAllowedMailStagingKey } from '../../../lib/r2-storage';
 
 // =========================================================================
 // Shared MIME builder (streamTransport never opens a socket, so a single
@@ -120,6 +122,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ detail: 'Gmail sending is not configured. Contact your administrator.' }, { status: 503 });
   }
 
+  let stagedKey: string | null = null;
+
   try {
     let certificateId: string;
     let resendVersion: string;
@@ -155,7 +159,6 @@ export async function POST(request: Request) {
       const pdf = await readAttachment(form.get('pdf'), `${filename}.pdf`);
       if (pdf) attachments.push(pdf);
     } else {
-      // Legacy JSON + base64 fallback (kept for backward compatibility).
       const body = await payload.json();
       if (!body || typeof body !== 'object') throw new SyntaxError('Invalid email payload');
       certificateId = String(body.certificate_id || '');
@@ -167,23 +170,30 @@ export async function POST(request: Request) {
       filename = sanitizeAttachmentBaseName(String(body.filename || 'certificate'));
 
       attachments = [];
-      if (body.jpg_base64 || body.jpeg_base64) {
-        attachments.push({
-          filename: `${filename}.jpg`,
-          content: Buffer.from(String(body.jpg_base64 || body.jpeg_base64).replace(/^data:image\/\w+;base64,/, ''), 'base64'),
-        });
-      }
-      if (body.png_base64) {
-        attachments.push({
-          filename: `${filename}.png`,
-          content: Buffer.from(String(body.png_base64).replace(/^data:image\/\w+;base64,/, ''), 'base64'),
-        });
-      }
-      if (body.pdf_base64) {
-        attachments.push({
-          filename: `${filename}.pdf`,
-          content: Buffer.from(String(body.pdf_base64).replace(/^data:application\/pdf;base64,/, ''), 'base64'),
-        });
+      if (body.staged_key !== undefined) {
+        if (!isAllowedMailStagingKey(body.staged_key, user.userId)) {
+          return NextResponse.json({ detail: 'Invalid staged email attachment reference' }, { status: 400 });
+        }
+        stagedKey = body.staged_key;
+      } else {
+        if (body.jpg_base64 || body.jpeg_base64) {
+          attachments.push({
+            filename: `${filename}.jpg`,
+            content: Buffer.from(String(body.jpg_base64 || body.jpeg_base64).replace(/^data:image\/\w+;base64,/, ''), 'base64'),
+          });
+        }
+        if (body.png_base64) {
+          attachments.push({
+            filename: `${filename}.png`,
+            content: Buffer.from(String(body.png_base64).replace(/^data:image\/\w+;base64,/, ''), 'base64'),
+          });
+        }
+        if (body.pdf_base64) {
+          attachments.push({
+            filename: `${filename}.pdf`,
+            content: Buffer.from(String(body.pdf_base64).replace(/^data:application\/pdf;base64,/, ''), 'base64'),
+          });
+        }
       }
     }
 
@@ -191,7 +201,7 @@ export async function POST(request: Request) {
     if (!isValidCertificateId(certificateId) || (resendVersion && !isValidCertificateId(resendVersion))) {
       return NextResponse.json({ detail: 'A valid issued certificate ID is required.' }, { status: 400 });
     }
-    if (!recipientEmail || attachments.length === 0) {
+    if (!recipientEmail || (!stagedKey && attachments.length === 0)) {
       return NextResponse.json(
         { detail: 'Recipient email and at least one attachment are required' },
         { status: 400 }
@@ -207,6 +217,29 @@ export async function POST(request: Request) {
     const resend = resendVersion || undefined;
     if (!target?.email || !canClaimMail(target, resend)) return blockedDelivery(target?.status);
     recipientEmail = target.email.trim();
+
+    if (stagedKey) {
+      const stagedRes = await fetch(createSignedR2ObjectUrl('GET', stagedKey), {
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!stagedRes.ok) {
+        return NextResponse.json(
+          { detail: 'Staged email attachments expired or could not be loaded.' },
+          { status: 400 }
+        );
+      }
+      const lenHeader = Number(stagedRes.headers.get('content-length') || '0');
+      if (lenHeader > MAX_STAGED_MAIL_BYTES) throw new RequestTooLarge();
+      const raw = new Uint8Array(await stagedRes.arrayBuffer());
+      if (raw.byteLength > MAX_STAGED_MAIL_BYTES) throw new RequestTooLarge();
+      const unpacked = unpackMailAttachments(raw);
+      for (const item of unpacked) {
+        attachments.push({ filename: `${filename}.${item.slot}`, content: item.data });
+      }
+      if (attachments.length === 0) {
+        return NextResponse.json({ detail: 'At least one attachment is required' }, { status: 400 });
+      }
+    }
 
     const totalAttachmentBytes = attachments.reduce((sum, a) => sum + a.content.length, 0);
     if (totalAttachmentBytes > MAX_ATTACHMENT_BYTES) {
@@ -319,5 +352,11 @@ export async function POST(request: Request) {
     }
     log.error('email', 'Email request failed', { requestId: requestIdOf(request), userId: user.userId });
     return NextResponse.json({ detail: 'The email could not be prepared for Gmail.' }, { status: 500 });
+  } finally {
+    if (stagedKey) {
+      await fetch(createSignedR2ObjectUrl('DELETE', stagedKey), { method: 'DELETE' }).catch((err) => {
+        log.warn('email', 'Failed to delete staged R2 attachment', { requestId: requestIdOf(request), userId: user.userId }, err);
+      });
+    }
   }
 }

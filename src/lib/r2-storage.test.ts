@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  createPresignedMailStagingUpload,
   createPresignedTemplateUpload,
+  createSignedR2ObjectUrl,
+  isAllowedMailStagingKey,
   isAllowedR2TemplateUrl,
   isR2Configured,
 } from './r2-storage';
@@ -84,5 +87,26 @@ describe('r2-storage presigned URLs and validation', () => {
         layoutConfig: { boxes: [] },
       })
     ).toBeNull();
+  });
+
+  it('scopes staged mail keys strictly to their creator and signs GET/DELETE URLs', () => {
+    const staged = createPresignedMailStagingUpload({
+      userId: 'user-alice',
+      contentLength: 4_500_000,
+    });
+    expect(staged.key).toMatch(/^mail-staging\/[0-9a-f]{24}\/[0-9a-f]{32}\.bin$/);
+    expect(isAllowedMailStagingKey(staged.key, 'user-alice')).toBe(true);
+    expect(isAllowedMailStagingKey(staged.key, 'user-bob')).toBe(false);
+    expect(isAllowedMailStagingKey('../secret.bin', 'user-alice')).toBe(false);
+
+    const parsedPut = new URL(staged.uploadUrl);
+    expect(parsedPut.searchParams.get('X-Amz-SignedHeaders')).toBe('content-length;content-type;host');
+
+    const getUrl = new URL(createSignedR2ObjectUrl('GET', staged.key));
+    expect(getUrl.pathname).toBe(`/wecertify/${staged.key}`);
+    expect(getUrl.searchParams.get('X-Amz-SignedHeaders')).toBe('host');
+
+    const delUrl = new URL(createSignedR2ObjectUrl('DELETE', staged.key));
+    expect(delUrl.pathname).toBe(`/wecertify/${staged.key}`);
   });
 });

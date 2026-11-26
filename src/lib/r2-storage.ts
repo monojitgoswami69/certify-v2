@@ -1,11 +1,11 @@
 import crypto from 'node:crypto';
 import { env } from './env';
 
-export type TemplateUploadMime = 'image/png' | 'image/jpeg' | 'image/webp';
-export type TemplateUploadKind = 'full' | 'preview';
+export type TemplateUploadMime = 'image/png' | 'image/jpeg' | 'image/webp' | 'application/octet-stream';
+export type TemplateUploadKind = 'full' | 'preview' | 'mail-staging';
 
 const PRESIGN_EXPIRY_SECONDS = 120;
-const EXTENSION_BY_MIME: Record<TemplateUploadMime, string> = {
+const EXTENSION_BY_MIME: Record<'image/png' | 'image/jpeg' | 'image/webp', string> = {
   'image/png': 'png',
   'image/jpeg': 'jpg',
   'image/webp': 'webp',
@@ -24,6 +24,10 @@ function hmacSha256(key: crypto.BinaryLike, data: string): Buffer {
 
 function sha256Hex(data: string): string {
   return crypto.createHash('sha256').update(data, 'utf8').digest('hex');
+}
+
+function mailStagingOwnerPrefix(userId: string): string {
+  return sha256Hex(userId).slice(0, 24);
 }
 
 export function isR2Configured(): boolean {
@@ -50,7 +54,7 @@ const R2_PREVIEW_PATH_RE = /\/designs\/[0-9a-f-]{36}\/[0-9a-f]{32}-preview\.webp
  */
 export function isAllowedR2TemplateUrl(
   value: unknown,
-  kind?: TemplateUploadKind
+  kind?: 'full' | 'preview'
 ): boolean {
   if (typeof value !== 'string' || value.length === 0 || value.length > 512) return false;
   const baseUrl = getR2PublicBaseUrl();
@@ -78,38 +82,36 @@ export function isAllowedR2TemplateUrl(
   }
 }
 
-export function createPresignedTemplateUpload({
-  contentType,
-  contentLength,
-  kind = 'full',
+/**
+ * Verifies a private R2 staged mail key belongs strictly to `userId`.
+ */
+export function isAllowedMailStagingKey(value: unknown, userId: string): value is string {
+  if (typeof value !== 'string' || !userId) return false;
+  const owner = mailStagingOwnerPrefix(userId);
+  return new RegExp(`^mail-staging/${owner}/[0-9a-f]{32}\\.bin$`).test(value);
+}
+
+function signR2S3Request({
+  method,
+  key,
+  signedExtraHeaders = {},
+  expiresSeconds = PRESIGN_EXPIRY_SECONDS,
   now = new Date(),
 }: {
-  contentType: TemplateUploadMime;
-  contentLength: number;
-  kind?: TemplateUploadKind;
-  now?: Date;
-}): {
-  uploadUrl: string;
-  publicUrl: string;
+  method: 'GET' | 'PUT' | 'DELETE';
   key: string;
-  contentType: TemplateUploadMime;
-} {
+  signedExtraHeaders?: Record<string, string>;
+  expiresSeconds?: number;
+  now?: Date;
+}): string {
   if (!isR2Configured()) {
     throw new Error('Cloudflare R2 storage is not configured');
-  }
-  if (!Number.isSafeInteger(contentLength) || contentLength <= 0) {
-    throw new Error('Invalid contentLength for presigned R2 upload');
   }
 
   const accountId = env.R2_ACCOUNT_ID!;
   const bucket = env.R2_BUCKET!;
   const accessKeyId = env.R2_ACCESS_KEY_ID!;
   const secretAccessKey = env.R2_SECRET_ACCESS_KEY!;
-  const publicBase = getR2PublicBaseUrl()!;
-
-  const ext = EXTENSION_BY_MIME[contentType];
-  const suffix = kind === 'preview' ? '-preview' : '';
-  const key = `designs/${crypto.randomUUID()}/${crypto.randomBytes(16).toString('hex')}${suffix}.${ext}`;
 
   const host = `${accountId}.r2.cloudflarestorage.com`;
   const canonicalUri = `/${rfc3986Encode(bucket)}/${key.split('/').map(rfc3986Encode).join('/')}`;
@@ -118,26 +120,30 @@ export function createPresignedTemplateUpload({
   const dateStamp = iso.slice(0, 8);
   const credentialScope = `${dateStamp}/auto/s3/aws4_request`;
 
+  const headers: Record<string, string> = { ...signedExtraHeaders, host };
+  const sortedHeaderNames = Object.keys(headers).sort();
+  const signedHeaders = sortedHeaderNames.join(';');
+  const canonicalHeaders = sortedHeaderNames.map((name) => `${name}:${headers[name]}\n`).join('');
+
   const queryParams: Array<[string, string]> = [
     ['X-Amz-Algorithm', 'AWS4-HMAC-SHA256'],
     ['X-Amz-Content-Sha256', 'UNSIGNED-PAYLOAD'],
     ['X-Amz-Credential', `${accessKeyId}/${credentialScope}`],
     ['X-Amz-Date', iso],
-    ['X-Amz-Expires', String(PRESIGN_EXPIRY_SECONDS)],
-    ['X-Amz-SignedHeaders', 'content-length;content-type;host'],
+    ['X-Amz-Expires', String(expiresSeconds)],
+    ['X-Amz-SignedHeaders', signedHeaders],
   ];
   queryParams.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   const canonicalQuery = queryParams
     .map(([k, v]) => `${rfc3986Encode(k)}=${rfc3986Encode(v)}`)
     .join('&');
 
-  const canonicalHeaders = `content-length:${contentLength}\ncontent-type:${contentType}\nhost:${host}\n`;
   const canonicalRequest = [
-    'PUT',
+    method,
     canonicalUri,
     canonicalQuery,
     canonicalHeaders,
-    'content-length;content-type;host',
+    signedHeaders,
     'UNSIGNED-PAYLOAD',
   ].join('\n');
 
@@ -154,10 +160,91 @@ export function createPresignedTemplateUpload({
   const kSigning = hmacSha256(kService, 'aws4_request');
   const signature = hmacSha256(kSigning, stringToSign).toString('hex');
 
+  return `https://${host}${canonicalUri}?${canonicalQuery}&X-Amz-Signature=${signature}`;
+}
+
+export function createPresignedTemplateUpload({
+  contentType,
+  contentLength,
+  kind = 'full',
+  now = new Date(),
+}: {
+  contentType: 'image/png' | 'image/jpeg' | 'image/webp';
+  contentLength: number;
+  kind?: 'full' | 'preview';
+  now?: Date;
+}): {
+  uploadUrl: string;
+  publicUrl: string;
+  key: string;
+  contentType: 'image/png' | 'image/jpeg' | 'image/webp';
+} {
+  if (!Number.isSafeInteger(contentLength) || contentLength <= 0) {
+    throw new Error('Invalid contentLength for presigned R2 upload');
+  }
+
+  const publicBase = getR2PublicBaseUrl();
+  if (!publicBase) {
+    throw new Error('Cloudflare R2 storage is not configured');
+  }
+
+  const ext = EXTENSION_BY_MIME[contentType];
+  const suffix = kind === 'preview' ? '-preview' : '';
+  const key = `designs/${crypto.randomUUID()}/${crypto.randomBytes(16).toString('hex')}${suffix}.${ext}`;
+
+  const uploadUrl = signR2S3Request({
+    method: 'PUT',
+    key,
+    signedExtraHeaders: {
+      'content-length': String(contentLength),
+      'content-type': contentType,
+    },
+    now,
+  });
+
   return {
-    uploadUrl: `https://${host}${canonicalUri}?${canonicalQuery}&X-Amz-Signature=${signature}`,
+    uploadUrl,
     publicUrl: `${publicBase}/${key}`,
     key,
     contentType,
   };
+}
+
+export function createPresignedMailStagingUpload({
+  userId,
+  contentLength,
+  now = new Date(),
+}: {
+  userId: string;
+  contentLength: number;
+  now?: Date;
+}): {
+  uploadUrl: string;
+  key: string;
+  contentType: 'application/octet-stream';
+} {
+  if (!userId || !Number.isSafeInteger(contentLength) || contentLength <= 0) {
+    throw new Error('Invalid parameters for presigned mail staging upload');
+  }
+
+  const key = `mail-staging/${mailStagingOwnerPrefix(userId)}/${crypto.randomBytes(16).toString('hex')}.bin`;
+  const uploadUrl = signR2S3Request({
+    method: 'PUT',
+    key,
+    signedExtraHeaders: {
+      'content-length': String(contentLength),
+      'content-type': 'application/octet-stream',
+    },
+    now,
+  });
+
+  return { uploadUrl, key, contentType: 'application/octet-stream' };
+}
+
+export function createSignedR2ObjectUrl(
+  method: 'GET' | 'DELETE',
+  key: string,
+  now = new Date()
+): string {
+  return signR2S3Request({ method, key, now });
 }
