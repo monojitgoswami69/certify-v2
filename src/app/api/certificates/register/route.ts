@@ -3,6 +3,7 @@ import { mutationAllowed, forbiddenCsrfResponse } from '../../../../lib/server-a
 import { requireIssuer } from '../../../../lib/issuer-auth';
 import { env } from '../../../../lib/env';
 import { checkRateLimit } from '../../../../lib/rate-limit';
+import { legacyVerificationOrigin, selectVerificationOrigin } from '../../../../lib/verification-links';
 import { log, requestIdOf } from '../../../../lib/logger';
 import {
   registerCertificates,
@@ -41,8 +42,10 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await registerCertificates(user, body);
-    return NextResponse.json(result);
+    const result = await registerCertificates(user, body, selectVerificationOrigin(request));
+    return NextResponse.json({
+      ...result, verificationOrigin: result.verificationOrigin ?? legacyVerificationOrigin(request),
+    });
   } catch (error) {
     if (error instanceof RegistrationError) {
       return NextResponse.json({ detail: error.message }, { status: error.status });

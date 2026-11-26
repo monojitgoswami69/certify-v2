@@ -472,7 +472,7 @@ export function VerifyClient({
           </h1>
 
           <p className="text-sm sm:text-base font-semibold text-stone-600 font-[600] leading-relaxed">
-            No issued credential matches this identifier in our verification registry. Please ensure the link or QR code is intact and was generated via Certify.
+            No issued credential matches this identifier in our verification registry. Please ensure the link or QR code is intact and was generated via WeCertify.
           </p>
         </div>
       </div>

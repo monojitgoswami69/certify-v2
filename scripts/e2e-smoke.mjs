@@ -136,15 +136,25 @@ try {
       { recipientName: 'Carol NoEmail', rowData: { Name: 'Carol NoEmail' } },
     ],
   };
-  const r1 = await register({ ...batch1, design: DESIGN, label: 'Attendees' });
+  const newOrigin = 'https://wecertify.tech';
+  const legacyOrigin = 'https://certify-v2.mgbuilds.in';
+  const r1 = await register({
+    ...batch1, design: { ...DESIGN, verificationOrigin: 'https://unapproved.example.test' }, label: 'Attendees',
+  }, { ...auth, Origin: newOrigin });
   check('initial batch registers (200)', r1.status === 200, `status=${r1.status} ${r1.data.detail ?? ''}`);
   check('3 ids returned', Array.isArray(r1.data.ids) && r1.data.ids.length === 3);
   check('3 newly registered', r1.data.newlyRegisteredCount === 3, `got ${r1.data.newlyRegisteredCount}`);
+  check('issuance saves the approved origin and ignores the domain submitted in the design',
+    r1.data.verificationOrigin === newOrigin);
 
   // 2. Exact same batch again → identical ids (idempotent, no duplicates)
-  const r2 = await register(batch1);
+  const r2 = await register({ ...batch1, design: DESIGN, label: 'Attendees' }, { ...auth, Origin: legacyOrigin });
   check('re-register is idempotent (200)', r2.status === 200, `status=${r2.status}`);
   check('same ids returned', JSON.stringify(r1.data.ids) === JSON.stringify(r2.data.ids));
+  check('registration retries from another public domain retain the issued QR origin',
+    r2.data.verificationOrigin === newOrigin);
+  const issuedDesign = await (await fetch(`${BASE}/api/events/${EVENT_ID}/design`, { headers: cookieAuth })).json();
+  check('dashboard reloads the saved QR origin', issuedDesign.design?.verificationOrigin === newOrigin);
   check('all reused, none new', r2.data.newlyRegisteredCount === 0 && r2.data.reusedCount === 3,
     `new=${r2.data.newlyRegisteredCount} reused=${r2.data.reusedCount}`);
 
@@ -251,6 +261,7 @@ try {
     `status=${assetOk.status}`);
   check('asset resolves the template', Boolean(assetData.template?.imageData),
     `template=${Boolean(assetData.template)}`);
+  check('public downloads reuse the origin saved at issuance', assetData.verificationOrigin === newOrigin);
   check('asset returns only template-referenced fields',
     assetData.fields?.Name === 'Alice Smith' && !('Roll' in (assetData.fields ?? {})) &&
       Object.keys(assetData.fields ?? {}).length === 1,
@@ -307,9 +318,13 @@ try {
   const confirmedLegacy = await fetch(legacyPath, {
     method: 'POST', headers: cookieAuth, body: JSON.stringify({ revision: legacy.revision }),
   });
-  const lockedLegacy = await (await fetch(`${BASE}/api/verify/${legacyCertId}/asset`)).json();
+  const lockedLegacy = await (await fetch(`${BASE}/api/verify/${legacyCertId}/asset`, {
+    headers: { Origin: newOrigin },
+  })).json();
   check('owner confirmation freezes legacy artwork and only its printed fields',
     confirmedLegacy.status === 200 && lockedLegacy.fields?.Name === 'Historical Recipient' && !('Private' in (lockedLegacy.fields || {})));
+  check('historic certs without a stored QR origin use the previous public domain',
+    lockedLegacy.verificationOrigin === legacyOrigin);
 
   const versionsPath = `${templatePath}/${saved.id}/versions`;
   const { versions } = await (await fetch(versionsPath, { headers: cookieAuth })).json();
@@ -544,8 +559,8 @@ try {
     const nonced = (html.match(/nonce="/g) || []).length;
     check(`nonce CSP: ${page} has no un-nonce'd inline scripts`, inline === 0, `inline=${inline} nonced=${nonced}`);
     if (page === '/') {
-      check('signed-out homepage describes Certify and links to sign-in and both policies',
-        response.status === 200 && html.includes('Design, issue, and verify certificates') &&
+      check('signed-out homepage describes WeCertify and links to sign-in and both policies',
+        response.status === 200 && html.includes('WeCertify') && html.includes('Design, issue, and verify certificates') &&
         ['/login', '/privacy', '/terms'].every((path) => html.includes(`href="${path}"`)));
     }
     if (page === '/privacy') {

@@ -10,6 +10,7 @@ import {
   hasGoogleConnection,
   storeGoogleCredentials,
 } from '../../../../../lib/google-token-store';
+import { isPublicOrigin } from '../../../../../lib/verification-links';
 import { env } from '../../../../../lib/env';
 import { checkRateLimit } from '../../../../../lib/rate-limit';
 import { log, requestIdOf } from '../../../../../lib/logger';
@@ -46,8 +47,10 @@ export async function POST(request: Request) {
 
   const configuredOrigin = new URL(env.NEXT_PUBLIC_APP_URL).origin;
   const origin = request.headers.get('origin') ?? configuredOrigin;
-  if (origin !== configuredOrigin && (env.NODE_ENV === 'production' || origin !== new URL(request.url).origin)) {
-    return NextResponse.json({ detail: 'Gmail authorization must come from the Certify origin' }, { status: 403 });
+  const knownPublicOrigin = isPublicOrigin(configuredOrigin) && isPublicOrigin(origin);
+  const localSameOrigin = env.NODE_ENV !== 'production' && origin === new URL(request.url).origin;
+  if (origin !== configuredOrigin && !knownPublicOrigin && !localSameOrigin) {
+    return NextResponse.json({ detail: 'Gmail authorization must come from the WeCertify origin' }, { status: 403 });
   }
   try {
     const { tokens } = await createGmailOAuthClient().getToken({ code: body.code, redirect_uri: origin });
@@ -65,7 +68,7 @@ export async function POST(request: Request) {
     const identity = await response.json();
     if (identity?.email_verified !== true || typeof identity.email !== 'string' ||
         identity.email.trim().toLowerCase() !== user.email) {
-      return NextResponse.json({ detail: `Authorize Gmail with your Certify sign-in email, ${user.email}.` }, { status: 403 });
+      return NextResponse.json({ detail: `Authorize Gmail with your WeCertify sign-in email, ${user.email}.` }, { status: 403 });
     }
 
     await storeGoogleCredentials(user, {

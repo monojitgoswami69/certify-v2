@@ -109,7 +109,7 @@ export function EventRecipients({ eventId, eventName, designLocked, participants
     setNotice(null);
     let added = false;
     try {
-      const [outcome] = await registerCertificates([{ recipientName: person, recipientEmail: address, rowData }], { eventId });
+      const { outcomes: [outcome] } = await registerCertificates([{ recipientName: person, recipientEmail: address, rowData }], { eventId });
       if (outcome.status !== 'issued') {
         setNotice({
           text: outcome.status === 'conflict' ? 'This recipient already has a certificate with different values.' : 'This recipient is already registered.',
@@ -206,7 +206,7 @@ export function EventRecipients({ eventId, eventName, designLocked, participants
         const items: RegisterCertificateItem[] = ready.slice(i, i + 500).map(({ name, email, row }) => ({
           recipientName: name, recipientEmail: email, rowData: row,
         }));
-        const outcomes = await registerCertificates(items, { eventId });
+        const { outcomes } = await registerCertificates(items, { eventId });
         added += outcomes.filter(({ status }) => status === 'issued').length;
         skipped += outcomes.filter(({ status }) => status !== 'issued').length;
       }

@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '../../store/useAuthStore';
 import { canManageAccess, ISSUANCE_ACCESS_CHANGED_EVENT } from '../../lib/access-role';
-import { CertifyHeader } from './CertifyHeader';
+import { WeCertifyHeader } from './WeCertifyHeader';
 
 export function IssuerWorkspace({ children }: { children: ReactNode }) {
   const router = useRouter();
@@ -44,7 +44,7 @@ export function IssuerWorkspace({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen bg-app-background text-sm">
-      <CertifyHeader />
+      <WeCertifyHeader />
       <main className="mx-auto max-w-6xl px-4 py-5 sm:px-6">
         <h1 className="page-title text-slate-900">Certificate issuance access required</h1>
         {canManageAccess(user?.platformRole) ? (

@@ -85,8 +85,8 @@ function LoginPageInner() {
         </div>
         <div className="login-glass-card relative z-10 rounded-[24px] px-8 py-6 flex items-center gap-3 shadow-xl">
           <Image
-            src="/certify-logo.png"
-            alt="Certify Logo"
+            src="/wecertify-logo.png"
+            alt="WeCertify Logo"
             width={24}
             height={24}
             className="w-6 h-6 object-contain"
@@ -132,7 +132,7 @@ function LoginPageInner() {
 
             <div className="relative z-10 p-8 md:p-12 mb-4">
               <h1 className="text-2xl md:text-4xl font-semibold leading-tight tracking-tight drop-shadow-sm">
-                Welcome to <span className="text-amber-300 font-jura font-bold tracking-normal font-[700]">Certify</span>
+                Welcome to <span className="text-amber-300 font-jura font-bold tracking-normal font-[700]">WeCertify</span>
               </h1>
               <p className="mt-6 text-white/95 text-base sm:text-lg font-medium leading-relaxed">
                 Your one-stop destination for generating, exporting, and emailing professional certificates.

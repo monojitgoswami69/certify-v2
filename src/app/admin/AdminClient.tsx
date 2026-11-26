@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { BarChart3, KeyRound, LayoutDashboard, RefreshCw } from 'lucide-react';
 import { useAuthStore } from '../../store/useAuthStore';
-import { CertifyHeader } from '../../components/account/CertifyHeader';
+import { WeCertifyHeader } from '../../components/account/WeCertifyHeader';
 import { apiFetch } from '../../lib/api-client';
 import type { ManagedRole } from '../../lib/platform-access';
 import { AccessManagement, type AccessRow } from './AccessManagement';
@@ -108,14 +108,14 @@ export default function AdminClient() {
 
   return (
     <div className="min-h-screen bg-app-background text-sm text-slate-900">
-      <CertifyHeader>
+      <WeCertifyHeader>
         {!isCheckingAccess && !forbidden && canOpenCertificates && (
           <Link href="/dashboard" className="inline-flex min-h-10 items-center gap-2 rounded-md border border-app-border bg-white px-2.5 text-sm font-semibold text-slate-800 hover:bg-app-background hover:text-primary-700 sm:px-3.5">
             <LayoutDashboard className="size-4" aria-hidden="true" />
             Certificates
           </Link>
         )}
-      </CertifyHeader>
+      </WeCertifyHeader>
 
       <main className="mx-auto w-full max-w-6xl px-4 pt-4 pb-10 sm:px-6 sm:pt-5">
         {isCheckingAccess ? (

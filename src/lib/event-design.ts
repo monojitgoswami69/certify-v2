@@ -11,6 +11,8 @@ export interface EventLayout {
 
 export interface IssuedEventDesign {
   imageData: string;
+  /** Server-selected origin for reproducing this issued design’s QR codes. */
+  verificationOrigin?: string;
   width: number;
   height: number;
   layoutConfig: EventLayout;

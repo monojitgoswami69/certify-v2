@@ -1,5 +1,5 @@
 import { sendEmailV2 } from './api-client';
-import { buildVerifyUrlFor } from './cert-registration';
+import { buildVerifyUrlFor } from './verification-links';
 import type { IssuedEventDesign } from './event-design';
 import { ensureFontsLoaded } from './font-loader';
 import { replaceTemplateVariables, sanitizeFilename } from './utils';
@@ -37,7 +37,7 @@ async function renderIssuedCertificate(
     qrZones: layout.qrZones,
     sampleQr: !recipient.id && Boolean(layout.qrZones?.length),
     images: layout.images,
-    verificationUrl: recipient.id && layout.qrZones?.length ? buildVerifyUrlFor(recipient.id) : undefined,
+    verificationUrl: recipient.id && layout.qrZones?.length ? buildVerifyUrlFor(recipient.id, design.verificationOrigin) : undefined,
   });
 }
 
@@ -75,7 +75,7 @@ export async function prepareIssuedEmail(
   }
   const cert = await renderIssuedCertificate(design, fields, recipient, settings);
   const values = { Name: recipient.name, Email: recipient.email, ...fields, ...row };
-  const link = design.layoutConfig.qrZones?.length ? `\n\nVerify it here: ${buildVerifyUrlFor(recipient.id)}` : '';
+  const link = design.layoutConfig.qrZones?.length ? `\n\nVerify it here: ${buildVerifyUrlFor(recipient.id, design.verificationOrigin)}` : '';
   return {
     ...cert, certificateId: recipient.id, resendVersion: recipient.resendVersion, recipientEmail: recipient.email,
     emailSubject: preferences ? replaceTemplateVariables(preferences.subject, values) : `Your certificate from ${eventName}`,

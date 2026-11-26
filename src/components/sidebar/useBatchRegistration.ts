@@ -49,9 +49,9 @@ export async function registerReviewedBatch(reviewed: ReturnType<typeof useAppSt
       getEmail: (row) => (row[draft.emailColumn] ?? '').trim(),
       eventId: id, eventName: draft.eventName.trim() || 'General Event', label: draft.eventLabel.trim(),
       design, mailPreferences: draft.emailSettings,
-      onIssued: (partialIds) => {
+      onIssued: (partialIds, verificationOrigin) => {
         if (useAppStore.getState().registrationEventId === id) {
-          useAppStore.setState({ issuanceStarted: partialIds.size > 0, registeredCertIds: partialIds });
+          useAppStore.setState({ issuanceStarted: partialIds.size > 0, registeredCertIds: partialIds, verificationOrigin });
         }
       },
     });

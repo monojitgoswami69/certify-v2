@@ -39,17 +39,17 @@ export function SidebarHeader() {
           <ChevronLeft className="w-5 h-5 stroke-[2.5]" />
         </button>
 
-        {/* Certify Branding */}
+        {/* WeCertify Branding */}
         <div className="flex items-center gap-1.5 min-w-0 flex-1">
           <Image
-            src="/certify-logo.webp"
-            alt="Certify Logo"
+            src="/wecertify-logo.webp"
+            alt="WeCertify Logo"
             width={28}
             height={28}
             className="w-7 h-7 object-contain shrink-0"
           />
           <h1 className="text-[18px] font-jura font-bold text-slate-900 tracking-tight leading-none font-[700]">
-            Certify
+            WeCertify
           </h1>
         </div>
         <AccountMenu compact />

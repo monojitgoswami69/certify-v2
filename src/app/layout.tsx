@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Inter, Jura } from 'next/font/google';
+import { PUBLIC_APP_ORIGIN } from '../lib/verification-links';
 import './globals.css';
 
 // Self-hosted, subsetted UI fonts (no render-blocking Google CSS request, no
@@ -9,8 +10,10 @@ const inter = Inter({ subsets: ['latin'], display: 'swap', variable: '--gf-inter
 const jura = Jura({ subsets: ['latin'], display: 'swap', variable: '--gf-jura' });
 
 export const metadata: Metadata = {
-  title: 'Certify | Professional Certificate Manager',
-  description: 'Design, bulk generate, export, and email custom certificates seamlessly.',
+  metadataBase: new URL(PUBLIC_APP_ORIGIN),
+  title: 'WeCertify | Bulk Certificate Issuance and Verification',
+  description: 'Create, email, and verify personalized certificates for events and training programs.',
+  applicationName: 'WeCertify',
   icons: {
     icon: [
       { url: '/favicon.ico' },

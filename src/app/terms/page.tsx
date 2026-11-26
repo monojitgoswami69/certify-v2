@@ -2,8 +2,9 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 export const metadata: Metadata = {
-  title: 'Terms of Service | Certify',
-  description: 'The rules for issuing, verifying, and emailing certificates with Certify.',
+  title: 'Terms of Service | WeCertify',
+  alternates: { canonical: '/terms' },
+  description: 'The rules for issuing, verifying, and emailing certificates with WeCertify.',
   robots: { index: true, follow: true },
 };
 
@@ -19,10 +20,10 @@ export default async function TermsOfServicePage() {
           <Link
             href="/"
             className="flex items-center gap-2 group"
-            title="Certify Home"
+            title="WeCertify Home"
           >
             <span className="font-jura text-lg font-bold tracking-tight text-stone-900 group-hover:text-stone-700 transition-colors">
-              certify
+              WeCertify
             </span>
           </Link>
           <span className="text-xs font-mono text-stone-600">
@@ -46,10 +47,10 @@ export default async function TermsOfServicePage() {
           {/* Section 1 */}
           <section className="space-y-3">
             <h2 className="section-title text-stone-900">
-              1. Using Certify
+              1. Using WeCertify
             </h2>
             <p>
-              These terms apply when you use <Link href="/" className="text-primary-800 underline underline-offset-2">Certify</Link>, whether you issue certificates or open a link to verify one. By using Certify, you agree to these terms.
+              These terms apply when you use <Link href="/" className="text-primary-800 underline underline-offset-2">WeCertify</Link>, whether you issue certificates or open a link to verify one. By using WeCertify, you agree to these terms.
             </p>
           </section>
 
@@ -59,7 +60,7 @@ export default async function TermsOfServicePage() {
               2. Issuing and verifying certificates
             </h2>
             <p>
-              In Certify Studio, you can design a template, upload a recipient spreadsheet, and generate certificates in batches. When you register a batch with a verification QR code, anyone with the link can check the certificate. Our <Link href="/privacy" className="text-primary-800 underline underline-offset-2">Privacy Policy</Link> explains what they can see.
+              In WeCertify Studio, you can design a template, upload a recipient spreadsheet, and generate certificates in batches. When you register a batch with a verification QR code, anyone with the link can check the certificate. Our <Link href="/privacy" className="text-primary-800 underline underline-offset-2">Privacy Policy</Link> explains what they can see.
             </p>
           </section>
 
@@ -69,7 +70,7 @@ export default async function TermsOfServicePage() {
               3. Your responsibilities as an issuer
             </h2>
             <p>
-              Use Certify lawfully. Before you upload a roster or issue a certificate, make sure you have permission to use the artwork and recipient information and the authority to issue the certificate on behalf of the event or organization.
+              Use WeCertify lawfully. Before you upload a roster or issue a certificate, make sure you have permission to use the artwork and recipient information and the authority to issue the certificate on behalf of the event or organization.
             </p>
             <ul className="list-disc pl-5 space-y-2 text-stone-700">
               <li>
@@ -103,7 +104,7 @@ export default async function TermsOfServicePage() {
               5. Your artwork and data
             </h2>
             <p>
-              Uploading artwork, logos, or spreadsheets to Certify does not transfer ownership. You keep the rights you already have in that material.
+              Uploading artwork, logos, or spreadsheets to WeCertify does not transfer ownership. You keep the rights you already have in that material.
             </p>
           </section>
 
@@ -113,7 +114,7 @@ export default async function TermsOfServicePage() {
               6. Availability and warranties
             </h2>
             <p>
-              Certify is provided “as is” and “as available.” We can’t promise the service will always be available, error-free, or entirely secure. Where the law allows, we disclaim express and implied warranties, including merchantability, fitness for a particular purpose, and non-infringement.
+              WeCertify is provided “as is” and “as available.” We can’t promise the service will always be available, error-free, or entirely secure. Where the law allows, we disclaim express and implied warranties, including merchantability, fitness for a particular purpose, and non-infringement.
             </p>
           </section>
 
@@ -123,7 +124,7 @@ export default async function TermsOfServicePage() {
               7. Limitation of Liability
             </h2>
             <p>
-              To the extent the law allows, Certify and its operators are not liable for indirect, incidental, special, consequential, or punitive damages, or for loss of profits, data, or goodwill arising from using or being unable to use Certify.
+              To the extent the law allows, WeCertify and its operators are not liable for indirect, incidental, special, consequential, or punitive damages, or for loss of profits, data, or goodwill arising from using or being unable to use WeCertify.
             </p>
           </section>
 
@@ -133,7 +134,7 @@ export default async function TermsOfServicePage() {
               8. Changes to these terms
             </h2>
             <p>
-              We may update these terms from time to time. When we do, we’ll post the new version here with its effective date. If you keep using Certify after revised terms are published, you agree to the updated terms.
+              We may update these terms from time to time. When we do, we’ll post the new version here with its effective date. If you keep using WeCertify after revised terms are published, you agree to the updated terms.
             </p>
           </section>
 
@@ -151,7 +152,7 @@ export default async function TermsOfServicePage() {
 
         {/* Footer */}
         <footer className="mt-16 pt-8 border-t border-stone-200/70 text-xs text-stone-600 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <p>© {new Date().getFullYear()} Certify. All rights reserved.</p>
+          <p>© {new Date().getFullYear()} WeCertify. All rights reserved.</p>
           <div className="flex items-center gap-6">
             <Link href="/privacy" className="hover:text-stone-900 underline underline-offset-2 transition-colors">
               Privacy Policy

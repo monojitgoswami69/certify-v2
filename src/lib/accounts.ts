@@ -42,7 +42,7 @@ export function safePictureUrl(value: unknown): string | null {
 
 function displayNameFromEmail(email: string): string {
   const local = email.split('@')[0]?.replace(/[._-]+/g, ' ').trim();
-  return (local || 'Certify User').slice(0, 120);
+  return (local || 'WeCertify User').slice(0, 120);
 }
 
 /** Admin status follows ADMIN_EMAIL, so changing the env var takes effect without a re-login. */

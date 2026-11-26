@@ -12,7 +12,7 @@ import { resolveFieldValue } from './utils';
 import { drawStyledQr } from './qr-renderer';
 import { drawCertificateText } from './certificate-text';
 
-export const SAMPLE_QR_URL = 'https://example.invalid/verify/sample-certificate';
+import { SAMPLE_QR_URL } from './verification-links';
 
 export interface QrPlacement {
   x: number;

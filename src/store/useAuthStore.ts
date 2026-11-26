@@ -1,5 +1,5 @@
 /**
- * Authentication Store for Certify™ Next.js
+ * Authentication Store for WeCertify™ Next.js
  * Supports both Google OAuth SSO and Classic Credentials.
  */
 

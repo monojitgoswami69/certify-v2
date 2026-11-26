@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { X, ChevronLeft, ChevronRight, Loader2, Eye } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
-import { buildVerifyUrlFor } from '../../lib/cert-registration';
+import { buildVerifyUrlFor } from '../../lib/verification-links';
 import { ensureFontsLoaded } from '../../lib/font-loader';
 import type { TextBox, QrZone } from '../../types';
 
@@ -15,7 +15,7 @@ const PREVIEW_CACHE_LIMIT = 40;
  * real data instead of discovering them in an inbox.
  */
 export function SpotCheckButton({ disabled }: { disabled?: boolean }) {
-  const { templateImage, csvData, csvReview, boxes, qrZones, images, eventName, registeredCertIds, isBatchRegistered, registrationDirty } =
+  const { templateImage, csvData, csvReview, boxes, qrZones, images, eventName, registeredCertIds, verificationOrigin, isBatchRegistered, registrationDirty } =
     useAppStore();
   const [open, setOpen] = useState(false);
   const [index, setIndex] = useState(0);
@@ -90,7 +90,7 @@ export function SpotCheckButton({ disabled }: { disabled?: boolean }) {
           includeBase64: true,
           qrZones: useQr ? (qrZones as QrZone[]) : undefined,
           images,
-          verificationUrl: useQr && certId && !sampleQr ? buildVerifyUrlFor(certId) : undefined,
+          verificationUrl: useQr && certId && !sampleQr ? buildVerifyUrlFor(certId, verificationOrigin) : undefined,
           sampleQr: useQr && (sampleQr || !certId),
         });
         if (seq !== renderSeqRef.current || !cert.pngBase64) return;
@@ -108,7 +108,7 @@ export function SpotCheckButton({ disabled }: { disabled?: boolean }) {
         if (seq === renderSeqRef.current) setRendering(false);
       }
     })();
-  }, [open, index, templateImage, csvData, csvReview, validBoxes, qrZones, useQr, registeredCertIds, images, sampleQr]);
+  }, [open, index, templateImage, csvData, csvReview, validBoxes, qrZones, useQr, registeredCertIds, images, sampleQr, verificationOrigin]);
 
   if (!canOpen) return null;
 

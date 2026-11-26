@@ -1,5 +1,6 @@
 'use client';
 
+import { SAMPLE_QR_URL } from '../../lib/verification-links';
 import { useState, useRef, useEffect } from 'react';
 import { Trash2, Upload, X } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
@@ -142,7 +143,7 @@ function PresetThumbnail({
       x: 2,
       y: 2,
       size: canvas.width - 4,
-      text: 'https://certify.app',
+      text: SAMPLE_QR_URL,
       style: {
         bodyShape,
         eyeFrameShape,

@@ -104,7 +104,7 @@ describe('Google sign-in failure stages', () => {
     const response = await signIn();
     expect(response.status).toBe(503);
     expect((await response.json()).detail).toContain('google-login-reference');
-    expect(logError).toHaveBeenCalledWith('auth', 'Certify could not complete Google sign-in', {
+    expect(logError).toHaveBeenCalledWith('auth', 'WeCertify could not complete Google sign-in', {
       requestId: 'google-login-reference', stage: 'account_update',
     }, failure);
     expect(response.headers.get('set-cookie')).toBeNull();

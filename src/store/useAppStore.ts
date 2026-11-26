@@ -1,5 +1,5 @@
 /**
- * Application Store for Certify™ Next.js Workspace
+ * Application Store for WeCertify™ Next.js Workspace
  */
 
 import { create } from 'zustand';
@@ -159,6 +159,7 @@ interface AppStore {
   // Batch Registration State
   isBatchRegistered: boolean;
   registeredCertIds: Map<number, string>;
+  verificationOrigin: string | null;
   registeredAt: string | null;
   isBatchRegistering: boolean;
   batchRegistrationError: string | null;
@@ -213,6 +214,7 @@ const initialState = {
   connectedGoogleAccount: null,
   isBatchRegistered: false,
   registeredCertIds: new Map<number, string>(),
+  verificationOrigin: null,
   registeredAt: null as string | null,
   isBatchRegistering: false,
   batchRegistrationError: null as string | null,
@@ -241,6 +243,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       isPlacingQr: false,
       isBatchRegistered: false,
       registeredCertIds: new Map<number, string>(),
+      verificationOrigin: null,
       registeredAt: null,
       isBatchRegistering: false,
       batchRegistrationError: null,
@@ -261,6 +264,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       isPlacingQr: false,
       isBatchRegistered: false,
       registeredCertIds: new Map<number, string>(),
+      verificationOrigin: null,
       registeredAt: null,
       isBatchRegistering: false,
       batchRegistrationError: null,
@@ -493,6 +497,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         emailSettings: newEmailSettings,
         isBatchRegistered: false,
         registeredCertIds: new Map<number, string>(),
+        verificationOrigin: null,
         registeredAt: null,
         isBatchRegistering: false,
         batchRegistrationError: null,
@@ -519,6 +524,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       emailColumn: '',
       isBatchRegistered: false,
       registeredCertIds: new Map<number, string>(),
+      verificationOrigin: null,
       registeredAt: null,
       isBatchRegistering: false,
       batchRegistrationError: null,
@@ -598,6 +604,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({
       isBatchRegistered: false,
       registeredCertIds: new Map<number, string>(),
+      verificationOrigin: null,
       registeredAt: null,
       isBatchRegistering: false,
       batchRegistrationError: null,

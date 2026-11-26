@@ -1,4 +1,4 @@
-const message = 'Certify is under maintenance. Certificate verification will be available again soon.';
+const message = 'WeCertify is under maintenance. Certificate verification will be available again soon.';
 const headers = { 'Cache-Control': 'no-store', 'Retry-After': '300' };
 
 export function verificationMaintenanceResponse() {
@@ -12,7 +12,7 @@ export function verificationMaintenancePage(nonce: string) {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex">
-  <title>Certificate verification under maintenance | Certify</title>
+  <title>Certificate verification under maintenance | WeCertify</title>
   <style nonce="${nonce}">
     body { margin: 0; background: #fbfaf5; color: #0f172a; font: 1rem/1.6 system-ui, sans-serif; }
     main { max-width: 36rem; margin: 15vh auto 0; padding: 1.5rem; }

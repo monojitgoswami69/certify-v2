@@ -13,7 +13,7 @@ import {
 } from '../../lib/utils';
 import { generateCertificate } from '../../lib/certificate-engine';
 import { ensureFontsLoaded, loadFontsForWorker, type WorkerFontData } from '../../lib/font-loader';
-import { buildVerifyUrlFor } from '../../lib/cert-registration';
+import { buildVerifyUrlFor } from '../../lib/verification-links';
 import {
   CertificateWorkerPool,
   type OutputFormat,
@@ -330,7 +330,7 @@ export function useCertificateBatchGenerator() {
       }
 
       // Read registration at call time: registering does not re-create this callback
-      const { isBatchRegistered, registeredCertIds, registrationDirty } = useAppStore.getState();
+      const { isBatchRegistered, registeredCertIds, verificationOrigin, registrationDirty } = useAppStore.getState();
       if (useQr && (!isBatchRegistered || registrationDirty)) {
         setError('Batch is not registered or has changed since registration. Please register certificates to activate QR verification before generating.');
         return;
@@ -465,7 +465,7 @@ export function useCertificateBatchGenerator() {
           rowIndex,
           row,
           filename: `${sanitizeFilename(name)}_${rowIndex}`,
-          verificationUrl: useQr && certId ? buildVerifyUrlFor(certId) : undefined,
+          verificationUrl: useQr && certId ? buildVerifyUrlFor(certId, verificationOrigin) : undefined,
         });
       });
 
@@ -673,7 +673,7 @@ export function useCertificateBatchGenerator() {
 
           try {
             const certId = registeredCertIds.get(rowIndex);
-            const verificationUrl = useQr && certId ? buildVerifyUrlFor(certId) : undefined;
+            const verificationUrl = useQr && certId ? buildVerifyUrlFor(certId, verificationOrigin) : undefined;
 
             const cert = await generateCertificate({
               templateImage,
@@ -753,7 +753,7 @@ export function useCertificateBatchGenerator() {
 
         if (successfulCertsRef.current.has(rowIndex)) {
           const certId = registeredCertIds.get(rowIndex);
-          const verificationUrl = useQr && certId ? buildVerifyUrlFor(certId) : undefined;
+          const verificationUrl = useQr && certId ? buildVerifyUrlFor(certId, verificationOrigin) : undefined;
           return {
             rowIndex,
             name,

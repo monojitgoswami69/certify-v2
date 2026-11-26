@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { VerifyClient } from './VerifyClient';
 
 export const metadata: Metadata = {
-  title: 'Certificate Verification | Certify Registry',
+  title: 'Certificate Verification | WeCertify Registry',
   description: 'Authenticate and inspect the official cryptographic record of this issued credential.',
   robots: { index: false },
 };
@@ -14,7 +14,7 @@ export default async function VerifyPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const issuedBy = process.env.ISSUED_BY || process.env.NEXT_PUBLIC_ISSUED_BY || 'Certify';
+  const issuedBy = process.env.ISSUED_BY || process.env.NEXT_PUBLIC_ISSUED_BY || 'WeCertify';
 
   return (
     <div className="min-h-screen bg-[#FBFAF5] relative flex items-center justify-center text-slate-900 selection:bg-emerald-100 selection:text-emerald-900 px-4 sm:px-6 py-12 overflow-x-hidden">
@@ -30,18 +30,18 @@ export default async function VerifyPage({
         <VerifyClient id={id} defaultIssuedBy={issuedBy} />
       </main>
 
-      {/* Powered by Certify typographic lockup - always at bottom-right */}
+      {/* Powered by WeCertify typographic lockup - always at bottom-right */}
       <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-8 z-30 select-none print:hidden">
         <Link
           href="/"
           className="inline-flex items-baseline gap-1.5 text-stone-500 hover:text-stone-900 transition-colors group"
-          title="Certify — Verification Registry"
+          title="WeCertify — Verification Registry"
         >
           <span className="text-[11px] sm:text-xs font-semibold tracking-wide text-stone-500 group-hover:text-stone-700">
             powered by
           </span>
           <span className="text-xs sm:text-sm font-jura font-bold tracking-tight text-stone-800 group-hover:text-stone-950 font-[700]">
-            certify
+            WeCertify
           </span>
         </Link>
       </div>

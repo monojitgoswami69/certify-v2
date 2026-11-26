@@ -1,4 +1,4 @@
-# Certify v2 handover
+# WeCertify v2 handover
 
 Use the access, Gmail, and canvas notes below when testing a release.
 
@@ -37,6 +37,15 @@ Email batches run in the browser and closing the tab stops the remaining queue. 
 - e2e (`scripts/e2e-smoke.mjs <port>`) mints its own JWT from `.env` values — never prints secrets. Covers: registration race/idempotency, cookie+CSRF matrix, asset endpoint, event settings (trackScans/expiry), admin (403→200→grant/revoke→403), nonce sweep for all 7 pages.
 - A production server may be left running on port 3005 — kill via `lsof -nP -iTCP:3005 -sTCP:LISTEN -t` before rebuilding.
 
+## Moving production to wecertify.tech
+
+1. Add `wecertify.tech` to the existing production Vercel project. In Cloudflare DNS, use the project-specific records Vercel displays. Keep the old production domain attached while testing the new one.
+2. Verify `wecertify.tech` in Google Search Console. In Google Auth Platform, add it under **Branding → Authorized domains**, and add `https://wecertify.tech` to the existing web client's **Authorized JavaScript origins**. WeCertify's Google flows use popups. The Gmail code exchange uses the origin of the calling page.
+3. Set Vercel's production `NEXT_PUBLIC_APP_URL` to `https://wecertify.tech` and deploy the rebrand. Use **WeCertify** in Google Branding with `https://wecertify.tech/`, `https://wecertify.tech/privacy`, and `https://wecertify.tech/terms`. Google may require another brand review after these changes.
+4. Test Google sign-in and Gmail connection on the new domain. Existing sessions are scoped to the old domain, so users sign in again when they switch. After testing, keep `certify-v2.mgbuilds.in` attached and redirect it to the new domain with the original path and query. Check an issued and a revoked certificate through the old links after enabling the redirect.
+
+The public domain used to issue a new batch is saved with its immutable design and reused for exports, resends, and public downloads. Preview deployments fall back to the configured public origin. Older production batches use the previous domain when regenerating a QR code. The domain change requires no database migration.
+
 ## Gmail sender and access policy
 
 - Set `ADMIN_EMAIL` to the sole super admin address and grant other accounts from **Admin → Access**. Existing access entries are retained, including entries grandfathered by the original 0005 migration. Review those entries before onboarding real users. The current 0005 migration no longer restores revoked accounts when rerun.
@@ -45,7 +54,7 @@ Email batches run in the browser and closing the tab stops the remaining queue. 
 - Older issued certificates retain their verification IDs and start with unknown delivery history. New issuance records start pending. Have issuers reload Studio after deploying delivery tracking so their mail requests include certificate IDs.
 - Backups created after the migration contain delivery status, attempt versions, provider IDs, and event mail preferences. Apply the migration before creating or restoring those backups. When restoring an older snapshot into an empty database, review any historical records in Gmail Sent. A restored in-flight request becomes Unknown after two minutes. Check Gmail Sent for activity after the most recent snapshot before resuming affected batches after a recovery.
 
-- The super admin can adjust the rolling per-account limits under **Admin → Access**. Defaults are 55 sends per minute and 8 per second. Match per-account settings to your Gmail project and mailbox quotas. Gmail can also impose daily, concurrency, and project-wide limits. Certify pauses for its own rate limit and stops starting sends when Gmail reports a quota limit.
+- The super admin can adjust the rolling per-account limits under **Admin → Access**. Defaults are 55 sends per minute and 8 per second. Match per-account settings to your Gmail project and mailbox quotas. Gmail can also impose daily, concurrency, and project-wide limits. WeCertify pauses for its own rate limit and stops starting sends when Gmail reports a quota limit.
 - Confirm the live OAuth consent, reconnection, and delivery in staging before deploying to production.
 
 ## Canvas rendering and regression checks

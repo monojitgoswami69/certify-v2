@@ -63,7 +63,7 @@ export interface RegistrationOutcome {
 export async function registerCertificates(
   items: RegisterCertificateItem[],
   event: { eventId: string; eventName?: string; label?: string; design?: IssuedEventDesign; mailPreferences?: EmailSettings }
-): Promise<RegistrationOutcome[]> {
+) {
   const response = await apiFetch(`${API_BASE}/certificates/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -76,7 +76,7 @@ export async function registerCertificates(
     typeof id !== 'string' || !['issued', 'existing', 'conflict'].includes(status))) {
     throw new Error('Invalid registration response from server');
   }
-  return outcomes;
+  return { outcomes, verificationOrigin: typeof data.verificationOrigin === 'string' ? data.verificationOrigin : null };
 }
 
 export async function exchangeGoogleCode(code: string): Promise<GoogleAccount> {

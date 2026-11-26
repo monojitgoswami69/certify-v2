@@ -1,3 +1,4 @@
+import { legacyVerificationOrigin } from '../../../../../lib/verification-links';
 import { NextResponse } from 'next/server';
 import { and, eq } from 'drizzle-orm';
 import { db } from '../../../../../lib/db';
@@ -72,6 +73,7 @@ export async function GET(
         template: { imageData, width, height },
         layoutConfig,
         fields: cert.fields,
+        verificationOrigin: cert.design.verificationOrigin ?? legacyVerificationOrigin(request),
       },
       { headers: { 'Cache-Control': 'no-store' } }
     );

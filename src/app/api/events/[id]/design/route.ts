@@ -1,3 +1,4 @@
+import { legacyVerificationOrigin } from '../../../../../lib/verification-links';
 import { createHash } from 'node:crypto';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
@@ -43,7 +44,10 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   try {
     const result = await fetchDesign(user.userId, (await params).id);
     if (!result) return NextResponse.json({ detail: 'Event not found' }, { status: 404 });
-    return NextResponse.json(result, { headers: { 'Cache-Control': 'private, no-store' } });
+    const design = result.design && {
+      ...result.design, verificationOrigin: result.design.verificationOrigin ?? legacyVerificationOrigin(request),
+    };
+    return NextResponse.json({ ...result, design }, { headers: { 'Cache-Control': 'private, no-store' } });
   } catch (error) {
     log.error('event-design', 'Failed to load design', { requestId: requestIdOf(request) }, error);
     return NextResponse.json({ detail: 'Could not load the certificate design' }, { status: 500 });

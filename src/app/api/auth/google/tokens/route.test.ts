@@ -13,10 +13,10 @@ vi.mock('../../../../../lib/google-token-store', () => ({
   storeGoogleCredentials: store,
 }));
 
-function exchange() {
+function exchange(origin?: string) {
   return POST(new Request('http://localhost:3000/api/auth/google/tokens', {
     method: 'POST',
-    headers: { 'X-Certify-Request': '1' },
+    headers: { 'X-Certify-Request': '1', ...(origin ? { Origin: origin } : {}) },
     body: JSON.stringify({ code: 'test-code' }),
   }));
 }
@@ -32,7 +32,22 @@ describe('Gmail authorization', () => {
       },
     });
   });
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it('exchanges codes using either public WeCertify origin during the domain move', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://certify-v2.mgbuilds.in');
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+      email: 'sender@example.test', email_verified: true,
+    })));
+    expect((await exchange('https://wecertify.tech')).status).toBe(200);
+    expect(getToken).toHaveBeenCalledWith({ code: 'test-code', redirect_uri: 'https://wecertify.tech' });
+    expect((await exchange('https://unapproved.example.test')).status).toBe(403);
+    expect(getToken).toHaveBeenCalledTimes(1);
+  });
 
   it.each([
     { email: 'other@example.test', email_verified: true },

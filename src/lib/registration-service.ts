@@ -58,7 +58,8 @@ function findOwnedEvent(userId: string, eventId: string, design: IssuedEventDesi
     name: events.name,
     label: events.label,
     layout: sql<EventLayout | null>`${events.issuedDesign}->'layoutConfig'`,
-    matchesDesign: design ? sql<boolean>`${events.issuedDesign} = ${JSON.stringify(design)}::jsonb` : sql<boolean>`true`,
+    verificationOrigin: sql<string | null>`${events.issuedDesign}->>'verificationOrigin'`,
+    matchesDesign: design ? sql<boolean>`(${events.issuedDesign} - 'verificationOrigin') = ${JSON.stringify(design)}::jsonb` : sql<boolean>`true`,
   }).from(events).where(and(eq(events.id, eventId), eq(events.userId, userId))).limit(1);
 }
 
@@ -77,7 +78,7 @@ const existingFields = {
   renderFields: certificates.renderFields,
 };
 
-export async function registerCertificates(user: PublicUser, command: RegisterBatchCommand) {
+export async function registerCertificates(user: PublicUser, command: RegisterBatchCommand, verificationOrigin: string) {
   if (!Array.isArray(command.certificates) || command.certificates.length === 0) {
     throw new RegistrationError('certificates must be a non-empty array');
   }
@@ -129,6 +130,7 @@ export async function registerCertificates(user: PublicUser, command: RegisterBa
 
   let firstFingerprint: string | null = null;
   if (!event && design) {
+    const issuedDesign = { ...design, verificationOrigin };
     const first = items[0];
     const id = generateCertificateId();
     // The event and its first certificate commit together. A concurrent
@@ -136,7 +138,7 @@ export async function registerCertificates(user: PublicUser, command: RegisterBa
     const created = await db.execute<{ fingerprint: string }>(sql`
       WITH created_event AS (
         INSERT INTO ${events} (id, user_id, name, label, issued_design, mail_preferences)
-        VALUES (${eventId}, ${user.userId}, ${name}, ${requestedLabel}, ${JSON.stringify(design)}::jsonb,
+        VALUES (${eventId}, ${user.userId}, ${name}, ${requestedLabel}, ${JSON.stringify(issuedDesign)}::jsonb,
           ${mailPreferences ? JSON.stringify(mailPreferences) : null}::jsonb)
         ON CONFLICT (id) DO NOTHING
         RETURNING id
@@ -228,5 +230,5 @@ export async function registerCertificates(user: PublicUser, command: RegisterBa
     log.warn('registration', 'Failed to write batch audit record', { userId: user.userId }, error);
   }
 
-  return { eventId, ids: outcomes.map(({ id }) => id), count: items.length, newlyRegisteredCount, reusedCount, outcomes };
+  return { eventId, verificationOrigin: event?.verificationOrigin ?? null, ids: outcomes.map(({ id }) => id), count: items.length, newlyRegisteredCount, reusedCount, outcomes };
 }

@@ -85,7 +85,7 @@ export async function GET(
       cert.issuerAccountName?.trim() ||
       env.ISSUED_BY ||
       env.NEXT_PUBLIC_ISSUED_BY ||
-      'Certify';
+      'WeCertify';
     const viewer = await getAuthenticatedUser(request);
     const isOwner = viewer?.canIssueCertificates === true && viewer.userId === cert.userId;
 

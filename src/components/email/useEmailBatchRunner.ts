@@ -20,7 +20,7 @@ import {
   type PooledCertificateRenderer,
 } from '../../lib/render-service';
 import { CertificateWorkerPool } from '../../lib/worker-pool';
-import { buildVerifyUrlFor } from '../../lib/cert-registration';
+import { buildVerifyUrlFor } from '../../lib/verification-links';
 import { selectRecipientName } from '../../lib/batch-review';
 import type { CsvRow, EmailProgress, EmailDeliveryRecord, EmailDeliveryStatus } from '../../types';
 
@@ -129,7 +129,7 @@ export function useEmailBatchRunner() {
       if (!templateImage || validBoxes.length === 0) return;
 
       // Read registration at call time: registering does not re-create this callback
-      const { isBatchRegistered, registeredCertIds, registrationDirty, registrationEventId } = useAppStore.getState();
+      const { isBatchRegistered, registeredCertIds, verificationOrigin, registrationDirty, registrationEventId } = useAppStore.getState();
       if (!registrationEventId || !isBatchRegistered || registrationDirty) {
         setError('Issue the batch before sending emails.');
         return;
@@ -221,7 +221,7 @@ export function useEmailBatchRunner() {
                   rowIndex,
                   row,
                   filename: sanitizeFilename(getDisplayName(row)),
-                  verificationUrl: useQr && certId ? buildVerifyUrlFor(certId) : undefined,
+                  verificationUrl: useQr && certId ? buildVerifyUrlFor(certId, verificationOrigin) : undefined,
                 };
               });
             const pooled = await createPooledRenderer({
@@ -371,7 +371,7 @@ export function useEmailBatchRunner() {
                 rowIndex,
                 row,
                 filename: sanitizeFilename(displayName),
-                verificationUrl: useQr && certId ? buildVerifyUrlFor(certId) : undefined,
+                verificationUrl: useQr && certId ? buildVerifyUrlFor(certId, verificationOrigin) : undefined,
               });
               if (rendered.error || !rendered.blobs) {
                 throw new Error(rendered.error || 'Certificate rendering failed');
@@ -395,7 +395,7 @@ export function useEmailBatchRunner() {
                 canvas: workerCanvas,
                 qrZones: useQr ? qrZones : undefined,
                 images,
-                verificationUrl: useQr && certId ? buildVerifyUrlFor(certId) : undefined,
+                verificationUrl: useQr && certId ? buildVerifyUrlFor(certId, verificationOrigin) : undefined,
               });
             }
 

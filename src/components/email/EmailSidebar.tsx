@@ -269,7 +269,7 @@ function EmailSidebarContent() {
             />
           )}
           <p className="text-xs leading-relaxed text-stone-700">
-            Gmail access lets Certify send the certificate emails you initiate.{' '}
+            Gmail access lets WeCertify send the certificate emails you initiate.{' '}
             <a href="/privacy" target="_blank" rel="noopener noreferrer" className="font-medium text-primary-800 underline underline-offset-2">
               Privacy Policy
             </a>

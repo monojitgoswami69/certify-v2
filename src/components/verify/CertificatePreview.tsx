@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronDown, Download, FileText, Image as ImageIcon, Loader2, X } from 'lucide-react';
-import { buildVerifyUrlFor } from '@/lib/cert-registration';
+import { buildVerifyUrlFor } from '@/lib/verification-links';
 import { ensureFontsLoaded } from '@/lib/font-loader';
 import { downloadBlob, sanitizeFilename } from '@/lib/utils';
 import type { ImageElement, QrZone, TextBox } from '@/types';
@@ -10,6 +10,7 @@ import type { ImageElement, QrZone, TextBox } from '@/types';
 interface AssetResponse {
   status: 'ok';
   certificateId: string;
+  verificationOrigin?: string;
   recipientName: string;
   template: { imageData: string; width: number; height: number } | null;
   layoutConfig: {
@@ -51,6 +52,7 @@ export function CertificatePreview({
 
   const templateImageRef = useRef<HTMLImageElement | null>(null);
   const layoutRef = useRef<AssetResponse['layoutConfig']>(null);
+  const verificationOriginRef = useRef<string | null>(null);
   const fieldsRef = useRef<Record<string, string>>({});
   const fullPngRef = useRef<Blob | null>(null);
   const previewUrlRef = useRef<string | null>(null);
@@ -87,6 +89,7 @@ export function CertificatePreview({
         }
 
         layoutRef.current = asset.layoutConfig;
+        verificationOriginRef.current = asset.verificationOrigin ?? null;
         fieldsRef.current = asset.fields ?? {};
 
         const img = new Image();
@@ -123,7 +126,7 @@ export function CertificatePreview({
             ? asset.layoutConfig.qrZones
             : undefined,
           images: asset.layoutConfig.images,
-          verificationUrl: buildVerifyUrlFor(certificateId),
+          verificationUrl: buildVerifyUrlFor(certificateId, verificationOriginRef.current),
         });
         if (cancelled || !rendered.pngBlob) throw new Error('preview render failed');
         fullPngRef.current = rendered.pngBlob;
@@ -214,7 +217,7 @@ export function CertificatePreview({
           includePdf: format === 'pdf',
           qrZones: layout.qrZones?.length ? layout.qrZones : undefined,
           images: layout.images,
-          verificationUrl: buildVerifyUrlFor(certificateId),
+          verificationUrl: buildVerifyUrlFor(certificateId, verificationOriginRef.current),
         });
         const blob =
           format === 'png'

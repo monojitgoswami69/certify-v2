@@ -158,9 +158,9 @@ export async function POST(request: Request) {
     appendSessionCookie(response, token, rememberMe);
     return response;
   } catch (error) {
-    log.error('auth', 'Certify could not complete Google sign-in', { requestId, stage }, error);
+    log.error('auth', 'WeCertify could not complete Google sign-in', { requestId, stage }, error);
     return NextResponse.json(
-      { detail: `Certify could not complete sign-in. Try again or share reference ${requestId} with the administrator.` },
+      { detail: `WeCertify could not complete sign-in. Try again or share reference ${requestId} with the administrator.` },
       { status: 503, headers }
     );
   }

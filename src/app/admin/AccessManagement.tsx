@@ -205,7 +205,7 @@ export function AccessManagement({
           </h2>
           <p id="account-action-description" className="mt-2 text-sm leading-relaxed text-stone-700 [overflow-wrap:anywhere]">
             <strong className="font-semibold text-slate-900">{action.account.email}</strong>
-            {action.kind === 'revoke' && ' will be signed out of Certify on all devices.'}
+            {action.kind === 'revoke' && ' will be signed out of WeCertify on all devices.'}
           </p>
           <form
             className="mt-5"

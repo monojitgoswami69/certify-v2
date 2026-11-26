@@ -3,7 +3,7 @@ import type { QrZone } from '../../store/useAppStore';
 import { isFontLoaded, loadGoogleFont, getFontFamilyCSS } from '../../lib/font-loader';
 import type { HandleKey } from '../../lib/canvas-snapping';
 import { drawStyledQr } from '../../lib/qr-renderer';
-import { getVerifyBaseUrl } from '../../lib/cert-registration';
+import { SAMPLE_QR_URL } from '../../lib/verification-links';
 import { drawCertificateText } from '../../lib/certificate-text';
 
 export const HANDLE_SIZE = 8;
@@ -119,7 +119,7 @@ export function drawQrZonesOnCanvas(
       x: dx,
       y: dy,
       size: ds,
-      text: `${getVerifyBaseUrl()}/verify/DEMO`,
+      text: SAMPLE_QR_URL,
       style: zone.style,
     });
 
@@ -191,7 +191,7 @@ export function drawQrZonesOnCanvas(
       x: gx,
       y: gy,
       size: gs,
-      text: `${getVerifyBaseUrl()}/verify/DEMO`,
+      text: SAMPLE_QR_URL,
     });
     ctx.globalAlpha = 1;
 

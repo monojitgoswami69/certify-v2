@@ -30,13 +30,12 @@ import { canManageAccess } from '../../lib/access-role';
 import { useAppStore } from '../../store/useAppStore';
 import { useHistoryStore } from '../../store/useHistoryStore';
 import { downloadBlob, sanitizeFilename, csvCell } from '../../lib/utils';
-import { CertifyHeader } from '../../components/account/CertifyHeader';
+import { WeCertifyHeader } from '../../components/account/WeCertifyHeader';
 import { IssuerWorkspace } from '../../components/account/IssuerWorkspace';
 import { apiFetch, fetchEventDesign } from '../../lib/api-client';
 import { emailIssuedCertificate, renderIssuedPdf } from '../../lib/issued-certificate';
 import { EventRecipients } from './EventRecipients';
 import { EventMailQueue, mailStatusLabels } from './EventMailQueue';
-import { buildVerifyUrlFor } from '../../lib/cert-registration';
 import type { DashboardEventSummary, DashboardParticipant } from '../api/dashboard/route';
 
 function DashboardContent() {
@@ -430,7 +429,7 @@ function DashboardContent() {
 
   return (
     <div className="animate-fade-in h-screen h-dvh bg-app-background text-slate-900 flex flex-col font-sans overflow-hidden">
-      <CertifyHeader>
+      <WeCertifyHeader>
           {canModerate && (
             <Link
               href="/admin"
@@ -454,7 +453,7 @@ function DashboardContent() {
             <span className="hidden sm:inline">Canvas Studio</span>
           </button>
 
-      </CertifyHeader>
+      </WeCertifyHeader>
 
       {/* ------------------------------------------------------------- */}
       {/* Main Scrollable Container (Scrollbar strictly below header)    */}

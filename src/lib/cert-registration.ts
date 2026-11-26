@@ -6,18 +6,6 @@ import { registerCertificates } from './api-client';
 import type { IssuedEventDesign } from './event-design';
 import type { CsvRow, EmailSettings } from '../types';
 
-export function getVerifyBaseUrl(): string {
-  const origin = process.env.NEXT_PUBLIC_APP_URL?.trim()
-    || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000');
-  return origin.replace(/\/+$/, '');
-}
-
-export function buildVerifyUrlFor(id: string): string {
-  return `${getVerifyBaseUrl()}/verify/${id}`;
-}
-
-export const VERIFY_APP_URL = getVerifyBaseUrl();
-
 // Must stay at or below the server's MAX_BATCH in /api/certificates/register
 const REGISTER_CHUNK_SIZE = 1000;
 
@@ -37,7 +25,7 @@ export async function ensureCertificateIds(params: {
   label: string;
   design?: IssuedEventDesign;
   mailPreferences?: EmailSettings;
-  onIssued: (ids: Map<number, string>) => void;
+  onIssued: (ids: Map<number, string>, verificationOrigin: string | null) => void;
 }): Promise<Map<number, string>> {
   const { records, existingIds, getDisplayName, getEmail, eventId, eventName, label, design, mailPreferences, onIssued } = params;
   const pending = records.filter(({ rowIndex }) => !existingIds.has(rowIndex));
@@ -53,12 +41,12 @@ export async function ensureCertificateIds(params: {
       recipientEmail: getEmail?.(row),
       rowData: row,
     }));
-    const outcomes = await registerCertificates(items, { eventId, eventName, label, design: firstDesign,
+    const { outcomes, verificationOrigin } = await registerCertificates(items, { eventId, eventName, label, design: firstDesign,
       mailPreferences: firstDesign ? mailPreferences : undefined });
     outcomes.forEach((outcome, offset) => {
       if (outcome.status !== 'conflict') merged.set(chunk[offset].rowIndex, outcome.id);
     });
-    onIssued(new Map(merged));
+    onIssued(new Map(merged), verificationOrigin);
     if (outcomes.some(({ status }) => status === 'conflict')) {
       throw new Error('A recipient already has a certificate with different values. Open the event to review it.');
     }
