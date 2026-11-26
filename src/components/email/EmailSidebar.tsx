@@ -412,34 +412,34 @@ function EmailSidebarContent() {
               </span>
             </button>
 
-            {/* JPG Toggle Switch */}
+            {/* PNG Toggle Switch */}
             <button
               type="button"
               role="switch"
-              aria-checked={Boolean(emailSettings.attachJpg)}
+              aria-checked={Boolean(emailSettings.attachPng)}
               onClick={() => {
-                const current = Boolean(emailSettings.attachJpg);
-                setEmailSettings({ attachJpg: !current });
+                const current = Boolean(emailSettings.attachPng);
+                setEmailSettings({ attachPng: !current, attachJpg: false });
               }}
               className="flex items-center gap-2.5 group cursor-pointer focus:outline-none"
             >
               <div
                 className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors duration-200 ease-in-out ${
-                  emailSettings.attachJpg ? 'bg-primary-600' : 'bg-slate-300'
+                  emailSettings.attachPng ? 'bg-primary-600' : 'bg-slate-300'
                 }`}
               >
                 <span
                   className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-md transition-transform duration-200 ease-in-out ${
-                    emailSettings.attachJpg ? 'translate-x-6' : 'translate-x-1'
+                    emailSettings.attachPng ? 'translate-x-6' : 'translate-x-1'
                   }`}
                 />
               </div>
               <span className="text-sm font-semibold text-slate-700 group-hover:text-slate-900 transition-colors">
-                JPG
+                PNG
               </span>
             </button>
           </div>
-          {!emailSettings.attachPdf && !emailSettings.attachJpg && (
+          {!emailSettings.attachPdf && !emailSettings.attachPng && (
             <p className="text-xs text-amber-600">Select at least one attachment type</p>
           )}
         </div>

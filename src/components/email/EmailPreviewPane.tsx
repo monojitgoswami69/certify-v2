@@ -35,11 +35,11 @@ export function EmailPreviewPane() {
       type: 'PDF',
     });
   }
-  if (emailSettings.attachJpg || emailSettings.attachPng) {
+  if (emailSettings.attachPng) {
     attachments.push({
       icon: <FileImage className="w-5 h-5 text-cyan-500" />,
-      name: `${recipientName.replace(/\s+/g, '_')}.jpg`,
-      type: 'JPG',
+      name: `${recipientName.replace(/\s+/g, '_')}.png`,
+      type: 'PNG',
     });
   }
 

@@ -258,7 +258,14 @@ function WorkspaceContent() {
       setBoxes(draft.boxes || []);
       setQrZones(draft.qrZones || []);
       setImages(draft.images || []);
-      if (draft.emailSettings) setEmailSettings(draft.emailSettings);
+      if (draft.emailSettings) {
+        const { attachJpg, attachPng, ...rest } = draft.emailSettings;
+        setEmailSettings({
+          ...rest,
+          attachPng: Boolean(attachPng ?? attachJpg),
+          attachJpg: false,
+        });
+      }
       if (draft.defaultFont) setDefaultFont(draft.defaultFont);
       if (draft.defaultFontSize) setDefaultFontSize(draft.defaultFontSize);
       if (draft.defaultFontColor) setDefaultFontColor(draft.defaultFontColor);

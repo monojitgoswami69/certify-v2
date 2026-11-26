@@ -31,7 +31,8 @@ Best regards,
 The Team`,
   bodyHtml: '',
   attachPdf: true,
-  attachJpg: true,
+  attachJpg: false,
+  attachPng: true,
 };
 
 const DEFAULT_EMAIL_PROGRESS: EmailProgress = {
@@ -220,7 +221,7 @@ const initialState = {
   error: null,
   fonts: [] as Font[],
   exportFormats: {
-    png: true,
+    png: false,
     jpg: false,
     pdf: false,
   } as ExportFormats,
@@ -548,7 +549,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   setEmailSettings: (settings) =>
     set((state) => ({
-      emailSettings: { ...state.emailSettings, ...settings },
+      emailSettings: { ...state.emailSettings, ...settings, attachJpg: false },
     })),
 
   setEmailProgress: (progress) =>

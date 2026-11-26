@@ -8,6 +8,14 @@ describe('useAppStore & useHistoryStore', () => {
     useHistoryStore.getState().clearHistory();
   });
 
+  it('starts with unselected download export formats and PDF+PNG mail attachments', () => {
+    const state = useAppStore.getState();
+    expect(state.exportFormats).toEqual({ png: false, jpg: false, pdf: false });
+    expect(state.emailSettings.attachPdf).toBe(true);
+    expect(state.emailSettings.attachPng).toBe(true);
+    expect(state.emailSettings.attachJpg).toBe(false);
+  });
+
   it('enforces mutually exclusive active selections across text boxes, QR zones, images, and placement mode', () => {
     const store = useAppStore.getState();
     store.addBox({ x: 10, y: 10, w: 120, h: 40 });

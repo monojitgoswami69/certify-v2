@@ -8,8 +8,9 @@ export function readMailPreferences(value: unknown): EmailSettings | null {
   if (typeof settings.subject !== 'string' || settings.subject.length > 998
     || typeof settings.bodyPlain !== 'string' || settings.bodyPlain.length > 100_000
     || typeof settings.bodyHtml !== 'string' || settings.bodyHtml.length > 100_000
-    || typeof settings.attachPdf !== 'boolean' || typeof settings.attachJpg !== 'boolean'
+    || typeof settings.attachPdf !== 'boolean'
+    || (settings.attachJpg !== undefined && typeof settings.attachJpg !== 'boolean')
     || (settings.attachPng !== undefined && typeof settings.attachPng !== 'boolean')) return null;
-  const { subject, bodyPlain, bodyHtml, attachPdf, attachJpg, attachPng = false } = settings;
+  const { subject, bodyPlain, bodyHtml, attachPdf, attachJpg = false, attachPng = false } = settings;
   return { subject, bodyPlain, bodyHtml, attachPdf, attachJpg, attachPng };
 }

@@ -110,7 +110,7 @@ export function useEmailBatchRunner() {
 
   const hasMailingAccount = Boolean(user && connectedGoogleAccount?.email === user.email);
   const validBoxes = boxes.filter((b) => b.field || b.kind === 'static');
-  const attachImage = Boolean(emailSettings.attachJpg || emailSettings.attachPng);
+  const attachImage = Boolean(emailSettings.attachPng);
   const useQr = qrZones.length > 0;
   const isReady = Boolean(
     templateImage &&
@@ -233,10 +233,9 @@ export function useEmailBatchRunner() {
               qrZones: useQr ? qrZones : [],
               images,
               formats: [
-                ...(emailSettings.attachJpg ? ['jpg'] : []),
                 ...(emailSettings.attachPng ? ['png'] : []),
                 ...(emailSettings.attachPdf ? ['pdf'] : []),
-              ] as Array<'png' | 'jpg' | 'pdf'>,
+              ] as Array<'png' | 'pdf'>,
               fonts: workerFonts,
               tasks: renderTasks,
             });
@@ -390,7 +389,7 @@ export function useEmailBatchRunner() {
                 boxes: validBoxes,
                 row,
                 filename: sanitizeFilename(displayName),
-                includeJpg: Boolean(emailSettings.attachJpg),
+                includeJpg: false,
                 includePng: Boolean(emailSettings.attachPng),
                 includePdf: Boolean(emailSettings.attachPdf),
                 canvas: workerCanvas,
