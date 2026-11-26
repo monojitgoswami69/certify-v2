@@ -32,6 +32,14 @@ describe('checkRateLimit', () => {
       expect(checkRateLimit(key, 3, 1).allowed).toBe(true);
     });
   });
+
+  it('bounds memory usage under high unique-key pressure', () => {
+    const g = globalThis as unknown as { certifyRateLimitMap?: Map<string, unknown> };
+    for (let i = 0; i < 10_200; i++) {
+      checkRateLimit(`flood:${i}`, 5, 60_000);
+    }
+    expect(g.certifyRateLimitMap?.size ?? 0).toBeLessThanOrEqual(10_000);
+  });
 });
 
 describe('getClientIp', () => {

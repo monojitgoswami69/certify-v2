@@ -21,13 +21,20 @@ const windows: Map<string, WindowState> =
   globalForRateLimit.certifyRateLimitMap ?? new Map<string, WindowState>();
 globalForRateLimit.certifyRateLimitMap = windows;
 
+const MAX_RATE_LIMIT_ENTRIES = 10_000;
+
 // Periodic sweep so the map doesn't grow without bound under adversarial IPs.
 let lastSweep = 0;
 function sweep(now: number) {
-  if (now - lastSweep < 60_000) return;
+  if (now - lastSweep < 60_000 && windows.size < MAX_RATE_LIMIT_ENTRIES) return;
   lastSweep = now;
   for (const [key, state] of windows) {
     if (state.resetAt <= now) windows.delete(key);
+  }
+  while (windows.size >= MAX_RATE_LIMIT_ENTRIES) {
+    const oldest = windows.keys().next().value;
+    if (oldest === undefined) break;
+    windows.delete(oldest);
   }
 }
 

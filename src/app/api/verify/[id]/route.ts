@@ -67,6 +67,7 @@ export async function GET(
         eventId: certificates.eventId,
         eventTrackScans: events.trackScans,
         eventValidThrough: events.validThrough,
+        eventIssuedBy: sql<string | null>`${events.issuedDesign}->>'issuedBy'`,
         issuerName: users.issuedByName,
         issuerAccountName: users.name,
       })
@@ -81,12 +82,13 @@ export async function GET(
     }
 
     const issuedBy =
+      cert.eventIssuedBy?.trim() ||
       cert.issuerName?.trim() ||
       cert.issuerAccountName?.trim() ||
       env.ISSUED_BY ||
       env.NEXT_PUBLIC_ISSUED_BY ||
       'WeCertify';
-    const viewer = await getAuthenticatedUser(request);
+    const viewer = await getAuthenticatedUser(request).catch(() => null);
     const isOwner = viewer?.canIssueCertificates === true && viewer.userId === cert.userId;
 
     // Only the issuing account with current issuance access can inspect a revoked record.

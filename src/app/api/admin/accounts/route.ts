@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { sql } from 'drizzle-orm';
 import { env } from '../../../../lib/env';
 import { db } from '../../../../lib/db';
-import { requireAdmin, forbiddenResponse, ok } from '../_guard';
+import { authorizeAdmin, ok } from '../_guard';
 
 interface AccountRow {
   email: string;
@@ -23,8 +23,8 @@ interface AccountRow {
  * included — user data stays with the user.
  */
 export async function GET(request: Request) {
-  const admin = await requireAdmin(request);
-  if (!admin) return forbiddenResponse();
+  const { denial } = await authorizeAdmin(request);
+  if (denial) return denial;
 
   const result = await db.execute(sql`
     select

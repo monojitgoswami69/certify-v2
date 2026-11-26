@@ -308,7 +308,10 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({ detail: 'Gmail could not accept the email.' }, { status: 502 });
   } catch (error) {
-    if (error instanceof RequestTooLarge) {
+    const isTooLarge =
+      error instanceof RequestTooLarge ||
+      (error instanceof Error && error.cause instanceof RequestTooLarge);
+    if (isTooLarge) {
       return NextResponse.json({ detail: 'Email upload exceeds the size limit' }, { status: 413 });
     }
     if (error instanceof SyntaxError || error instanceof TypeError && error.message.includes('FormData')) {

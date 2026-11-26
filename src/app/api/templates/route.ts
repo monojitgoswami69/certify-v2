@@ -7,12 +7,12 @@ import { templates } from '../../../db/schema';
 import { requireIssuer } from '../../../lib/issuer-auth';
 import { env } from '../../../lib/env';
 import { checkRateLimit } from '../../../lib/rate-limit';
-import { parseImageDataUrl } from '../../../lib/image-validation';
+import { isWithinImagePixelBudget, parseImageDataUrl } from '../../../lib/image-validation';
+import { validateEventLayout } from '../../../lib/event-design-validation';
 import { snapshotTemplateVersion } from '../../../lib/template-versions';
 import { log, requestIdOf } from '../../../lib/logger';
 
 const MAX_IMAGE_DATA_LENGTH = 20 * 1024 * 1024;
-const MAX_LAYOUT_LENGTH = 1024 * 1024;
 /** Template saves carry multi-MB images; cap per-account save frequency. */
 const SAVE_RATE_LIMIT = 30; // saves per minute
 
@@ -32,6 +32,7 @@ export async function GET(request: Request) {
       .select({
         id: templates.id,
         name: templates.name,
+        imageHash: templates.imageHash,
         width: templates.width,
         height: templates.height,
         layoutConfig: templates.layoutConfig,
@@ -90,34 +91,38 @@ export async function POST(request: Request) {
       );
     }
 
-    // Data-URL shape AND decoded magic bytes must both check out, so a
-    // mislabeled payload never reaches the templates table.
+    // Data-URL shape, decoded magic bytes, and pixel budget must all check out,
+    // so a mislabeled or OOM payload never reaches the templates table.
     const parsedImage = parseImageDataUrl(imageData);
     if (!parsedImage) {
       return NextResponse.json(
-        { detail: 'Valid template image data (PNG, JPEG or WebP Base64 data URL) is required' },
+        { detail: 'Valid template image data (PNG, JPEG or WebP within dimension bounds) is required' },
         { status: 400 }
       );
     }
 
-    if (
-      layoutConfig !== undefined &&
-      layoutConfig !== null &&
-      (typeof layoutConfig !== 'object' ||
-        Array.isArray(layoutConfig) ||
-        (layoutConfig.boxes !== undefined && !Array.isArray(layoutConfig.boxes)) ||
-        (layoutConfig.qrZones !== undefined && !Array.isArray(layoutConfig.qrZones)) ||
-        (layoutConfig.images !== undefined &&
-          (!Array.isArray(layoutConfig.images) || layoutConfig.images.length > 30 ||
-            layoutConfig.images.some(
-              (im: unknown) =>
-                !im || typeof im !== 'object' ||
-                typeof (im as { src?: unknown }).src !== 'string' ||
-                String((im as { src?: unknown }).src).length > 3 * 1024 * 1024
-            ))) ||
-        JSON.stringify(layoutConfig).length > MAX_LAYOUT_LENGTH)
-    ) {
-      return NextResponse.json({ detail: 'Invalid layout configuration' }, { status: 400 });
+    const declaredWidth = typeof width === 'number' ? width : null;
+    const declaredHeight = typeof height === 'number' ? height : null;
+    if (declaredWidth !== null && declaredHeight !== null && !isWithinImagePixelBudget(declaredWidth, declaredHeight)) {
+      return NextResponse.json({ detail: 'Template dimensions exceed the supported image budget' }, { status: 400 });
+    }
+    if (parsedImage.dimensions && declaredWidth !== null && declaredHeight !== null) {
+      const exactMatch = parsedImage.dimensions.width === declaredWidth && parsedImage.dimensions.height === declaredHeight;
+      const exifSwappedMatch = parsedImage.dimensions.width === declaredHeight && parsedImage.dimensions.height === declaredWidth;
+      if (!exactMatch && !exifSwappedMatch) {
+        return NextResponse.json({ detail: 'Template dimensions do not match the uploaded image' }, { status: 400 });
+      }
+    }
+
+    const effectiveWidth = declaredWidth ?? parsedImage.dimensions?.width ?? null;
+    const effectiveHeight = declaredHeight ?? parsedImage.dimensions?.height ?? null;
+
+    let validatedLayout = { boxes: [], qrZones: [] } as ReturnType<typeof validateEventLayout>;
+    if (layoutConfig !== undefined && layoutConfig !== null) {
+      validatedLayout = validateEventLayout(layoutConfig);
+      if (!validatedLayout) {
+        return NextResponse.json({ detail: 'Invalid layout configuration' }, { status: 400 });
+      }
     }
 
     // Server-side hash of the payload image. When it matches the stored row's
@@ -132,18 +137,18 @@ export async function POST(request: Request) {
         name: name.trim(),
         imageData,
         imageHash: serverImageHash,
-        width: typeof width === 'number' ? width : null,
-        height: typeof height === 'number' ? height : null,
-        layoutConfig: layoutConfig || { boxes: [], qrZones: [] },
+        width: effectiveWidth,
+        height: effectiveHeight,
+        layoutConfig: validatedLayout || { boxes: [], qrZones: [] },
       })
       .onConflictDoUpdate({
         target: [templates.userId, templates.name],
         set: {
           imageData: sql`CASE WHEN ${templates.imageHash} = excluded.image_hash THEN ${templates.imageData} ELSE excluded.image_data END`,
           imageHash: serverImageHash,
-          width: typeof width === 'number' ? width : null,
-          height: typeof height === 'number' ? height : null,
-          layoutConfig: layoutConfig || { boxes: [], qrZones: [] },
+          width: effectiveWidth,
+          height: effectiveHeight,
+          layoutConfig: validatedLayout || { boxes: [], qrZones: [] },
           updatedAt: new Date(),
         },
       })

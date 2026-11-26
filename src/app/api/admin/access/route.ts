@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { requireAdmin, forbiddenResponse, ok } from '../_guard';
+import { authorizeAdmin, ok } from '../_guard';
 import { mutationAllowed, forbiddenCsrfResponse } from '../../../../lib/server-auth';
 import {
   listPlatformAccess,
@@ -25,15 +25,15 @@ function accessDenied() {
 }
 
 export async function GET(request: Request) {
-  const admin = await requireAdmin(request);
-  if (!admin) return forbiddenResponse();
+  const { admin, denial } = await authorizeAdmin(request);
+  if (denial) return denial;
   return ok({ access: await listPlatformAccess(), callerRole: admin.role });
 }
 
 export async function POST(request: Request) {
   if (!mutationAllowed(request)) return forbiddenCsrfResponse();
-  const admin = await requireAdmin(request);
-  if (!admin) return forbiddenResponse();
+  const { admin, denial } = await authorizeAdmin(request);
+  if (denial) return denial;
 
   const result = grantSchema.safeParse(await request.json().catch(() => null));
   if (!result.success) {
@@ -47,8 +47,8 @@ export async function POST(request: Request) {
 
 export async function PUT(request: Request) {
   if (!mutationAllowed(request)) return forbiddenCsrfResponse();
-  const admin = await requireAdmin(request);
-  if (!admin) return forbiddenResponse();
+  const { admin, denial } = await authorizeAdmin(request);
+  if (denial) return denial;
 
   const result = issuanceSchema.safeParse(await request.json().catch(() => null));
   if (!result.success) {
@@ -62,8 +62,9 @@ export async function PUT(request: Request) {
 
 export async function PATCH(request: Request) {
   if (!mutationAllowed(request)) return forbiddenCsrfResponse();
-  const admin = await requireAdmin(request);
-  if (admin?.role !== 'super_admin') return accessDenied();
+  const { admin, denial } = await authorizeAdmin(request);
+  if (denial) return denial;
+  if (admin.role !== 'super_admin') return accessDenied();
 
   const result = limitsSchema.safeParse(await request.json().catch(() => null));
   if (!result.success) {
@@ -80,8 +81,8 @@ export async function PATCH(request: Request) {
 
 export async function DELETE(request: Request) {
   if (!mutationAllowed(request)) return forbiddenCsrfResponse();
-  const admin = await requireAdmin(request);
-  if (!admin) return forbiddenResponse();
+  const { admin, denial } = await authorizeAdmin(request);
+  if (denial) return denial;
 
   const result = emailSchema.safeParse(new URL(request.url).searchParams.get('email'));
   if (!result.success) {

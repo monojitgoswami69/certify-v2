@@ -28,7 +28,7 @@ export async function GET(
 
   try {
     const [owned] = await db
-      .select({ id: templates.id })
+      .select({ id: templates.id, imageHash: templates.imageHash })
       .from(templates)
       .where(and(eq(templates.id, id), eq(templates.userId, user.userId)))
       .limit(1);
@@ -48,6 +48,7 @@ export async function GET(
       .orderBy(asc(templateVersions.createdAt));
 
     return NextResponse.json({
+      currentImageHash: owned.imageHash,
       versions: rows.map((r) => ({
         id: r.id,
         createdAt: r.createdAt.toISOString(),

@@ -4,18 +4,38 @@ import { db } from '../../../lib/db';
 import { unauthorizedResponse } from '../../../lib/server-auth';
 import { getAuthenticatedUser } from '../../../lib/accounts';
 import { canManageAccess, type PlatformRole } from '../../../lib/access-role';
+import { log, requestIdOf } from '../../../lib/logger';
+
+export type AdminIdentity = { userId: string; email: string; role: Exclude<PlatformRole, 'user'> };
 
 /**
- * Admin-console guard. Returns the caller's platform role, or null when the
- * caller is not an admin. Analytics endpoints expose AGGREGATES ONLY — never
- * recipient PII, certificate contents, or CSV data.
+ * Admin-console guard. Returns either the caller's admin identity or a clean
+ * HTTP denial (`403` when unauthorized, `503` if auth storage is unreachable).
+ * Analytics endpoints expose AGGREGATES ONLY — never recipient PII, certificate
+ * contents, or CSV data.
  */
-export async function requireAdmin(
+export async function authorizeAdmin(
   request: Request
-): Promise<{ userId: string; email: string; role: Exclude<PlatformRole, 'user'> } | null> {
-  const user = await getAuthenticatedUser(request);
-  if (!user || !canManageAccess(user.platformRole)) return null;
-  return { userId: user.userId, email: user.email, role: user.platformRole };
+): Promise<{ admin: AdminIdentity; denial?: never } | { admin?: never; denial: NextResponse }> {
+  let user;
+  try {
+    user = await getAuthenticatedUser(request);
+  } catch (error) {
+    log.error('admin', 'Failed to verify admin account', { requestId: requestIdOf(request) }, error);
+    return {
+      denial: NextResponse.json(
+        { detail: 'Authentication service temporarily unavailable' },
+        { status: 503, headers: { 'Cache-Control': 'no-store' } }
+      ),
+    };
+  }
+  if (!user || !canManageAccess(user.platformRole)) return { denial: forbiddenResponse() };
+  return { admin: { userId: user.userId, email: user.email, role: user.platformRole } };
+}
+
+export async function requireAdmin(request: Request): Promise<AdminIdentity | null> {
+  const result = await authorizeAdmin(request);
+  return result.admin ?? null;
 }
 
 export function forbiddenResponse(): NextResponse {

@@ -136,11 +136,14 @@ export async function GET(request: Request) {
 
       const totalScans = rows.reduce((sum, r) => sum + (r.scanCount ?? 0), 0);
       const scannedCerts = rows.filter((r) => (r.scanCount ?? 0) > 0).length;
-      const lastScanIso = rows
-        .map((r) => r.lastScannedAt?.toISOString() ?? null)
-        .filter((v): v is string => Boolean(v))
-        .sort()
-        .at(-1) ?? null;
+      let lastScanIso: string | null = null;
+      for (const r of rows) {
+        if (!r.lastScannedAt) continue;
+        const iso = r.lastScannedAt.toISOString();
+        if (!lastScanIso || iso > lastScanIso) {
+          lastScanIso = iso;
+        }
+      }
 
       const eventSummary: DashboardEventSummary = {
         eventName: event.name,

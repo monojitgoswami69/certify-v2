@@ -86,7 +86,16 @@ export async function POST(request: Request) {
 
 export async function DELETE(request: Request) {
   if (!mutationAllowed(request)) return forbiddenCsrfResponse();
-  const user = await getAuthenticatedUser(request);
+  let user;
+  try {
+    user = await getAuthenticatedUser(request);
+  } catch (error) {
+    log.error('gmail', 'Failed to verify user session', { requestId: requestIdOf(request) }, error);
+    return NextResponse.json(
+      { detail: 'Authentication service temporarily unavailable' },
+      { status: 503, headers: { 'Cache-Control': 'no-store' } }
+    );
+  }
   if (!user) return unauthorizedResponse();
 
   const token = await clearGoogleCredentials(user);
