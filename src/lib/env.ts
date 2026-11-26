@@ -35,6 +35,13 @@ const envSchema = z.object({
   NEXT_PUBLIC_ISSUED_BY: z.string().optional(),
   NEXT_PUBLIC_APP_URL: z.string().url().default('http://localhost:3000'),
   VERIFY_MAINTENANCE: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+
+  // Cloudflare R2 object storage (optional; falls back to inline Postgres data URLs <= 3 MB when unset)
+  R2_ACCOUNT_ID: z.string().min(1).optional(),
+  R2_BUCKET: z.string().min(1).optional(),
+  R2_PUBLIC_BASE_URL: z.string().url().optional(),
+  R2_ACCESS_KEY_ID: z.string().min(1).optional(),
+  R2_SECRET_ACCESS_KEY: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

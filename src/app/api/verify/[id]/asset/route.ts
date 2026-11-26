@@ -104,7 +104,9 @@ export async function GET(
     const usePreview = !includeFull && Boolean(previewImageData);
     const selectedDataUrl = usePreview ? previewImageData! : imageData;
     const kind = usePreview ? 'preview' : 'full';
-    const imageUrl = buildSignedTemplateAssetUrl(cert.eventId, kind, templateImageDigestHex(selectedDataUrl));
+    const imageUrl = selectedDataUrl.startsWith('https://')
+      ? selectedDataUrl
+      : buildSignedTemplateAssetUrl(cert.eventId, kind, templateImageDigestHex(selectedDataUrl));
 
     return NextResponse.json(
       {

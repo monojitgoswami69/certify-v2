@@ -28,7 +28,12 @@ export default async function VerifyPage({
     session,
   });
   if (previewImageUrl) {
-    preload(previewImageUrl, { as: 'image' });
+    if (previewImageUrl.startsWith('https://')) {
+      preconnect(new URL(previewImageUrl).origin, { crossOrigin: 'anonymous' });
+      preload(previewImageUrl, { as: 'image', crossOrigin: 'anonymous' });
+    } else {
+      preload(previewImageUrl, { as: 'image' });
+    }
   }
 
   const issuedBy = process.env.ISSUED_BY || process.env.NEXT_PUBLIC_ISSUED_BY || 'WeCertify';

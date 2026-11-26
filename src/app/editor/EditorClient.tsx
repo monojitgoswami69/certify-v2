@@ -233,6 +233,7 @@ function WorkspaceContent() {
         const blob = await imageSourceToBlob(template.imageData);
         const file = new File([blob], draft.templateRef.fileName, { type: blob.type || 'image/png' });
         const image = new Image();
+        image.crossOrigin = 'anonymous';
         image.src = template.imageData;
         await image.decode();
         setTemplate(file, image, `${template.name} (recovered)`);

@@ -3,7 +3,7 @@ import {
   extractImageDimensions,
   isWithinImagePixelBudget,
   MAX_IMAGE_EDGE,
-  MAX_TEMPLATE_BYTES,
+  MAX_INLINE_TEMPLATE_BYTES,
   parseImageDataUrl,
 } from './image-validation';
 import { readIssuedDesign } from './event-design-validation';
@@ -205,8 +205,8 @@ describe('parseImageDataUrl & dimension limits', () => {
     ).toBeNull();
   });
 
-  it('rejects templates exceeding the strict 3 MB raw byte cap in readIssuedDesign', () => {
-    const oversizedBuf = new Uint8Array(MAX_TEMPLATE_BYTES + 16);
+  it('rejects inline base64 templates exceeding the 3 MB inline byte cap in readIssuedDesign', () => {
+    const oversizedBuf = new Uint8Array(MAX_INLINE_TEMPLATE_BYTES + 16);
     oversizedBuf.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
     const view = new DataView(oversizedBuf.buffer);
     view.setUint32(8, 13, false);

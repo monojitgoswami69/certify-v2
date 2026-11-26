@@ -23,6 +23,7 @@ interface EncodedImage {
   hash: string;
   width: number;
   height: number;
+  byteSize: number;
 }
 
 interface EncodedPreview {
@@ -31,26 +32,64 @@ interface EncodedPreview {
   height: number;
 }
 
+const MAX_INLINE_BYTES = 3 * 1024 * 1024;
+
 // Re-encoding a full-resolution template costs hundreds of ms and megabytes;
 // autosave runs on every register/generate/email pass with the same image, so
 // cache the encoding keyed by the source object's identity.
 const encodedImageCache = new WeakMap<object, Promise<EncodedImage>>();
 const encodedPreviewCache = new WeakMap<object, Promise<EncodedPreview | null>>();
 
-async function sha256Hex(text: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+async function sha256HexFromBuffer(buffer: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', buffer);
   return Array.from(new Uint8Array(digest))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
 }
 
-function fileToDataUrl(file: File): Promise<string> {
+function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result));
     reader.onerror = () => reject(reader.error ?? new Error('Failed to read template file'));
-    reader.readAsDataURL(file);
+    reader.readAsDataURL(blob);
   });
+}
+
+function canvasToBlobAsync(canvas: HTMLCanvasElement, type: string, quality?: number): Promise<Blob | null> {
+  return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), type, quality));
+}
+
+async function uploadBlobToR2(
+  blob: Blob,
+  contentType: string,
+  kind: 'full' | 'preview'
+): Promise<string | null> {
+  const presignRes = await apiFetch('/api/uploads/presign', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contentType, byteSize: blob.size, kind }),
+  });
+  if (!presignRes.ok) {
+    const data = await presignRes.json().catch(() => ({}));
+    throw new Error(data.detail || 'Failed to prepare template upload');
+  }
+  const presign = (await presignRes.json()) as {
+    enabled?: boolean;
+    uploadUrl?: string;
+    publicUrl?: string;
+  };
+  if (!presign.enabled || !presign.uploadUrl || !presign.publicUrl) return null;
+
+  const putRes = await fetch(presign.uploadUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': contentType },
+    body: blob,
+  });
+  if (!putRes.ok) {
+    throw new Error(`Template upload to storage failed (${putRes.status})`);
+  }
+  return presign.publicUrl;
 }
 
 async function encodeTemplateImage(
@@ -62,23 +101,32 @@ async function encodeTemplateImage(
 
   // Prefer the original uploaded bytes: identical pixels, no full-res canvas
   // re-encode, and JPEG sources stay JPEG instead of ballooning into PNG.
+  let blob: Blob | null = null;
+  let contentType = 'image/png';
   if (templateFile && ALLOWED_SAVE_IMAGE_TYPES.includes(templateFile.type)) {
-    try {
-      const dataUrl = await fileToDataUrl(templateFile);
-      return { dataUrl, hash: await sha256Hex(dataUrl), width, height };
-    } catch {
-      // Fall through to canvas encoding.
-    }
+    blob = templateFile;
+    contentType = templateFile.type;
+  } else {
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas 2D context unavailable');
+    ctx.drawImage(templateImage, 0, 0);
+    blob = await canvasToBlobAsync(canvas, 'image/png');
+    if (!blob) throw new Error('Failed to encode template image');
   }
 
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Canvas 2D context unavailable');
-  ctx.drawImage(templateImage, 0, 0);
-  const dataUrl = canvas.toDataURL('image/png', 0.95);
-  return { dataUrl, hash: await sha256Hex(dataUrl), width, height };
+  const hash = await sha256HexFromBuffer(await blob.arrayBuffer());
+  const r2Url = await uploadBlobToR2(blob, contentType, 'full');
+  if (r2Url) {
+    return { dataUrl: r2Url, hash, width, height, byteSize: blob.size };
+  }
+
+  if (blob.size > MAX_INLINE_BYTES) {
+    throw new Error('Template image is too large (max 3 MB without external object storage).');
+  }
+  return { dataUrl: await blobToDataUrl(blob), hash, width, height, byteSize: blob.size };
 }
 
 export function getCachedEncodedImage(
@@ -101,7 +149,7 @@ async function encodePreviewWebp(
   templateImage: HTMLImageElement,
   width: number,
   height: number,
-  fullDataUrlLength: number
+  fullByteSize: number
 ): Promise<EncodedPreview | null> {
   const longestEdge = Math.max(width, height);
   if (longestEdge <= 1 || width < 2 || height < 2) return null;
@@ -121,12 +169,14 @@ async function encodePreviewWebp(
   ctx.drawImage(templateImage, 0, 0, targetWidth, targetHeight);
 
   try {
-    const previewDataUrl = canvas.toDataURL('image/webp', PREVIEW_WEBP_QUALITY);
+    const previewBlob = await canvasToBlobAsync(canvas, 'image/webp', PREVIEW_WEBP_QUALITY);
     // Older/minimal canvas backends can silently fall back to image/png.
-    if (!previewDataUrl.startsWith('data:image/webp;base64,')) return null;
+    if (!previewBlob || previewBlob.type !== 'image/webp') return null;
     // Strict size-reduction guard: skip preview storage if the raw upload is already compact.
-    if (previewDataUrl.length >= fullDataUrlLength * PREVIEW_MIN_SAVINGS_RATIO) return null;
-    return { dataUrl: previewDataUrl, width: targetWidth, height: targetHeight };
+    if (previewBlob.size >= fullByteSize * PREVIEW_MIN_SAVINGS_RATIO) return null;
+    const r2Url = await uploadBlobToR2(previewBlob, 'image/webp', 'preview').catch(() => null);
+    const dataUrl = r2Url ?? (await blobToDataUrl(previewBlob));
+    return { dataUrl, width: targetWidth, height: targetHeight };
   } catch {
     return null;
   }
@@ -137,12 +187,12 @@ function getCachedEncodedPreview(
   templateFile: File | null,
   width: number,
   height: number,
-  fullDataUrlLength: number
+  fullByteSize: number
 ): Promise<EncodedPreview | null> {
   const key = templateFile ?? templateImage;
   let preview = encodedPreviewCache.get(key);
   if (!preview) {
-    preview = encodePreviewWebp(templateImage, width, height, fullDataUrlLength).catch(() => {
+    preview = encodePreviewWebp(templateImage, width, height, fullByteSize).catch(() => {
       encodedPreviewCache.delete(key);
       return null;
     });
@@ -158,9 +208,9 @@ export async function prepareIssuedDesign(
   const { templateImage, templateFile, boxes, qrZones, images } = params;
   if (!templateImage) throw new Error('Upload a template before issuing certificates.');
 
-  const { dataUrl, hash, width, height } = await getCachedEncodedImage(templateImage, templateFile);
+  const { dataUrl, hash, width, height, byteSize } = await getCachedEncodedImage(templateImage, templateFile);
   const preview = options?.includePreview
-    ? await getCachedEncodedPreview(templateImage, templateFile, width, height, dataUrl.length)
+    ? await getCachedEncodedPreview(templateImage, templateFile, width, height, byteSize)
     : null;
   return {
     imageData: dataUrl,

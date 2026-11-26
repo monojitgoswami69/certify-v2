@@ -83,8 +83,9 @@ export async function resolveCertificateVerification({
         eventTrackScans: events.trackScans,
         eventValidThrough: events.validThrough,
         eventIssuedBy: sql<string | null>`${events.issuedDesign}->>'issuedBy'`,
+        directPreviewUrl: sql<string | null>`CASE WHEN ${events.issuedDesign}->>'previewImageData' LIKE 'https://%' THEN ${events.issuedDesign}->>'previewImageData' WHEN ${events.issuedDesign}->>'previewImageData' IS NULL AND ${events.issuedDesign}->>'imageData' LIKE 'https://%' THEN ${events.issuedDesign}->>'imageData' ELSE NULL END`,
         previewKind: sql<TemplateAssetKind | null>`CASE WHEN ${events.issuedDesign} IS NULL THEN NULL WHEN ${events.issuedDesign}->>'previewImageData' IS NOT NULL THEN 'preview' ELSE 'full' END`,
-        previewDigest: sql<string | null>`md5(COALESCE(${events.issuedDesign}->>'previewImageData', ${events.issuedDesign}->>'imageData'))`,
+        previewDigest: sql<string | null>`CASE WHEN COALESCE(${events.issuedDesign}->>'previewImageData', ${events.issuedDesign}->>'imageData') LIKE 'https://%' THEN NULL ELSE md5(COALESCE(${events.issuedDesign}->>'previewImageData', ${events.issuedDesign}->>'imageData')) END`,
         issuerName: users.issuedByName,
         issuerAccountName: users.name,
       })
@@ -154,8 +155,9 @@ export async function resolveCertificateVerification({
 
     const expired =
       cert.eventValidThrough !== null && cert.eventValidThrough.getTime() < Date.now();
-    const previewImageUrl =
-      cert.eventId && cert.previewKind && cert.previewDigest
+    const previewImageUrl = cert.directPreviewUrl
+      ? cert.directPreviewUrl
+      : cert.eventId && cert.previewKind && cert.previewDigest
         ? buildSignedTemplateAssetUrl(cert.eventId, cert.previewKind, cert.previewDigest)
         : undefined;
 

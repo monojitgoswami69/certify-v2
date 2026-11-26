@@ -9,15 +9,16 @@ import { env } from '../../../lib/env';
 import { checkRateLimit } from '../../../lib/rate-limit';
 import {
   isWithinImagePixelBudget,
-  MAX_TEMPLATE_BYTES,
+  MAX_INLINE_TEMPLATE_BYTES,
   MAX_TEMPLATE_DATA_URL_LENGTH,
   parseImageDataUrl,
 } from '../../../lib/image-validation';
+import { isAllowedR2TemplateUrl } from '../../../lib/r2-storage';
 import { validateEventLayout } from '../../../lib/event-design-validation';
 import { snapshotTemplateVersion } from '../../../lib/template-versions';
 import { log, requestIdOf } from '../../../lib/logger';
 
-/** Template saves carry up to 3 MB images; cap per-account save frequency. */
+/** Template saves carry up to 15 MB images via R2 (or <= 3 MB inline). */
 const SAVE_RATE_LIMIT = 30; // saves per minute
 
 export async function GET(request: Request) {
@@ -88,44 +89,52 @@ export async function POST(request: Request) {
       );
     }
 
-    if (typeof imageData !== 'string' || imageData.length > MAX_TEMPLATE_DATA_URL_LENGTH) {
-      return NextResponse.json(
-        { detail: 'Template image is too large (max 3 MB)' },
-        { status: 413 }
-      );
-    }
-
-    // Data-URL shape, decoded magic bytes, byte budget, and pixel budget must all check out,
-    // so a mislabeled, oversized, or OOM payload never reaches the templates table.
-    const parsedImage = parseImageDataUrl(imageData);
-    if (!parsedImage) {
-      return NextResponse.json(
-        { detail: 'Valid template image data (PNG, JPEG or WebP within dimension bounds) is required' },
-        { status: 400 }
-      );
-    }
-    if (parsedImage.bytes.byteLength > MAX_TEMPLATE_BYTES) {
-      return NextResponse.json(
-        { detail: 'Template image is too large (max 3 MB)' },
-        { status: 413 }
-      );
-    }
-
     const declaredWidth = typeof width === 'number' ? width : null;
     const declaredHeight = typeof height === 'number' ? height : null;
     if (declaredWidth !== null && declaredHeight !== null && !isWithinImagePixelBudget(declaredWidth, declaredHeight)) {
       return NextResponse.json({ detail: 'Template dimensions exceed the supported image budget' }, { status: 400 });
     }
-    if (parsedImage.dimensions && declaredWidth !== null && declaredHeight !== null) {
-      const exactMatch = parsedImage.dimensions.width === declaredWidth && parsedImage.dimensions.height === declaredHeight;
-      const exifSwappedMatch = parsedImage.dimensions.width === declaredHeight && parsedImage.dimensions.height === declaredWidth;
-      if (!exactMatch && !exifSwappedMatch) {
-        return NextResponse.json({ detail: 'Template dimensions do not match the uploaded image' }, { status: 400 });
-      }
-    }
 
-    const effectiveWidth = declaredWidth ?? parsedImage.dimensions?.width ?? null;
-    const effectiveHeight = declaredHeight ?? parsedImage.dimensions?.height ?? null;
+    let effectiveWidth = declaredWidth;
+    let effectiveHeight = declaredHeight;
+
+    if (!isAllowedR2TemplateUrl(imageData, 'full')) {
+      if (typeof imageData !== 'string' || imageData.length > MAX_TEMPLATE_DATA_URL_LENGTH) {
+        return NextResponse.json(
+          { detail: 'Template image is too large (max 3 MB inline)' },
+          { status: 413 }
+        );
+      }
+
+      // Data-URL shape, decoded magic bytes, byte budget, and pixel budget must all check out,
+      // so a mislabeled, oversized, or OOM payload never reaches the templates table.
+      const parsedImage = parseImageDataUrl(imageData);
+      if (!parsedImage) {
+        return NextResponse.json(
+          { detail: 'Valid template image data (PNG, JPEG or WebP within dimension bounds) is required' },
+          { status: 400 }
+        );
+      }
+      if (parsedImage.bytes.byteLength > MAX_INLINE_TEMPLATE_BYTES) {
+        return NextResponse.json(
+          { detail: 'Template image is too large (max 3 MB inline)' },
+          { status: 413 }
+        );
+      }
+
+      if (parsedImage.dimensions && declaredWidth !== null && declaredHeight !== null) {
+        const exactMatch = parsedImage.dimensions.width === declaredWidth && parsedImage.dimensions.height === declaredHeight;
+        const exifSwappedMatch = parsedImage.dimensions.width === declaredHeight && parsedImage.dimensions.height === declaredWidth;
+        if (!exactMatch && !exifSwappedMatch) {
+          return NextResponse.json({ detail: 'Template dimensions do not match the uploaded image' }, { status: 400 });
+        }
+      }
+
+      effectiveWidth = declaredWidth ?? parsedImage.dimensions?.width ?? null;
+      effectiveHeight = declaredHeight ?? parsedImage.dimensions?.height ?? null;
+    } else if (declaredWidth === null || declaredHeight === null) {
+      return NextResponse.json({ detail: 'Template width and height are required' }, { status: 400 });
+    }
 
     let validatedLayout = { boxes: [], qrZones: [] } as ReturnType<typeof validateEventLayout>;
     if (layoutConfig !== undefined && layoutConfig !== null) {

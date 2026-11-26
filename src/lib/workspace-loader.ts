@@ -6,6 +6,7 @@ import type { EventLayout, IssuedEventDesign } from './event-design';
 
 export async function decodeDesignImage(design: Pick<IssuedEventDesign, 'imageData'>): Promise<HTMLImageElement> {
   const image = new Image();
+  image.crossOrigin = 'anonymous';
   image.src = design.imageData;
   await image.decode();
   return image;

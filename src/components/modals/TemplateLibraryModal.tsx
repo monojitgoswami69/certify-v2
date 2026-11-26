@@ -117,11 +117,13 @@ export function TemplateLibraryModal({ isOpen, onClose, onLoaded }: TemplateLibr
 
       // Convert Base64 data URL to Image and File
       const blob = await imageSourceToBlob(template.imageData);
-      const filename = `${template.name.toLowerCase().replace(/[^a-z0-9_-]/g, '_')}.png`;
+      const ext = blob.type === 'image/jpeg' ? 'jpg' : blob.type === 'image/webp' ? 'webp' : 'png';
+      const filename = `${template.name.toLowerCase().replace(/[^a-z0-9_-]/g, '_')}.${ext}`;
       const file = new File([blob], filename, { type: blob.type || 'image/png' });
 
       await new Promise<void>((resolve, reject) => {
         const img = new Image();
+        img.crossOrigin = 'anonymous';
         img.onload = () => {
           const info = `${file.name} (${img.width}×${img.height})`;
           setTemplate(file, img, info);

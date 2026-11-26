@@ -1,10 +1,11 @@
 import type { EventLayout, IssuedEventDesign } from './event-design';
 import {
   isWithinImagePixelBudget,
-  MAX_TEMPLATE_BYTES,
+  MAX_INLINE_TEMPLATE_BYTES,
   MAX_TEMPLATE_DATA_URL_LENGTH,
   parseImageDataUrl,
 } from './image-validation';
+import { isAllowedR2TemplateUrl } from './r2-storage';
 
 const MAX_LAYOUT_JSON_LENGTH = 1024 * 1024;
 const MAX_LAYOUT_IMAGES = 30;
@@ -110,19 +111,22 @@ export function readIssuedDesign(input: unknown): IssuedEventDesign | null {
     typeof width !== 'number' ||
     typeof height !== 'number' ||
     !isWithinImagePixelBudget(width, height) ||
-    typeof imageData !== 'string' ||
-    imageData.length > MAX_TEMPLATE_DATA_URL_LENGTH
+    typeof imageData !== 'string'
   ) {
     return null;
   }
 
-  const parsedImage = parseImageDataUrl(imageData);
-  if (
-    !parsedImage ||
-    parsedImage.bytes.byteLength > MAX_TEMPLATE_BYTES ||
-    !matchesImageDimensions(parsedImage.dimensions, width, height)
-  ) {
-    return null;
+  const imageIsR2 = isAllowedR2TemplateUrl(imageData, 'full');
+  if (!imageIsR2) {
+    if (imageData.length > MAX_TEMPLATE_DATA_URL_LENGTH) return null;
+    const parsedImage = parseImageDataUrl(imageData);
+    if (
+      !parsedImage ||
+      parsedImage.bytes.byteLength > MAX_INLINE_TEMPLATE_BYTES ||
+      !matchesImageDimensions(parsedImage.dimensions, width, height)
+    ) {
+      return null;
+    }
   }
 
   const validatedLayout = validateEventLayout(layoutConfig);
@@ -136,7 +140,6 @@ export function readIssuedDesign(input: unknown): IssuedEventDesign | null {
 
   if (
     typeof previewImageData !== 'string' ||
-    previewImageData.length > MAX_PREVIEW_DATA_LENGTH ||
     typeof previewWidth !== 'number' ||
     typeof previewHeight !== 'number' ||
     !Number.isInteger(previewWidth) ||
@@ -150,9 +153,13 @@ export function readIssuedDesign(input: unknown): IssuedEventDesign | null {
     return null;
   }
 
-  const parsedPreview = parseImageDataUrl(previewImageData);
-  if (!parsedPreview || !matchesImageDimensions(parsedPreview.dimensions, previewWidth, previewHeight)) {
-    return null;
+  const previewIsR2 = isAllowedR2TemplateUrl(previewImageData, 'preview');
+  if (!previewIsR2) {
+    if (previewImageData.length > MAX_PREVIEW_DATA_LENGTH) return null;
+    const parsedPreview = parseImageDataUrl(previewImageData);
+    if (!parsedPreview || !matchesImageDimensions(parsedPreview.dimensions, previewWidth, previewHeight)) {
+      return null;
+    }
   }
 
   return {

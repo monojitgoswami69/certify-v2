@@ -611,6 +611,44 @@ try {
   check('admin API forbidden again after demotion (403)', adminAfterDemote.status === 403,
     `status=${adminAfterDemote.status}`);
 
+  // 7e-bis. R2 presign upload route: enforces CSRF, 15 MB cap, and (when configured)
+  //         verifies live direct-to-R2 PUT + CORS public GET + design persistence.
+  const presignNoCsrf = await fetch(`${BASE}/api/uploads/presign`, {
+    method: 'POST',
+    headers: { Cookie: cookieAuth.Cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contentType: 'image/png', byteSize: 68, kind: 'full' }),
+  });
+  check('presign endpoint requires anti-CSRF header (403)', presignNoCsrf.status === 403);
+  const presignTooBig = await fetch(`${BASE}/api/uploads/presign`, {
+    method: 'POST',
+    headers: cookieAuth,
+    body: JSON.stringify({ contentType: 'image/png', byteSize: 16 * 1024 * 1024, kind: 'full' }),
+  });
+  check('presign endpoint rejects templates over 15 MB (413)', presignTooBig.status === 413);
+  const presignOk = await fetch(`${BASE}/api/uploads/presign`, {
+    method: 'POST',
+    headers: cookieAuth,
+    body: JSON.stringify({ contentType: 'image/png', byteSize: 68, kind: 'full' }),
+  });
+  const presignData = await presignOk.json().catch(() => ({}));
+  check('presign endpoint responds cleanly for issuer (200)', presignOk.status === 200);
+  if (presignData.enabled) {
+    const pngBytes = Buffer.from(TINY_PNG.split(',')[1], 'base64');
+    const r2Put = await fetch(presignData.uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'image/png' },
+      body: pngBytes,
+    });
+    const r2Get = await fetch(presignData.publicUrl, {
+      headers: { Origin: 'https://wecertify.tech' },
+    });
+    const r2GotBytes = Buffer.from(await r2Get.arrayBuffer());
+    check('direct-to-R2 PUT and public CDN GET + CORS succeed',
+      r2Put.ok && r2Get.status === 200 && r2GotBytes.equals(pngBytes) &&
+      Boolean(r2Get.headers.get('access-control-allow-origin')),
+      `put=${r2Put.status} get=${r2Get.status} acao=${r2Get.headers.get('access-control-allow-origin')}`);
+  }
+
   // 7f. Static public homepage keeps a tight scriptless CSP; static app shells
   //     carry hardened security CSP without blocking static prerendering.
   for (const page of ['/', '/login', '/dashboard', '/editor', '/admin', '/privacy', '/terms']) {

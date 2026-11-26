@@ -95,7 +95,7 @@ export function TemplateUpload() {
         return;
       }
       if (file.size > MAX_TEMPLATE_BYTES) {
-        setError('Template image is too large (max 3 MB).');
+        setError('Template image is too large (max 15 MB).');
         return;
       }
 
@@ -171,7 +171,7 @@ export function TemplateUpload() {
         <p className="text-sm text-slate-600">
           Drag & drop or <span className="text-primary-600 font-medium">browse</span>
         </p>
-        <p className="text-xs text-slate-400 mt-1">Supports JPG, PNG, WebP (max 3 MB)</p>
+        <p className="text-xs text-slate-400 mt-1">Supports JPG, PNG, WebP (max 15 MB)</p>
       </div>
     </label>
   );
