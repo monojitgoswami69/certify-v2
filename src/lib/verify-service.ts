@@ -141,20 +141,15 @@ export async function resolveCertificateVerification({
       };
     }
 
-    let verificationCount: number | null = null;
     if (cert.eventTrackScans && !isOwner) {
       try {
-        const [bumped] = await db
+        await db
           .update(certificates)
           .set({ scanCount: sql`${certificates.scanCount} + 1`, lastScannedAt: new Date() })
-          .where(and(eq(certificates.id, cert.id), eq(certificates.status, 'issued')))
-          .returning({ scanCount: certificates.scanCount });
-        verificationCount = bumped?.scanCount ?? cert.scanCount;
+          .where(and(eq(certificates.id, cert.id), eq(certificates.status, 'issued')));
       } catch (scanErr) {
         log.warn('verify', 'Failed to update scan counter', { requestId }, scanErr);
       }
-    } else if (cert.eventTrackScans) {
-      verificationCount = cert.scanCount;
     }
 
     const expired =
@@ -174,7 +169,7 @@ export async function resolveCertificateVerification({
         issuedBy,
         expiresAt: cert.eventValidThrough ? cert.eventValidThrough.toISOString() : null,
         expired,
-        ...(verificationCount !== null ? { verificationCount } : {}),
+        ...(isOwner && cert.eventTrackScans ? { verificationCount: cert.scanCount } : {}),
       },
       httpStatus: 200,
       headers: {

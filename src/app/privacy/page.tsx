@@ -56,7 +56,7 @@ export default function PrivacyPolicyPage() {
 
           <section className="space-y-3">
             <h2 className="section-title text-stone-900">3. What a verification link shows</h2>
-            <p>Anyone with a verification link can check the certificate’s status. A valid certificate can show the recipient’s name, the event, the issuer, and the issue date. If the issuer turns on view counts, the page can show how many times the certificate has been checked.</p>
+            <p>Anyone with a verification link can check the certificate’s status. A valid certificate can show the recipient’s name, the event, the issuer, and the issue date. If the issuer turns on view counts, WeCertify keeps an aggregate count visible only to the issuer without logging visitor details.</p>
             <p>We leave the recipient’s contact email and private spreadsheet columns out of public verification details. When a download is available, the file can show any information the issuer printed on the certificate.</p>
           </section>
 

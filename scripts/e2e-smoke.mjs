@@ -440,15 +440,21 @@ try {
     `status=${scanOn.status}`);
   const v1 = await (await fetch(`${BASE}/api/verify/${bobId}`)).json();
   const v2 = await (await fetch(`${BASE}/api/verify/${bobId}`)).json();
-  check('opt-in scan counting increments (1 then 2)',
-    v1.verificationCount === 1 && v2.verificationCount === 2,
+  check('public verify responses withhold view counts from visitors',
+    v1.verificationCount === undefined && v2.verificationCount === undefined,
     `counts=${v1.verificationCount},${v2.verificationCount}`);
+  const ownerScanCheck = await (await fetch(`${BASE}/api/verify/${bobId}`, { headers: cookieAuth })).json();
+  check('opt-in scan counting increments for the issuer only (2)',
+    ownerScanCheck.verificationCount === 2,
+    `ownerCount=${ownerScanCheck.verificationCount}`);
 
-  const simultaneousScans = await Promise.all(
-    Array.from({ length: 4 }, async () => (await (await fetch(`${BASE}/api/verify/${bobId}`)).json()).verificationCount)
+  await Promise.all(
+    Array.from({ length: 4 }, () => fetch(`${BASE}/api/verify/${bobId}`))
   );
-  check('overlapping verification requests each increment the counter',
-    simultaneousScans.toSorted((a, b) => a - b).join(',') === '3,4,5,6');
+  const afterConcurrentScans = await (await fetch(`${BASE}/api/verify/${bobId}`, { headers: cookieAuth })).json();
+  check('overlapping verification requests each increment the issuer counter (6)',
+    afterConcurrentScans.verificationCount === 6,
+    `ownerCount=${afterConcurrentScans.verificationCount}`);
 
   const yesterday = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
   const expSet = await patchSettings({ validThrough: yesterday });
@@ -465,8 +471,10 @@ try {
 
   await patchSettings({ trackScans: false });
   const vOff = await (await fetch(`${BASE}/api/verify/${bobId}`)).json();
-  check('scan counting off → no verificationCount field', vOff.verificationCount === undefined,
-    `field=${JSON.stringify(vOff.verificationCount)}`);
+  const ownerOff = await (await fetch(`${BASE}/api/verify/${bobId}`, { headers: cookieAuth })).json();
+  check('scan counting off → no verificationCount field',
+    vOff.verificationCount === undefined && ownerOff.verificationCount === undefined,
+    `field=${JSON.stringify(vOff.verificationCount)}/${JSON.stringify(ownerOff.verificationCount)}`);
 
   // 7e. Admin console: regular users are forbidden; elevated accounts can
   //     read aggregate analytics and manage the allowlist.

@@ -22,7 +22,6 @@ type VerifyResponse =
       issuedBy?: string | null;
       expiresAt?: string | null;
       expired?: boolean;
-      verificationCount?: number;
     }
   | {
       status: 'revoked';
@@ -359,12 +358,6 @@ export function VerifyClient({
                     This credential expired on {formatDate(state.expiresAt)} and is no longer current.
                   </p>
                 </div>
-              )}
-              {typeof state.verificationCount === 'number' && (
-                <p className="mt-2 text-xs font-semibold text-stone-500">
-                  Viewed {state.verificationCount.toLocaleString()} time
-                  {state.verificationCount === 1 ? '' : 's'}
-                </p>
               )}
             </div>
 
