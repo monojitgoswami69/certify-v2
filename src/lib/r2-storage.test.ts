@@ -38,6 +38,7 @@ describe('r2-storage presigned URLs and validation', () => {
 
     const full = createPresignedTemplateUpload({
       contentType: 'image/png',
+      contentLength: 1024,
       kind: 'full',
       now: new Date('2026-11-26T12:00:00Z'),
     });
@@ -45,19 +46,20 @@ describe('r2-storage presigned URLs and validation', () => {
     expect(uploadParsed.hostname).toBe('acc1234567890.r2.cloudflarestorage.com');
     expect(uploadParsed.pathname).toMatch(/^\/wecertify\/designs\/[0-9a-f-]{36}\/[0-9a-f]{32}\.png$/);
     expect(uploadParsed.searchParams.get('X-Amz-Algorithm')).toBe('AWS4-HMAC-SHA256');
-    expect(uploadParsed.searchParams.get('X-Amz-SignedHeaders')).toBe('content-type;host');
+    expect(uploadParsed.searchParams.get('X-Amz-Expires')).toBe('120');
+    expect(uploadParsed.searchParams.get('X-Amz-SignedHeaders')).toBe('content-length;content-type;host');
     expect(uploadParsed.searchParams.get('X-Amz-Signature')).toMatch(/^[0-9a-f]{64}$/);
     expect(isAllowedR2TemplateUrl(full.publicUrl, 'full')).toBe(true);
     expect(isAllowedR2TemplateUrl(full.publicUrl, 'preview')).toBe(false);
 
-    const preview = createPresignedTemplateUpload({ contentType: 'image/webp', kind: 'preview' });
+    const preview = createPresignedTemplateUpload({ contentType: 'image/webp', contentLength: 512, kind: 'preview' });
     expect(isAllowedR2TemplateUrl(preview.publicUrl, 'preview')).toBe(true);
     expect(isAllowedR2TemplateUrl(preview.publicUrl, 'full')).toBe(false);
   });
 
   it('rejects non-R2 origins, query strings, traversal, or forged URLs in readIssuedDesign', () => {
-    const full = createPresignedTemplateUpload({ contentType: 'image/png', kind: 'full' });
-    const preview = createPresignedTemplateUpload({ contentType: 'image/webp', kind: 'preview' });
+    const full = createPresignedTemplateUpload({ contentType: 'image/png', contentLength: 1024, kind: 'full' });
+    const preview = createPresignedTemplateUpload({ contentType: 'image/webp', contentLength: 512, kind: 'preview' });
 
     const valid = readIssuedDesign({
       imageData: full.publicUrl,

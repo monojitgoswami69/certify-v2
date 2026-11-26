@@ -12,7 +12,7 @@ import { forbiddenCsrfResponse, mutationAllowed } from '../../../../lib/server-a
 
 const ALLOWED_MIMES = new Set<TemplateUploadMime>(['image/png', 'image/jpeg', 'image/webp']);
 const MAX_PREVIEW_BYTES = 2 * 1024 * 1024;
-const PRESIGN_RATE_LIMIT = 60; // per user per minute
+const PRESIGN_RATE_LIMIT = 20; // per user per minute
 
 /**
  * Issues a short-lived Cloudflare R2 presigned PUT URL for authenticated issuers
@@ -51,7 +51,7 @@ export async function POST(request: Request) {
   const maxBytes = kind === 'preview' ? MAX_PREVIEW_BYTES : MAX_TEMPLATE_BYTES;
   if (
     typeof body.byteSize !== 'number' ||
-    !Number.isFinite(body.byteSize) ||
+    !Number.isSafeInteger(body.byteSize) ||
     body.byteSize <= 0 ||
     body.byteSize > maxBytes
   ) {
@@ -67,6 +67,7 @@ export async function POST(request: Request) {
 
   const presigned = createPresignedTemplateUpload({
     contentType: contentType as TemplateUploadMime,
+    contentLength: body.byteSize,
     kind,
   });
 

@@ -4,7 +4,7 @@ import { env } from './env';
 export type TemplateUploadMime = 'image/png' | 'image/jpeg' | 'image/webp';
 export type TemplateUploadKind = 'full' | 'preview';
 
-const PRESIGN_EXPIRY_SECONDS = 300;
+const PRESIGN_EXPIRY_SECONDS = 120;
 const EXTENSION_BY_MIME: Record<TemplateUploadMime, string> = {
   'image/png': 'png',
   'image/jpeg': 'jpg',
@@ -80,10 +80,12 @@ export function isAllowedR2TemplateUrl(
 
 export function createPresignedTemplateUpload({
   contentType,
+  contentLength,
   kind = 'full',
   now = new Date(),
 }: {
   contentType: TemplateUploadMime;
+  contentLength: number;
   kind?: TemplateUploadKind;
   now?: Date;
 }): {
@@ -94,6 +96,9 @@ export function createPresignedTemplateUpload({
 } {
   if (!isR2Configured()) {
     throw new Error('Cloudflare R2 storage is not configured');
+  }
+  if (!Number.isSafeInteger(contentLength) || contentLength <= 0) {
+    throw new Error('Invalid contentLength for presigned R2 upload');
   }
 
   const accountId = env.R2_ACCOUNT_ID!;
@@ -119,20 +124,20 @@ export function createPresignedTemplateUpload({
     ['X-Amz-Credential', `${accessKeyId}/${credentialScope}`],
     ['X-Amz-Date', iso],
     ['X-Amz-Expires', String(PRESIGN_EXPIRY_SECONDS)],
-    ['X-Amz-SignedHeaders', 'content-type;host'],
+    ['X-Amz-SignedHeaders', 'content-length;content-type;host'],
   ];
   queryParams.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   const canonicalQuery = queryParams
     .map(([k, v]) => `${rfc3986Encode(k)}=${rfc3986Encode(v)}`)
     .join('&');
 
-  const canonicalHeaders = `content-type:${contentType}\nhost:${host}\n`;
+  const canonicalHeaders = `content-length:${contentLength}\ncontent-type:${contentType}\nhost:${host}\n`;
   const canonicalRequest = [
     'PUT',
     canonicalUri,
     canonicalQuery,
     canonicalHeaders,
-    'content-type;host',
+    'content-length;content-type;host',
     'UNSIGNED-PAYLOAD',
   ].join('\n');
 

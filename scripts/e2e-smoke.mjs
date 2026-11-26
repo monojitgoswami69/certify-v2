@@ -625,15 +625,22 @@ try {
     body: JSON.stringify({ contentType: 'image/png', byteSize: 16 * 1024 * 1024, kind: 'full' }),
   });
   check('presign endpoint rejects templates over 15 MB (413)', presignTooBig.status === 413);
+  const pngBytes = Buffer.from(TINY_PNG.split(',')[1], 'base64');
   const presignOk = await fetch(`${BASE}/api/uploads/presign`, {
     method: 'POST',
     headers: cookieAuth,
-    body: JSON.stringify({ contentType: 'image/png', byteSize: 68, kind: 'full' }),
+    body: JSON.stringify({ contentType: 'image/png', byteSize: pngBytes.length, kind: 'full' }),
   });
   const presignData = await presignOk.json().catch(() => ({}));
   check('presign endpoint responds cleanly for issuer (200)', presignOk.status === 200);
   if (presignData.enabled) {
-    const pngBytes = Buffer.from(TINY_PNG.split(',')[1], 'base64');
+    const r2PutOversize = await fetch(presignData.uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'image/png' },
+      body: Buffer.concat([pngBytes, Buffer.alloc(64)]),
+    });
+    check('direct-to-R2 rejects payloads exceeding signed byte size (403)',
+      r2PutOversize.status === 403, `status=${r2PutOversize.status}`);
     const r2Put = await fetch(presignData.uploadUrl, {
       method: 'PUT',
       headers: { 'Content-Type': 'image/png' },
