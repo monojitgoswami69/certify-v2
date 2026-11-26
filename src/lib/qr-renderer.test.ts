@@ -78,6 +78,46 @@ describe('qr-renderer', () => {
     }
   });
 
+  it('keeps the center logo cutout transparent by default and paints it only when a solid background is set', () => {
+    const logoImg = { width: 64, height: 64 } as unknown as HTMLImageElement;
+
+    const transparentCtx = createMock2dContext();
+    drawStyledQr(transparentCtx as unknown as CanvasRenderingContext2D, {
+      x: 0,
+      y: 0,
+      size: 160,
+      text: 'https://verify.example/transparent-logo',
+      style: {
+        patternColor: '#111111',
+        backgroundColor: 'transparent',
+        centerShape: 'rounded',
+        logo: PRESET_EMBLEMS[0].svgDataUri,
+      },
+      logoImg,
+    });
+    expect(transparentCtx.fillRect).not.toHaveBeenCalled();
+    // 1 body fill + 3 eye-frame fills + 3 eye-dot fills = 7 fills (no opaque white center cutout fill).
+    expect(transparentCtx.fill).toHaveBeenCalledTimes(7);
+
+    const solidCtx = createMock2dContext();
+    drawStyledQr(solidCtx as unknown as CanvasRenderingContext2D, {
+      x: 0,
+      y: 0,
+      size: 160,
+      text: 'https://verify.example/solid-logo',
+      style: {
+        patternColor: '#111111',
+        backgroundColor: '#FFE4E6',
+        centerShape: 'rounded',
+        logo: PRESET_EMBLEMS[0].svgDataUri,
+      },
+      logoImg,
+    });
+    expect(solidCtx.fillRect).toHaveBeenCalledWith(0, 0, 160, 160);
+    // Adds 1 cutout fill matching the solid background.
+    expect(solidCtx.fill).toHaveBeenCalledTimes(8);
+  });
+
   it('promotes repeated identical QR paints to cached sprites without caching one-off URLs', () => {
     const createdSprites: Array<{ width: number; height: number; ctx: ReturnType<typeof createMock2dContext> }> = [];
     class MockOffscreenCanvas {

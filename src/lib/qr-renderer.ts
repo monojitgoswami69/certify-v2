@@ -575,12 +575,15 @@ function renderStyledQrVectors(
   }
 
   if (hasLogo && logoPxSize > 0) {
-    const cutoutBg = bgColor || '#ffffff';
-    ctx.save();
-    ctx.fillStyle = cutoutBg;
-    traceCenterShapePath(ctx, logoCenterX, logoCenterY, logoPxSize, centerShape);
-    ctx.fill();
-    ctx.restore();
+    // Keep the center logo cutout transparent by default so template artwork shows
+    // through cleanly; only paint a cutout fill when a solid QR background is chosen.
+    if (bgColor) {
+      ctx.save();
+      ctx.fillStyle = bgColor;
+      traceCenterShapePath(ctx, logoCenterX, logoCenterY, logoPxSize, centerShape);
+      ctx.fill();
+      ctx.restore();
+    }
 
     if (resolvedImg) {
       const innerLogoSize = logoPxSize * 0.72;
