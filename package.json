@@ -10,6 +10,7 @@
     "dev": "next dev",
     "prebuild": "node scripts/build-fonts.mjs",
     "build": "next build",
+    "heroku-postbuild": "npm ci --include=dev --prefix worker && npm run build --prefix worker && npm prune --omit=dev --prefix worker",
     "start": "next start",
     "lint": "next typegen && tsc --noEmit",
     "test": "vitest run",

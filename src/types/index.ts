@@ -66,6 +66,27 @@ export interface EmailSettings {
 
 export type PersistedMailStatus = 'pending' | 'sending' | 'accepted' | 'failed' | 'unknown';
 
+export type MailBatchStatus =
+  | 'awaiting_auth'
+  | 'queued'
+  | 'running'
+  | 'paused_auth'
+  | 'paused_rate_limit'
+  | 'cancelling'
+  | 'cancelled'
+  | 'completed'
+  | 'failed';
+
+export type MailBatchItemStatus =
+  | 'queued'
+  | 'rendering'
+  | 'sending'
+  | 'accepted'
+  | 'failed'
+  | 'unknown'
+  | 'skipped'
+  | 'cancelled';
+
 export type EmailDeliveryStatus = 'pending' | 'sending' | 'sent' | 'failed' | 'skipped' | 'unconfirmed' | 'in_flight';
 
 export interface EmailDeliveryRecord {

@@ -309,3 +309,109 @@ export async function fetchEventDesign(eventId: string, signal?: AbortSignal): P
   if (!response.ok) throw new Error(data.detail || 'Could not load the certificate design');
   return data;
 }
+
+export interface BackgroundMailBatchSummary {
+  id: string;
+  eventId: string;
+  senderEmail: string;
+  status:
+    | 'awaiting_auth'
+    | 'queued'
+    | 'running'
+    | 'paused_auth'
+    | 'paused_rate_limit'
+    | 'cancelling'
+    | 'cancelled'
+    | 'completed'
+    | 'failed';
+  statusReason: string | null;
+  totalItems: number;
+  counts: {
+    queued: number;
+    rendering: number;
+    sending: number;
+    accepted: number;
+    failed: number;
+    unknown: number;
+    skipped: number;
+    cancelled: number;
+  };
+  authExpiresAt: string | null;
+  peakMemoryMb: number | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  recentFailures: Array<{
+    itemId: string;
+    certificateId: string;
+    status: string;
+    attemptCount: number;
+    errorCode: string | null;
+    errorDetail: string | null;
+  }>;
+}
+
+export async function fetchEventMailBatchStatus(
+  eventId: string,
+  signal?: AbortSignal
+): Promise<{ enabled: boolean; latestBatch: BackgroundMailBatchSummary | null; recentBatches: BackgroundMailBatchSummary[] }> {
+  const response = await apiFetch(`${API_BASE}/mail-batches?eventId=${encodeURIComponent(eventId)}`, {
+    signal,
+    cache: 'no-store',
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.detail || 'Could not load background mailing status.');
+  return data;
+}
+
+export async function enqueueBackgroundMailBatch(params: {
+  eventId: string;
+  certificateIds?: string[];
+  mailPreferences?: EmailSettings | null;
+  allowResend?: boolean;
+}): Promise<{ batch: BackgroundMailBatchSummary; reused: boolean }> {
+  const response = await apiFetch(`${API_BASE}/mail-batches`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.detail || 'Could not start background mailing.');
+  return data;
+}
+
+export async function startBatchAuthorization(batchId: string): Promise<{ authUrl: string }> {
+  const response = await apiFetch(`${API_BASE}/mail-batches/${encodeURIComponent(batchId)}/authorize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.detail || 'Could not start Gmail authorization.');
+  return data;
+}
+
+export async function fetchBatchStatus(
+  batchId: string,
+  signal?: AbortSignal
+): Promise<{ batch: BackgroundMailBatchSummary }> {
+  const response = await apiFetch(`${API_BASE}/mail-batches/${encodeURIComponent(batchId)}`, {
+    signal,
+    cache: 'no-store',
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.detail || 'Could not refresh batch status.');
+  return data;
+}
+
+export async function cancelBackgroundMailBatch(batchId: string): Promise<{ batch: BackgroundMailBatchSummary }> {
+  const response = await apiFetch(`${API_BASE}/mail-batches/${encodeURIComponent(batchId)}/cancel`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.detail || 'Could not cancel background batch.');
+  return data;
+}

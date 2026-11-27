@@ -63,6 +63,10 @@ export function isAllowedR2TemplateUrl(
   return r2TemplateKey(value, kind) !== null;
 }
 
+export function extractR2TemplateKey(value: unknown, kind?: 'full' | 'preview'): string | null {
+  return r2TemplateKey(value, kind);
+}
+
 function r2TemplateKey(value: unknown, kind?: 'full' | 'preview'): string | null {
   if (typeof value !== 'string' || value.length === 0 || value.length > 512) return null;
   const baseUrl = getR2PublicBaseUrl();

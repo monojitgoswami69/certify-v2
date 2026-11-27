@@ -1,8 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq, inArray, or, sql } from 'drizzle-orm';
+import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core';
+import type * as schema from '../db/schema';
 import { certificates } from '../db/schema';
 import type { PersistedMailStatus } from '../types';
 import { db } from './db';
+
+type QueryDb = Pick<PgDatabase<PgQueryResultHKT, typeof schema>, 'select' | 'update'>;
 
 // Longer than both the Gmail timeout and the usual route lifetime. An expired
 // claim is reviewable and never becomes eligible for another automatic send.
@@ -19,8 +23,8 @@ function mailTarget(userId: string, id: string, email: string) {
   return and(activeCertificate(userId, id), sql`lower(btrim(${certificates.recipientEmail})) = ${email.toLowerCase()}`);
 }
 
-export async function getMailTarget(userId: string, id: string, email: string) {
-  const [target] = await db.select({ status: currentMailStatus, version: certificates.mailAttemptId, email: certificates.recipientEmail }).from(certificates)
+export async function getMailTarget(userId: string, id: string, email: string, conn: QueryDb = db) {
+  const [target] = await conn.select({ status: currentMailStatus, version: certificates.mailAttemptId, email: certificates.recipientEmail }).from(certificates)
     .where(mailTarget(userId, id, email)).limit(1);
   return target;
 }
@@ -30,9 +34,9 @@ export function canClaimMail(target: { status: PersistedMailStatus; version: str
   return target.status === 'pending' || target.status === 'failed';
 }
 
-export async function claimMail(userId: string, id: string, email: string, resendVersion?: string) {
+export async function claimMail(userId: string, id: string, email: string, resendVersion?: string, conn: QueryDb = db) {
   const attempt = randomUUID();
-  const [result] = await db.update(certificates)
+  const [result] = await conn.update(certificates)
     .set({ mailStatus: 'sending', mailAttemptId: attempt, mailUpdatedAt: sql`now()`, mailDetail: null })
     .where(and(mailTarget(userId, id, email), resendVersion
       ? and(eq(certificates.mailStatus, 'accepted'), eq(certificates.mailAttemptId, resendVersion))
@@ -43,11 +47,11 @@ export async function claimMail(userId: string, id: string, email: string, resen
 
 export async function finishMail(userId: string, id: string, attempt: string,
   status: Exclude<PersistedMailStatus, 'sending'>, detail: string | null, gmailId: string | null = null,
-  previousAcceptedVersion?: string) {
+  previousAcceptedVersion?: string, conn: QueryDb = db) {
   // Failed or blocked resends retain the earlier acceptance.
   // A later explicit resend must use a fresh dashboard read and confirmation.
   const preserveAcceptance = previousAcceptedVersion && (status === 'pending' || status === 'failed');
-  const [result] = await db.update(certificates).set({
+  const [result] = await conn.update(certificates).set({
     mailStatus: preserveAcceptance ? 'accepted' : status,
     mailUpdatedAt: sql`now()`, mailDetail: detail,
     ...(preserveAcceptance ? {} : { mailGmailId: gmailId }),

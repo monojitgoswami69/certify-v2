@@ -1,7 +1,5 @@
 import { NextResponse } from 'next/server';
 import { mutationAllowed, forbiddenCsrfResponse } from '../../../lib/server-auth';
-import nodemailer, { type SendMailOptions, type Transporter } from 'nodemailer';
-import { Readable } from 'stream';
 import { createDecipheriv } from 'node:crypto';
 import { boundedBody, BodyTooLarge } from '../../../lib/bounded-body';
 import { requireIssuer, issuanceRequiredResponse } from '../../../lib/issuer-auth';
@@ -15,41 +13,7 @@ import { singleRecipientEmail } from '../../../lib/mail-preferences';
 import { MAX_MAIL_ATTACHMENT_BYTES, MAX_STAGED_MAIL_BYTES, STAGED_MAIL_IV_BYTES, STAGED_MAIL_TAG_BYTES, unpackMailAttachments } from '../../../lib/mail-staging';
 import { createSignedR2ObjectUrl, isAllowedMailStagingKey } from '../../../lib/r2-storage';
 import { hasImageMagicBytes } from '../../../lib/image-validation';
-
-// =========================================================================
-// Shared MIME builder (streamTransport never opens a socket, so a single
-// singleton transporter is safe and avoids per-request allocation churn).
-// =========================================================================
-let mimeTransporter: Transporter | null = null;
-function getMimeTransporter(): Transporter {
-  if (!mimeTransporter) {
-    mimeTransporter = nodemailer.createTransport({
-      streamTransport: true,
-      newline: 'windows',
-      disableUrlAccess: true,
-      disableFileAccess: true,
-    });
-  }
-  return mimeTransporter;
-}
-
-async function buildRawMimeMessage(mailOptions: SendMailOptions): Promise<Buffer<ArrayBuffer>> {
-  const info = await getMimeTransporter().sendMail(mailOptions);
-  const msg = info.message;
-
-  if (Buffer.isBuffer(msg)) {
-    return Buffer.from(msg);
-  }
-
-  const stream = msg as Readable;
-  const chunks: Buffer[] = [];
-
-  return new Promise((resolve, reject) => {
-    stream.on('data', (chunk: Buffer) => chunks.push(chunk));
-    stream.on('end', () => resolve(Buffer.concat(chunks)));
-    stream.on('error', reject);
-  });
-}
+import { buildRawMimeMessage, sanitizeAttachmentBaseName, type MailAttachment } from '../../../lib/gmail-mime';
 
 const MAX_REQUEST_BYTES = 4_500_000;
 const MAX_GMAIL_MESSAGE_BYTES = 35 * 1024 * 1024;
@@ -99,16 +63,6 @@ function reconnectRequired(email: string) {
     status: 'reconnect_required',
     detail: `Authorize Gmail sending for ${email} in Studio and try again.`,
   }, { status: 401 });
-}
-
-function sanitizeAttachmentBaseName(name: string): string {
-  const cleaned = name.replace(/[\\/:*?"<>|\r\n\t\x00-\x1f]+/g, '_').trim().slice(0, 150);
-  return cleaned || 'certificate';
-}
-
-interface MailAttachment {
-  filename: string;
-  content: Buffer;
 }
 
 async function readAttachment(file: FormDataEntryValue | null, filename: string): Promise<MailAttachment | null> {

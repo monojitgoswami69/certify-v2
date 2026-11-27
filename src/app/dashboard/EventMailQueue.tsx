@@ -6,6 +6,7 @@ import type { DashboardParticipant } from '../api/dashboard/route';
 import { EmailDeliveryBlockedError, EmailRateLimitError, EmailUnconfirmedError, IssuanceAccessRequiredError, fetchEventDesign, reviewCertificateMail, sendEmailV2 } from '../../lib/api-client';
 import { prepareIssuedEmail } from '../../lib/issued-certificate';
 import { delay } from '../../lib/utils';
+import { BackgroundBatchPanel } from '../../components/email/BackgroundBatchPanel';
 import type { PersistedMailStatus } from '../../types';
 
 export const mailStatusLabels: Record<PersistedMailStatus, string> = {
@@ -149,6 +150,25 @@ export function EventMailQueue({ eventId, participants, onChange }: EventMailQue
             className="rounded-md bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-40">Send pending and failed ({ready.length})</button>}
         <button type="button" className="text-sm font-semibold underline" disabled={running} onClick={() => void openQueue()}>Refresh delivery status</button>
       </div>
+      <BackgroundBatchPanel
+        key={eventId}
+        eventId={eventId}
+        eligibleCertificateIds={ready.map((row) => row.id)}
+        mailPreferences={
+          preferences ??
+          (designResponse
+            ? {
+                subject: `Your certificate from ${designResponse.event.name}`,
+                bodyPlain: 'Congratulations! Your certificate is attached.',
+                bodyHtml: '',
+                attachPdf: true,
+                attachJpg: false,
+                attachPng: false,
+              }
+            : null)
+        }
+        onBatchProgress={onChange}
+      />
       {notice && <p role="status" className="text-sm text-slate-700">{notice}</p>}
       {unknown.length > 0 && <div>
         <h3 className="font-semibold text-slate-900">Review uncertain sends</h3>

@@ -20,6 +20,7 @@ import { useEmailBatchRunner } from './useEmailBatchRunner';
 import { useBatchRegistration } from '../sidebar/useBatchRegistration';
 import { ReviewBatchButton } from '../sidebar/ReviewBatchButton';
 import { EmailDeliveryModal } from '../modals/EmailDeliveryModal';
+import { BackgroundBatchPanel } from './BackgroundBatchPanel';
 
 export function EmailSendButton() {
   const {
@@ -53,6 +54,9 @@ export function EmailSendButton() {
     handleDownloadErrorReport,
   } = useEmailBatchRunner();
   const eventId = useAppStore((state) => state.registrationEventId);
+  const emailSettings = useAppStore((state) => state.emailSettings);
+  const registeredCertIds = useAppStore((state) => state.registeredCertIds);
+  const eligibleBackgroundIds = Array.from(registeredCertIds.values());
   const unknownCount = allTrackedRecords.filter(({ status }) => status === 'unconfirmed').length;
   const inFlightCount = allTrackedRecords.filter(({ status }) => status === 'in_flight').length;
 
@@ -116,6 +120,15 @@ export function EmailSendButton() {
               <FileSpreadsheet className="w-3.5 h-3.5 text-slate-500" />
               <span>View Last Delivery Log ({allTrackedRecords.length} records)</span>
             </button>
+          )}
+
+          {isBatchRegistered && !registrationDirty && (
+            <BackgroundBatchPanel
+                key={eventId}
+              eventId={eventId}
+              eligibleCertificateIds={eligibleBackgroundIds}
+              mailPreferences={emailSettings}
+            />
           )}
         </div>
       )}

@@ -10,22 +10,16 @@
  */
 
 import { jsPDF } from 'jspdf';
-import type { QrStyleConfig, ImageElement, TextBox } from '../types';
+import type { ImageElement, TextBox } from '../types';
 import { resolveFieldValue } from './utils';
-import { drawStyledQr, ensureSvgDataUriDimensions } from './qr-renderer';
+import { ensureSvgDataUriDimensions } from './qr-renderer';
+import { paintCertificate, type QrPlacement } from './certificate-paint';
 import { getFontFamilyCSS } from './font-loader';
-import { clearTextMeasurements, drawCertificateText } from './certificate-text';
+import { clearTextMeasurements } from './certificate-text';
 import { computeExportScale, EXPORT_JPEG_QUALITY, PDF_MAX_PNG_BYTES } from './export-scale';
 
 export type OutputFormat = 'png' | 'jpg' | 'pdf';
-
-
-export interface QrPlacement {
-  x: number;
-  y: number;
-  size: number;
-  style?: QrStyleConfig;
-}
+export type { QrPlacement } from './certificate-paint';
 
 export interface CsvRow {
   [key: string]: string;
@@ -93,7 +87,7 @@ let cachedTemplateHeight = 0;
 let cachedExportScale = 1;
 let cachedBoxRenderInfo: BoxRenderInfo[] = [];
 let cachedQrZones: QrPlacement[] = [];
-let cachedImageElements: Array<{ el: ImageElement; bitmap: ImageBitmap | null }> = [];
+let cachedImageElements: Array<{ el: ImageElement; image: ImageBitmap | null }> = [];
 let cachedLogoBitmaps = new Map<string, ImageBitmap>();
 let cachedFormats: OutputFormat[] = [];
 let cachedJpegQuality = EXPORT_JPEG_QUALITY;
@@ -101,26 +95,6 @@ let cachedPdfOrientation: 'landscape' | 'portrait' = 'landscape';
 
 let reusableCanvases: OffscreenCanvas[] | null = null;
 let reusableContexts: OffscreenCanvasRenderingContext2D[] | null = null;
-
-// =============================================================================
-// Direct Bit-Matrix QR Code Rendering (Vector Accurate, Zero DOM)
-// =============================================================================
-
-function drawVerificationQr(
-  ctx: OffscreenCanvasRenderingContext2D,
-  zone: QrPlacement,
-  verificationUrl: string
-): void {
-  const logoBitmap = zone.style?.logo ? cachedLogoBitmaps.get(zone.style.logo) : null;
-  drawStyledQr(ctx, {
-    x: zone.x,
-    y: zone.y,
-    size: zone.size,
-    text: verificationUrl,
-    style: zone.style,
-    logoImg: logoBitmap,
-  });
-}
 
 // =============================================================================
 // Parallel In-Worker PDF Assembly
@@ -248,45 +222,22 @@ async function generateBatch(items: BatchItem[]): Promise<void> {
       const ctx = reusableContexts[activeBufferIdx];
       activeBufferIdx = (activeBufferIdx + 1) % reusableCanvases.length;
 
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.save();
-      try {
-        if (cachedExportScale !== 1) {
-          ctx.imageSmoothingEnabled = true;
-          ctx.imageSmoothingQuality = 'high';
-          ctx.scale(canvas.width / cachedTemplateWidth, canvas.height / cachedTemplateHeight);
-        }
-
-        // 1. DRAW: Background Template
-        ctx.drawImage(cachedTemplateBitmap, 0, 0, cachedTemplateWidth, cachedTemplateHeight);
-
-        // 1b. DRAW: Decorative image elements (logos, signatures)
-        for (const { el, bitmap } of cachedImageElements) {
-          if (!bitmap) continue;
-          ctx.save();
-          ctx.globalAlpha = Math.max(0, Math.min(1, el.opacity ?? 1));
-          ctx.drawImage(bitmap, el.x, el.y, el.w, el.h);
-          ctx.restore();
-        }
-
-        // 2. DRAW: QR Verification Zones
-        if (item.verificationUrl && cachedQrZones.length > 0) {
-          for (const zone of cachedQrZones) {
-            drawVerificationQr(ctx, zone, item.verificationUrl);
-          }
-        }
-
-        // 3. DRAW: Text Boxes
-        for (const info of cachedBoxRenderInfo) {
-          const text =
-            info.box.kind === 'static'
-              ? info.box.staticText ?? ''
-              : resolveFieldValue(info.box.field, item.row);
-          drawCertificateText(ctx, text, info.box, info.fontBase);
-        }
-      } finally {
-        ctx.restore();
-      }
+      paintCertificate(ctx, {
+        artwork: cachedTemplateBitmap,
+        width: cachedTemplateWidth,
+        height: cachedTemplateHeight,
+        targetWidth: canvas.width,
+        targetHeight: canvas.height,
+        images: cachedImageElements,
+        qrZones: cachedQrZones,
+        verificationUrl: item.verificationUrl,
+        getLogo: (src) => cachedLogoBitmaps.get(src),
+        text: cachedBoxRenderInfo.map(({ box, fontBase }) => ({
+          box,
+          font: fontBase,
+          value: box.kind === 'static' ? box.staticText ?? '' : resolveFieldValue(box.field, item.row),
+        })),
+      });
 
       // 4. ENCODE: Non-blocking OffscreenCanvas toBlob
       const pngPromise = needPng
@@ -373,7 +324,7 @@ self.onmessage = async (event: MessageEvent<InitMessage | GenerateBatchMessage>)
       cachedTemplateBitmap?.close();
       cachedTemplateBitmap = null;
       for (const item of cachedImageElements) {
-        item.bitmap?.close();
+        item.image?.close();
       }
       cachedImageElements = [];
       for (const bitmap of cachedLogoBitmaps.values()) {
@@ -410,9 +361,9 @@ self.onmessage = async (event: MessageEvent<InitMessage | GenerateBatchMessage>)
           });
           const blob = await res.blob();
           const bitmap = await createImageBitmap(blob);
-          cachedImageElements.push({ el, bitmap });
+          cachedImageElements.push({ el, image: bitmap });
         } catch {
-          cachedImageElements.push({ el, bitmap: null });
+          cachedImageElements.push({ el, image: null });
         }
       }
 

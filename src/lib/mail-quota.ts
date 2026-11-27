@@ -1,11 +1,15 @@
-import { sql } from 'drizzle-orm';
+import { sql, type SQL } from 'drizzle-orm';
 import { db } from './db';
 
 export type MailSlot = { allowed: true } | { allowed: false; retryAfter: number | null };
 
+interface QuotaExecutor {
+  execute(query: SQL): Promise<{ rows: unknown[] }>;
+}
+
 /** Lock the policy row so parallel requests and policy edits use one rolling window. */
-export async function reserveMailSlot(email: string): Promise<MailSlot> {
-  const result = await db.execute<{ retry_after: number | null; reserved: boolean }>(sql`
+export async function reserveMailSlot(email: string, conn: QuotaExecutor = db): Promise<MailSlot> {
+  const result = await conn.execute(sql`
     WITH locked AS MATERIALIZED (
       SELECT email, mails_per_minute, mails_per_second, mail_attempts
       FROM platform_access WHERE email = ${email} AND can_issue_certificates FOR UPDATE
@@ -39,7 +43,7 @@ export async function reserveMailSlot(email: string): Promise<MailSlot> {
            EXISTS (SELECT 1 FROM reservation) AS reserved
     FROM decision
   `);
-  const row = result.rows[0];
+  const row = result.rows[0] as { retry_after: number | null; reserved: boolean } | undefined;
   if (row?.reserved) return { allowed: true };
   return { allowed: false, retryAfter: row?.retry_after ?? null };
 }

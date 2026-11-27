@@ -5,21 +5,14 @@
  * exports PDF and PNG files, and creates ZIP archives.
  */
 
-import type { TextBox, CsvRow, QrStyleConfig, ImageElement } from '../types';
+import type { TextBox, CsvRow, ImageElement } from '../types';
 import { getFontFamilyCSS } from './font-loader';
 import { resolveFieldValue } from './utils';
-import { drawStyledQr, ensureSvgDataUriDimensions } from './qr-renderer';
-import { drawCertificateText } from './certificate-text';
-
-import { SAMPLE_QR_URL } from './verification-links';
+import { ensureSvgDataUriDimensions } from './qr-renderer';
+import { paintCertificate, type QrPlacement } from './certificate-paint';
 import { computeExportScale, EXPORT_JPEG_QUALITY, PDF_MAX_PNG_BYTES } from './export-scale';
 
-export interface QrPlacement {
-  x: number;
-  y: number;
-  size: number;
-  style?: QrStyleConfig;
-}
+export type { QrPlacement } from './certificate-paint';
 
 /**
  * Async wrapper around canvas.toBlob() so image encoding can run off the
@@ -79,10 +72,6 @@ export interface GenerateParams {
   canvas?: HTMLCanvasElement;
   /** Use values already resolved at issuance. */
   frozenFields?: boolean;
-}
-
-function drawTextBox(ctx: CanvasRenderingContext2D, text: string, box: TextBox) {
-  drawCertificateText(ctx, text, box, getFontFamilyCSS(box.fontFamily));
 }
 
 export function blobToBase64(blob: Blob): Promise<string> {
@@ -163,72 +152,26 @@ export async function drawCertificateToCanvas(
   if (canvas.height !== canvasH) canvas.height = canvasH;
   const ctx = canvas.getContext('2d')!;
 
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  const scaleX = canvasW / Math.max(1, logicalW);
-  const scaleY = canvasH / Math.max(1, logicalH);
-  const needsScale = Math.abs(scaleX - 1) > 1e-6 || Math.abs(scaleY - 1) > 1e-6;
-
-  ctx.save();
-  try {
-    if (needsScale) {
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-      ctx.scale(scaleX, scaleY);
+  const zones = qrZones?.length ? qrZones : qrZone ? [qrZone] : [];
+  const imageLayers = [];
+  for (const el of images ?? []) imageLayers.push({ el, image: await decodeImageElement(el.src) });
+  const logos = new Map<string, HTMLImageElement | null>();
+  if (verificationUrl || sampleQr) {
+    for (const zone of zones) {
+      const src = zone.style?.logo;
+      if (src && !logos.has(src)) logos.set(src, await decodeImageElement(src));
     }
-    ctx.drawImage(templateImage, 0, 0, logicalW, logicalH);
-
-    if (images && images.length > 0) {
-      for (const el of images) {
-        const decoded = await decodeImageElement(el.src);
-        if (!decoded) continue;
-        ctx.save();
-        ctx.globalAlpha = Math.max(0, Math.min(1, el.opacity ?? 1));
-        ctx.drawImage(decoded, el.x, el.y, el.w, el.h);
-        ctx.restore();
-      }
-    }
-
-    const zonesToDraw = qrZones && qrZones.length > 0 ? qrZones : qrZone ? [qrZone] : [];
-    const qrText = sampleQr ? SAMPLE_QR_URL : verificationUrl;
-    if (zonesToDraw.length > 0 && qrText) {
-      for (const zone of zonesToDraw) {
-        const logo = zone.style?.logo ? await decodeImageElement(zone.style.logo) : null;
-        drawStyledQr(ctx, {
-          x: zone.x,
-          y: zone.y,
-          size: zone.size,
-          text: qrText,
-          style: zone.style,
-          logoImg: logo,
-        });
-        if (sampleQr) {
-          ctx.save();
-          const bannerHeight = zone.size * 0.21;
-          ctx.fillStyle = '#171717';
-          ctx.fillRect(zone.x, zone.y + zone.size - bannerHeight, zone.size, bannerHeight);
-          ctx.fillStyle = '#fff';
-          ctx.font = `bold ${bannerHeight * 0.72}px sans-serif`;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText('SAMPLE', zone.x + zone.size / 2, zone.y + zone.size - bannerHeight / 2, zone.size * 0.9);
-          ctx.restore();
-        }
-      }
-    }
-
-    for (const box of boxes) {
-      if (box.kind === 'static') {
-        drawTextBox(ctx, box.staticText ?? '', box);
-        continue;
-      }
-      if (!box.field) continue;
-      const text = frozenFields ? (Object.hasOwn(row, box.field) ? row[box.field] : '') : resolveFieldValue(box.field, row);
-      drawTextBox(ctx, text, box);
-    }
-  } finally {
-    ctx.restore();
   }
+  const text = boxes.filter((box) => box.kind === 'static' || box.field).map((box) => ({
+    box,
+    value: box.kind === 'static' ? box.staticText ?? ''
+      : frozenFields ? (Object.hasOwn(row, box.field) ? row[box.field] : '') : resolveFieldValue(box.field, row),
+    font: getFontFamilyCSS(box.fontFamily),
+  }));
+  paintCertificate(ctx, {
+    artwork: templateImage, width: logicalW, height: logicalH, targetWidth: canvasW, targetHeight: canvasH, images: imageLayers,
+    qrZones: zones, getLogo: (src) => logos.get(src), verificationUrl, sampleQr, text,
+  });
 
   return canvas;
 }

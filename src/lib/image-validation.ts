@@ -12,6 +12,8 @@ export type SupportedImageType = 'png' | 'jpeg' | 'webp';
 /** Bounded pixel budget: covers 8K+ print templates while preventing OOM bombs. */
 export const MAX_IMAGE_EDGE = 12_000;
 export const MAX_IMAGE_PIXELS = 48_000_000;
+/** Background rendering budget for the Basic worker's 512 MB process. */
+export const MAX_BACKGROUND_TEMPLATE_PIXELS = 16_000_000;
 /** Strict 15 MB template upload limit (delivered directly via Cloudflare R2). */
 export const MAX_TEMPLATE_BYTES = 15 * 1024 * 1024;
 /** Inline base64 ceiling when object storage isn't configured (fits under Vercel 4.5 MB limit). */

@@ -1,5 +1,5 @@
 import type { IssuedEventDesign } from '../lib/event-design';
-import type { EmailSettings, PersistedMailStatus } from '../types';
+import type { EmailSettings, MailBatchItemStatus, MailBatchStatus, PersistedMailStatus } from '../types';
 import { sql } from 'drizzle-orm';
 import { DEFAULT_MAILS_PER_MINUTE, DEFAULT_MAILS_PER_SECOND, MAX_MAILS_PER_MINUTE, MAX_MAILS_PER_SECOND } from '../lib/mail-limits';
 import {
@@ -228,8 +228,130 @@ export const googleCredentials = pgTable('google_credentials', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * Background certificate mailing batches executed by the private Heroku worker.
+ * Access tokens NEVER live here (RAM-only in the claiming worker).
+ */
+export const mailBatches = pgTable(
+  'mail_batches',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    eventId: uuid('event_id')
+      .notNull()
+      .references(() => events.id, { onDelete: 'cascade' }),
+    senderEmail: text('sender_email').notNull(),
+    senderName: text('sender_name').notNull(),
+    status: text('status').$type<MailBatchStatus>().notNull().default('awaiting_auth'),
+    mailPreferences: jsonb('mail_preferences').$type<EmailSettings>().notNull(),
+    totalItems: integer('total_items').notNull(),
+    verificationOrigin: text('verification_origin'),
+    leaseOwner: text('lease_owner'),
+    leaseToken: uuid('lease_token'),
+    leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
+    attemptCount: integer('attempt_count').notNull().default(0),
+    authExpiresAt: timestamp('auth_expires_at', { withTimezone: true }),
+    statusReason: text('status_reason'),
+    peakMemoryMb: integer('peak_memory_mb'),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check(
+      'mail_batches_status_check',
+      sql`${table.status} in ('awaiting_auth', 'queued', 'running', 'paused_auth', 'paused_rate_limit', 'cancelling', 'cancelled', 'completed', 'failed')`
+    ),
+    index('mail_batches_user_event_idx').on(table.userId, table.eventId, table.createdAt.desc().nullsFirst()),
+    index('mail_batches_queue_idx').on(table.status, table.nextAttemptAt, table.leaseExpiresAt),
+    uniqueIndex('mail_batches_active_event_idx')
+      .on(table.eventId)
+      .where(sql`${table.status} in ('awaiting_auth', 'queued', 'running', 'paused_auth', 'paused_rate_limit', 'cancelling')`),
+  ]
+);
+
+/**
+ * Per-recipient queue row inside a background mail batch.
+ */
+export const mailBatchItems = pgTable(
+  'mail_batch_items',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    batchId: uuid('batch_id')
+      .notNull()
+      .references(() => mailBatches.id, { onDelete: 'cascade' }),
+    certificateId: uuid('certificate_id')
+      .notNull()
+      .references(() => certificates.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    recipientOrder: integer('recipient_order').notNull(),
+    status: text('status').$type<MailBatchItemStatus>().notNull().default('queued'),
+    resendVersion: uuid('resend_version'),
+    attemptCount: integer('attempt_count').notNull().default(0),
+    maxAttempts: integer('max_attempts').notNull().default(3),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
+    lockedBy: text('locked_by'),
+    lockedAt: timestamp('locked_at', { withTimezone: true }),
+    leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+    submittedToGmailAt: timestamp('submitted_to_gmail_at', { withTimezone: true }),
+    errorCode: text('error_code'),
+    errorDetail: text('error_detail'),
+    gmailMessageId: text('gmail_message_id'),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check(
+      'mail_batch_items_status_check',
+      sql`${table.status} in ('queued', 'rendering', 'sending', 'accepted', 'failed', 'unknown', 'skipped', 'cancelled')`
+    ),
+    uniqueIndex('mail_batch_items_batch_cert_idx').on(table.batchId, table.certificateId),
+    index('mail_batch_items_claim_idx').on(table.batchId, table.status, table.nextAttemptAt, table.recipientOrder),
+  ]
+);
+
+/**
+ * Ephemeral single-use OAuth PKCE handoff bound to one (user, batch) pair.
+ * Ciphertext fields are nulled atomically as soon as the worker claims the code.
+ */
+export const mailBatchOauthHandoffs = pgTable(
+  'mail_batch_oauth_handoffs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    batchId: uuid('batch_id')
+      .notNull()
+      .references(() => mailBatches.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    stateHash: text('state_hash').notNull(),
+    encryptedVerifier: text('encrypted_verifier'),
+    encryptedCode: text('encrypted_code'),
+    redirectUri: text('redirect_uri').notNull(),
+    callbackReceivedAt: timestamp('callback_received_at', { withTimezone: true }),
+    claimedAt: timestamp('claimed_at', { withTimezone: true }),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('mail_batch_oauth_handoffs_state_idx').on(table.stateHash),
+    index('mail_batch_oauth_handoffs_batch_idx').on(table.batchId, table.createdAt.desc().nullsFirst()),
+  ]
+);
+
 export type UserRow = typeof users.$inferSelect;
 export type CertificateRow = typeof certificates.$inferSelect;
 export type TemplateRow = typeof templates.$inferSelect;
 export type EventRow = typeof events.$inferSelect;
 export type GoogleCredentialRow = typeof googleCredentials.$inferSelect;
+export type MailBatchRow = typeof mailBatches.$inferSelect;
+export type MailBatchItemRow = typeof mailBatchItems.$inferSelect;
+export type MailBatchOauthHandoffRow = typeof mailBatchOauthHandoffs.$inferSelect;

@@ -119,6 +119,15 @@ try {
   }
   check('signed-out issuance request still returns 401',
     (await fetch(`${BASE}/api/dashboard`)).status === 401);
+  check('signed-out mail-batches request returns 401',
+    (await fetch(`${BASE}/api/mail-batches`)).status === 401);
+  const batchNoCsrf = await fetch(`${BASE}/api/mail-batches`, {
+    method: 'POST',
+    headers: { Cookie: `certify_session=${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ eventId: EVENT_ID }),
+  });
+  check('cookie mail-batches POST without CSRF rejected (403)', batchNoCsrf.status === 403,
+    `status=${batchNoCsrf.status}`);
   check('regular users cannot grant themselves issuance',
     (await setIssuance(cookieAuth, TEST_EMAIL, true)).status === 403);
   await sql`UPDATE platform_access SET can_issue_certificates = true WHERE email = ${TEST_EMAIL}`;
@@ -703,7 +712,7 @@ try {
   }
 
   // 7f. Check both the static homepage and request-bound script policies.
-  for (const page of ['/', '/login', '/dashboard', '/editor', '/admin', '/privacy', '/terms']) {
+  for (const page of ['/', '/login', '/dashboard', '/editor', '/admin', '/mail-batches/callback', '/privacy', '/terms']) {
     const response = await fetch(`${BASE}${page}`, { redirect: 'manual' });
     const html = await response.text();
     const csp = response.headers.get('content-security-policy') ?? '';
@@ -714,7 +723,7 @@ try {
       check('signed-out homepage describes WeCertify and links to sign-in and both policies',
         response.status === 200 && html.includes('WeCertify') && html.includes('Design, issue, and verify certificates') &&
         ['/login', '/privacy', '/terms'].every((path) => html.includes(`href="${path}"`)));
-    } else if (['/login', '/dashboard', '/editor', '/admin'].includes(page)) {
+    } else if (['/login', '/dashboard', '/editor', '/admin', '/mail-batches/callback'].includes(page)) {
       const nonce = /'nonce-([^']+)'/.exec(csp)?.[1];
       const inlineScripts = [...html.matchAll(/<script(?![^>]*\ssrc=)[^>]*>/g)];
       check(`nonce CSP: ${page} authorizes only its own inline scripts`,

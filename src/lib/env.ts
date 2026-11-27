@@ -42,6 +42,10 @@ const envSchema = z.object({
   R2_PUBLIC_BASE_URL: z.string().url().optional(),
   R2_ACCESS_KEY_ID: z.string().min(1).optional(),
   R2_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+
+  // Background Heroku mail worker rollout (explicit opt-in; dedicated handoff secret)
+  ENABLE_BACKGROUND_MAIL_WORKER: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  WORKER_HANDOFF_KEY: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
